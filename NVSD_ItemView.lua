@@ -35,7 +35,7 @@ local RULER_HEIGHT = 20  -- Height of the bar number ruler (top)
 local TIME_RULER_HEIGHT = 18  -- Height of the source time ruler (bottom)
 local SNAP_THRESHOLD_PX = 25  -- Pixels within which markers snap to source boundaries
 local LEFT_PANEL_WIDTH = 60  -- Width of the left control panel (volume/pitch)
-local LEFT_COLUMN_WIDTH = 44  -- Width of the far-left column (warp button etc)
+local LEFT_COLUMN_WIDTH = 90  -- Width of the far-left column (warp button etc)
 local GAIN_SLIDER_WIDTH = 16  -- Width of the gain slider track
 
 -- Colors (0xRRGGBBAA format)
@@ -825,29 +825,35 @@ end
 -- ========== HELPER FUNCTIONS FOR LEFT PANEL CONTROLS ==========
 -- These are extracted from loop() to reduce local variable count (Lua limit: 200)
 
--- Draw WARP/REV/EDIT buttons in the left column
+-- Draw WARP/Reverse/Edit buttons in the left column
 local function draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take)
-  local warp_btn_width = 36
-  local warp_btn_height = 16
-  local warp_btn_x = left_col_x + (LEFT_COLUMN_WIDTH - warp_btn_width) / 2 - 1
-  local warp_btn_y = left_col_y + 4
+  local btn_height = 16
+  local btn_margin = 4
+  local row_y = left_col_y + 4
 
-  local COLOR_WARP_ON = 0x4A90D9FF
-  local COLOR_WARP_OFF = 0x404040FF
-  local COLOR_WARP_HOVER = 0x5AA0E9FF
-  local COLOR_WARP_TEXT = 0xFFFFFFFF
+  local COLOR_BTN_ON = 0x4A90D9FF
+  local COLOR_BTN_OFF = 0x404040FF
+  local COLOR_BTN_HOVER = 0x5AA0E9FF
+  local COLOR_BTN_TEXT = 0xFFFFFFFF
+
+  -- WARP button (full width, top row)
+  local warp_btn_width = LEFT_COLUMN_WIDTH - 8
+  local warp_btn_x = left_col_x + 4
+  local warp_btn_y = row_y
 
   local mouse_in_warp = mouse_x >= warp_btn_x and mouse_x <= warp_btn_x + warp_btn_width
-                        and mouse_y >= warp_btn_y and mouse_y <= warp_btn_y + warp_btn_height
+                        and mouse_y >= warp_btn_y and mouse_y <= warp_btn_y + btn_height
 
   local warp_bg_color
   if warp_mode then
-    warp_bg_color = mouse_in_warp and COLOR_WARP_HOVER or COLOR_WARP_ON
+    warp_bg_color = mouse_in_warp and COLOR_BTN_HOVER or COLOR_BTN_ON
   else
-    warp_bg_color = mouse_in_warp and 0x505050FF or COLOR_WARP_OFF
+    warp_bg_color = mouse_in_warp and 0x505050FF or COLOR_BTN_OFF
   end
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, warp_btn_x, warp_btn_y, warp_btn_x + warp_btn_width, warp_btn_y + warp_btn_height, warp_bg_color, 3)
-  reaper.ImGui_DrawList_AddText(draw_list, warp_btn_x + 4, warp_btn_y + 2, COLOR_WARP_TEXT, "WARP")
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, warp_btn_x, warp_btn_y, warp_btn_x + warp_btn_width, warp_btn_y + btn_height, warp_bg_color, 3)
+  -- Center "WARP" text
+  local warp_text_x = warp_btn_x + (warp_btn_width - 28) / 2
+  reaper.ImGui_DrawList_AddText(draw_list, warp_text_x, warp_btn_y + 2, COLOR_BTN_TEXT, "WARP")
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_warp then
     warp_mode = not warp_mode
@@ -874,11 +880,14 @@ local function draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, l
     end
   end
 
-  -- REVERSE button
-  local rev_btn_width = 30
-  local rev_btn_height = 16
-  local rev_btn_x = left_col_x + (LEFT_COLUMN_WIDTH - rev_btn_width) / 2 - 1
-  local rev_btn_y = warp_btn_y + warp_btn_height + 4
+  -- Second row: Reverse and Edit side by side
+  local row2_y = warp_btn_y + btn_height + btn_margin
+  local gap = 2
+  local rev_btn_width = 52
+  local edit_btn_width = LEFT_COLUMN_WIDTH - 8 - rev_btn_width - gap
+
+  -- REVERSE button (left side of row 2)
+  local rev_btn_x = left_col_x + 4
 
   local is_reversed = false
   local has_sws = reaper.BR_GetMediaSourceProperties ~= nil
@@ -888,16 +897,16 @@ local function draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, l
   end
 
   local mouse_in_rev = mouse_x >= rev_btn_x and mouse_x <= rev_btn_x + rev_btn_width
-                       and mouse_y >= rev_btn_y and mouse_y <= rev_btn_y + rev_btn_height
+                       and mouse_y >= row2_y and mouse_y <= row2_y + btn_height
 
   local rev_bg_color
   if is_reversed then
-    rev_bg_color = mouse_in_rev and COLOR_WARP_HOVER or COLOR_WARP_ON
+    rev_bg_color = mouse_in_rev and COLOR_BTN_HOVER or COLOR_BTN_ON
   else
-    rev_bg_color = mouse_in_rev and 0x505050FF or COLOR_WARP_OFF
+    rev_bg_color = mouse_in_rev and 0x505050FF or COLOR_BTN_OFF
   end
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, rev_btn_x, rev_btn_y, rev_btn_x + rev_btn_width, rev_btn_y + rev_btn_height, rev_bg_color, 3)
-  reaper.ImGui_DrawList_AddText(draw_list, rev_btn_x + 4, rev_btn_y + 2, COLOR_WARP_TEXT, "REV")
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, rev_btn_x, row2_y, rev_btn_x + rev_btn_width, row2_y + btn_height, rev_bg_color, 3)
+  reaper.ImGui_DrawList_AddText(draw_list, rev_btn_x + 4, row2_y + 2, COLOR_BTN_TEXT, "Reverse")
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_rev then
     if item then
@@ -911,18 +920,15 @@ local function draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, l
     end
   end
 
-  -- EDIT button
-  local edit_btn_width = 32
-  local edit_btn_height = 16
-  local edit_btn_x = left_col_x + (LEFT_COLUMN_WIDTH - edit_btn_width) / 2 - 1
-  local edit_btn_y = rev_btn_y + rev_btn_height + 4
+  -- EDIT button (right side of row 2)
+  local edit_btn_x = rev_btn_x + rev_btn_width + gap
 
   local mouse_in_edit = mouse_x >= edit_btn_x and mouse_x <= edit_btn_x + edit_btn_width
-                        and mouse_y >= edit_btn_y and mouse_y <= edit_btn_y + edit_btn_height
+                        and mouse_y >= row2_y and mouse_y <= row2_y + btn_height
 
-  local edit_bg_color = mouse_in_edit and 0x505050FF or COLOR_WARP_OFF
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, edit_btn_x, edit_btn_y, edit_btn_x + edit_btn_width, edit_btn_y + edit_btn_height, edit_bg_color, 3)
-  reaper.ImGui_DrawList_AddText(draw_list, edit_btn_x + 4, edit_btn_y + 2, COLOR_WARP_TEXT, "EDIT")
+  local edit_bg_color = mouse_in_edit and 0x505050FF or COLOR_BTN_OFF
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, edit_btn_x, row2_y, edit_btn_x + edit_btn_width, row2_y + btn_height, edit_bg_color, 3)
+  reaper.ImGui_DrawList_AddText(draw_list, edit_btn_x + 4, row2_y + 2, COLOR_BTN_TEXT, "Edit")
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_edit then
     if item then
