@@ -1899,15 +1899,15 @@ local function loop()
             return wave_x + ((t - view_start) / view_length) * waveform_width
           end
 
-          -- Original source start (at time 0) - vertical line
+          -- Original source start (at time 0) - vertical line in ruler
           local orig_start_px = source_time_to_px(0)
-          if orig_start_px >= wave_x and orig_start_px <= wave_x + waveform_width then
+          if orig_start_px >= wave_x - 2 and orig_start_px <= wave_x + waveform_width + 2 then
             reaper.ImGui_DrawList_AddLine(draw_list, orig_start_px, ruler_y, orig_start_px, ruler_y + RULER_HEIGHT, COLOR_SOURCE_MARKER, 2)
           end
 
-          -- Original source end (at source_length) - vertical line
+          -- Original source end (at source_length) - vertical line in ruler
           local orig_end_px = source_time_to_px(source_length)
-          if orig_end_px >= wave_x and orig_end_px <= wave_x + waveform_width then
+          if orig_end_px >= wave_x - 2 and orig_end_px <= wave_x + waveform_width + 2 then
             reaper.ImGui_DrawList_AddLine(draw_list, orig_end_px, ruler_y, orig_end_px, ruler_y + RULER_HEIGHT, COLOR_SOURCE_MARKER, 2)
           end
 
