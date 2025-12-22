@@ -1310,6 +1310,78 @@ local function loop()
             end
           end
 
+          -- REVERSE button under WARP
+          local rev_btn_width = 30
+          local rev_btn_height = 16
+          local rev_btn_x = left_col_x + (LEFT_COLUMN_WIDTH - rev_btn_width) / 2 - 1
+          local rev_btn_y = warp_btn_y + warp_btn_height + 4
+
+          -- Check if take is reversed (using SWS extension if available)
+          local is_reversed = false
+          local has_sws = reaper.BR_GetMediaSourceProperties ~= nil
+          if has_sws and take then
+            local retval, section, start_pos, length, fade, reverse = reaper.BR_GetMediaSourceProperties(take)
+            if retval then
+              is_reversed = reverse
+            end
+          end
+
+          local mouse_in_rev = mouse_x >= rev_btn_x and mouse_x <= rev_btn_x + rev_btn_width
+                               and mouse_y >= rev_btn_y and mouse_y <= rev_btn_y + rev_btn_height
+
+          -- Draw REVERSE button
+          local rev_bg_color
+          if is_reversed then
+            rev_bg_color = mouse_in_rev and COLOR_WARP_HOVER or COLOR_WARP_ON
+          else
+            rev_bg_color = mouse_in_rev and 0x505050FF or COLOR_WARP_OFF
+          end
+          reaper.ImGui_DrawList_AddRectFilled(draw_list, rev_btn_x, rev_btn_y, rev_btn_x + rev_btn_width, rev_btn_y + rev_btn_height, rev_bg_color, 3)
+          reaper.ImGui_DrawList_AddText(draw_list, rev_btn_x + 4, rev_btn_y + 2, COLOR_WARP_TEXT, "REV")
+
+          -- REVERSE button interaction
+          if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_rev then
+            if item then
+              reaper.Undo_BeginBlock()
+              -- Select only this item to ensure action works on it
+              reaper.SelectAllMediaItems(0, false)
+              reaper.SetMediaItemSelected(item, true)
+              -- Toggle take reverse (action 41051)
+              reaper.Main_OnCommand(41051, 0)
+              reaper.UpdateArrange()
+              reaper.Undo_EndBlock("NVSD_ItemView: Toggle Reverse", -1)
+              -- Clear peaks cache to force refresh with reversed waveform
+              cached_peaks = nil
+            end
+          end
+
+          -- EDIT button under REVERSE
+          local edit_btn_width = 32
+          local edit_btn_height = 16
+          local edit_btn_x = left_col_x + (LEFT_COLUMN_WIDTH - edit_btn_width) / 2 - 1
+          local edit_btn_y = rev_btn_y + rev_btn_height + 4
+
+          local mouse_in_edit = mouse_x >= edit_btn_x and mouse_x <= edit_btn_x + edit_btn_width
+                                and mouse_y >= edit_btn_y and mouse_y <= edit_btn_y + edit_btn_height
+
+          -- Draw EDIT button
+          local edit_bg_color = mouse_in_edit and 0x505050FF or COLOR_WARP_OFF
+          reaper.ImGui_DrawList_AddRectFilled(draw_list, edit_btn_x, edit_btn_y, edit_btn_x + edit_btn_width, edit_btn_y + edit_btn_height, edit_bg_color, 3)
+          reaper.ImGui_DrawList_AddText(draw_list, edit_btn_x + 4, edit_btn_y + 2, COLOR_WARP_TEXT, "EDIT")
+
+          -- EDIT button interaction - opens source in external editor
+          if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_edit then
+            if item then
+              reaper.Undo_BeginBlock()
+              -- Select only this item
+              reaper.SelectAllMediaItems(0, false)
+              reaper.SetMediaItemSelected(item, true)
+              -- Open items in external editor (action 40109)
+              reaper.Main_OnCommand(40109, 0)
+              reaper.Undo_EndBlock("NVSD_ItemView: Open in External Editor", -1)
+            end
+          end
+
           -- ========== LEFT PANEL WITH CONTROLS ==========
           -- item_vol already retrieved earlier for waveform scaling
           local item_db = gain_to_db(item_vol)
@@ -1349,9 +1421,47 @@ local function loop()
 
           reaper.ImGui_DrawList_AddRectFilled(draw_list, slider_x, slider_top, slider_x + GAIN_SLIDER_WIDTH, slider_bottom, COLOR_SLIDER_TRACK, 3)
 
-          -- Draw 0dB line (at position 0.5)
+          -- Draw tick marks at key dB levels
+          local COLOR_TICK = 0x555555FF
+          local COLOR_TICK_MAJOR = 0x666666FF
+          local tick_left = slider_x - 3
+          local tick_right = slider_x + GAIN_SLIDER_WIDTH + 3
+
+          -- Tick marks and their slider positions (db_to_slider values)
+          -- Major ticks: +24, +12, 0, -12, -24, -48, -inf
+          local tick_marks = {
+            {db = 24, major = true},
+            {db = 18, major = false},
+            {db = 12, major = true},
+            {db = 6, major = false},
+            {db = 0, major = true},
+            {db = -6, major = false},
+            {db = -12, major = true},
+            {db = -18, major = false},
+            {db = -24, major = true},
+            {db = -36, major = false},
+            {db = -48, major = true},
+          }
+
+          for _, tick in ipairs(tick_marks) do
+            local tick_pos = db_to_slider(tick.db)
+            local tick_y = slider_bottom - tick_pos * slider_height
+            if tick_y >= slider_top and tick_y <= slider_bottom then
+              local color = tick.major and COLOR_TICK_MAJOR or COLOR_TICK
+              local left = tick.major and tick_left or (slider_x - 1)
+              local right = tick.major and tick_right or (slider_x + GAIN_SLIDER_WIDTH + 1)
+              reaper.ImGui_DrawList_AddLine(draw_list, left, tick_y, right, tick_y, color, 1)
+            end
+          end
+
+          -- Draw 0dB line (emphasized)
           local zero_y = slider_bottom - 0.5 * slider_height
-          reaper.ImGui_DrawList_AddLine(draw_list, slider_x - 3, zero_y, slider_x + GAIN_SLIDER_WIDTH + 3, zero_y, COLOR_ZERO_LINE, 1)
+          reaper.ImGui_DrawList_AddLine(draw_list, tick_left, zero_y, tick_right, zero_y, COLOR_ZERO_LINE, 1)
+
+          -- Draw labels: "24" at top, "-∞" at bottom
+          local COLOR_LABEL = 0x888888FF
+          reaper.ImGui_DrawList_AddText(draw_list, slider_x - 1, slider_top - 14, COLOR_LABEL, "24")
+          reaper.ImGui_DrawList_AddText(draw_list, slider_x - 1, slider_bottom + 3, COLOR_LABEL, "-\226\136\158")  -- UTF-8 for ∞
 
           -- Draw fill from 0dB to current value
           local handle_y = slider_bottom - slider_pos * slider_height

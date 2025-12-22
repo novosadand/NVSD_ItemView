@@ -13,13 +13,12 @@ NVSD_ItemView is a REAPER script that provides an Ableton-style clip view for au
 - Remove completed items periodically to keep list clean
 
 ### Current Todo List
-- [ ] Add REVERSE button under WARP button
-  - Reverses the sample
-  - Waveform updates to show reversed waveform
-- [ ] Add EDIT button under REVERSE button
-  - Opens the sample in the default external editor
+(empty)
 
 ### Recently Completed
+- [x] Add REVERSE button under WARP button (uses SWS extension for state detection)
+- [x] Add EDIT button under REVERSE button (opens in external editor)
+- [x] Volume fader tick marks and labels (24 at top, -∞ at bottom)
 - [x] Add left side panel with vertical gain slider (+24dB to -inf)
   - Logarithmic curve below 0dB for finer control
   - Waveform visually scales with gain
