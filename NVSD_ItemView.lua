@@ -664,9 +664,14 @@ local function draw_info_bar(draw_list, ctx, x, y, width, height, source, file_p
 
   local meta_text = table.concat(meta_parts, " · ")
 
-  -- Calculate file name width (approximate: ~7 pixels per character for default font)
-  local char_width = 7
-  local file_name_width = #file_name * char_width
+  -- Calculate file name width using ImGui if available, otherwise estimate
+  local file_name_width
+  if reaper.ImGui_CalcTextSize then
+    file_name_width = reaper.ImGui_CalcTextSize(ctx, file_name)
+  else
+    -- Fallback: approximate ~6 pixels per character for default font
+    file_name_width = #file_name * 6
+  end
   local file_name_end_x = text_x + file_name_width
 
   -- Check if mouse is over file name
@@ -679,9 +684,9 @@ local function draw_info_bar(draw_list, ctx, x, y, width, height, source, file_p
     local name_color = mouse_over_filename and 0xDDDDFFFF or COLOR_INFO_BAR_TEXT
     reaper.ImGui_DrawList_AddText(draw_list, text_x, text_y, name_color, file_name)
 
-    -- Draw underline on hover
+    -- Draw underline on hover (2 pixels below text baseline)
     if mouse_over_filename then
-      local underline_y = text_y + 12  -- Approximate text height
+      local underline_y = text_y + 14
       reaper.ImGui_DrawList_AddLine(draw_list, text_x, underline_y, file_name_end_x, underline_y, name_color, 1)
     end
   end
@@ -694,20 +699,10 @@ local function draw_info_bar(draw_list, ctx, x, y, width, height, source, file_p
     reaper.ImGui_DrawList_AddText(draw_list, text_x, text_y, COLOR_INFO_BAR_TEXT, meta_text)
   end
 
-  -- Handle click on file name
+  -- Handle click on file name - open REAPER's Media Explorer
   if mouse_over_filename and reaper.ImGui_IsMouseClicked(ctx, 0) then
-    -- Use SWS CF_LocateInExplorer if available, otherwise try CF_ShellExecute
-    if file_path and file_path ~= "" then
-      if reaper.CF_LocateInExplorer then
-        reaper.CF_LocateInExplorer(file_path)
-      elseif reaper.CF_ShellExecute then
-        -- Fallback: open containing folder
-        local folder = file_path:match("(.+)[/\\]")
-        if folder then
-          reaper.CF_ShellExecute(folder)
-        end
-      end
-    end
+    -- Open Media Explorer (action 50124)
+    reaper.Main_OnCommand(50124, 0)
     return true
   end
 
