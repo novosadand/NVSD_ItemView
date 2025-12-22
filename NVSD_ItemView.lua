@@ -600,7 +600,8 @@ local function get_file_name(path)
 end
 
 -- Draw file info bar at the top
-local function draw_info_bar(draw_list, x, y, width, height, source, file_path)
+-- Returns true if file name was clicked
+local function draw_info_bar(draw_list, ctx, x, y, width, height, source, file_path, mouse_x, mouse_y)
   -- Draw background
   reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, COLOR_INFO_BAR_BG)
 
@@ -627,45 +628,90 @@ local function draw_info_bar(draw_list, x, y, width, height, source, file_path)
   end
 
   local text_x = current_x + 4
+  local text_y = y + 3
 
-  -- Build info string
+  -- Build info string parts
   local file_name = get_file_name(file_path)
   local sample_rate = source and reaper.GetMediaSourceSampleRate(source) or 0
   local num_channels = source and reaper.GetMediaSourceNumChannels(source) or 0
   local bit_depth = get_wav_bit_depth(file_path)
 
-  local info_parts = {}
-  if file_name ~= "" then
-    table.insert(info_parts, file_name)
-  end
+  -- Build metadata string (everything after file name)
+  local meta_parts = {}
 
   if sample_rate > 0 then
     local sr_khz = sample_rate / 1000
     if sr_khz == math.floor(sr_khz) then
-      table.insert(info_parts, string.format("%d kHz", sr_khz))
+      table.insert(meta_parts, string.format("%d kHz", sr_khz))
     else
-      table.insert(info_parts, string.format("%.1f kHz", sr_khz))
+      table.insert(meta_parts, string.format("%.1f kHz", sr_khz))
     end
   end
 
   if bit_depth then
-    table.insert(info_parts, string.format("%d-bit", bit_depth))
+    table.insert(meta_parts, string.format("%d-bit", bit_depth))
   end
 
   if num_channels > 0 then
     if num_channels == 1 then
-      table.insert(info_parts, "Mono")
+      table.insert(meta_parts, "Mono")
     elseif num_channels == 2 then
-      table.insert(info_parts, "Stereo")
+      table.insert(meta_parts, "Stereo")
     else
-      table.insert(info_parts, string.format("%d Ch", num_channels))
+      table.insert(meta_parts, string.format("%d Ch", num_channels))
     end
   end
 
-  local info_text = table.concat(info_parts, " · ")
+  local meta_text = table.concat(meta_parts, " · ")
 
-  -- Draw text
-  reaper.ImGui_DrawList_AddText(draw_list, text_x, y + 3, COLOR_INFO_BAR_TEXT, info_text)
+  -- Calculate file name width (approximate: ~7 pixels per character for default font)
+  local char_width = 7
+  local file_name_width = #file_name * char_width
+  local file_name_end_x = text_x + file_name_width
+
+  -- Check if mouse is over file name
+  local mouse_over_filename = file_name ~= "" and
+    mouse_x >= text_x and mouse_x <= file_name_end_x and
+    mouse_y >= y and mouse_y <= y + height
+
+  -- Draw file name (with underline if hovered)
+  if file_name ~= "" then
+    local name_color = mouse_over_filename and 0xDDDDFFFF or COLOR_INFO_BAR_TEXT
+    reaper.ImGui_DrawList_AddText(draw_list, text_x, text_y, name_color, file_name)
+
+    -- Draw underline on hover
+    if mouse_over_filename then
+      local underline_y = text_y + 12  -- Approximate text height
+      reaper.ImGui_DrawList_AddLine(draw_list, text_x, underline_y, file_name_end_x, underline_y, name_color, 1)
+    end
+  end
+
+  -- Draw separator and metadata
+  if file_name ~= "" and meta_text ~= "" then
+    local separator = " · "
+    reaper.ImGui_DrawList_AddText(draw_list, file_name_end_x, text_y, COLOR_INFO_BAR_TEXT, separator .. meta_text)
+  elseif meta_text ~= "" then
+    reaper.ImGui_DrawList_AddText(draw_list, text_x, text_y, COLOR_INFO_BAR_TEXT, meta_text)
+  end
+
+  -- Handle click on file name
+  if mouse_over_filename and reaper.ImGui_IsMouseClicked(ctx, 0) then
+    -- Use SWS CF_LocateInExplorer if available, otherwise try CF_ShellExecute
+    if file_path and file_path ~= "" then
+      if reaper.CF_LocateInExplorer then
+        reaper.CF_LocateInExplorer(file_path)
+      elseif reaper.CF_ShellExecute then
+        -- Fallback: open containing folder
+        local folder = file_path:match("(.+)[/\\]")
+        if folder then
+          reaper.CF_ShellExecute(folder)
+        end
+      end
+    end
+    return true
+  end
+
+  return mouse_over_filename
 end
 
 -- Format source time as mins:secs or mins:secs:ms depending on show_ms flag
@@ -1732,7 +1778,7 @@ local function loop()
 
           -- Draw file info bar at the top
           local file_path = reaper.GetMediaSourceFileName(source, "")
-          draw_info_bar(draw_list, wave_x, info_bar_y, waveform_width, INFO_BAR_HEIGHT, source, file_path)
+          draw_info_bar(draw_list, ctx, wave_x, info_bar_y, waveform_width, INFO_BAR_HEIGHT, source, file_path, mouse_x, mouse_y)
 
           -- Calculate ACTUAL current marker positions
           -- During drag, use tracked drag positions for stable rendering (no REAPER round-trip jitter)
