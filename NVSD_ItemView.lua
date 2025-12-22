@@ -34,7 +34,7 @@ local WAVEFORM_MARGIN_V = 8  -- Vertical margin (smaller for docked windows)
 local RULER_HEIGHT = 20  -- Height of the bar number ruler (top)
 local TIME_RULER_HEIGHT = 18  -- Height of the source time ruler (bottom)
 local SNAP_THRESHOLD_PX = 25  -- Pixels within which markers snap to source boundaries
-local LEFT_PANEL_WIDTH = 60  -- Width of the left control panel (volume/pitch)
+local LEFT_PANEL_WIDTH = 70  -- Width of the left control panel (volume/pitch)
 local LEFT_COLUMN_WIDTH = 90  -- Width of the far-left column (warp button etc)
 local GAIN_SLIDER_WIDTH = 16  -- Width of the gain slider track
 
@@ -851,9 +851,9 @@ local function draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, l
     warp_bg_color = mouse_in_warp and 0x505050FF or COLOR_BTN_OFF
   end
   reaper.ImGui_DrawList_AddRectFilled(draw_list, warp_btn_x, warp_btn_y, warp_btn_x + warp_btn_width, warp_btn_y + btn_height, warp_bg_color, 3)
-  -- Center "WARP" text
-  local warp_text_x = warp_btn_x + (warp_btn_width - 28) / 2
-  reaper.ImGui_DrawList_AddText(draw_list, warp_text_x, warp_btn_y + 2, COLOR_BTN_TEXT, "WARP")
+  -- Center "WARP" text (4 chars * 7px = 28px)
+  local warp_text_w = 28
+  reaper.ImGui_DrawList_AddText(draw_list, warp_btn_x + (warp_btn_width - warp_text_w) / 2, warp_btn_y + 2, COLOR_BTN_TEXT, "WARP")
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_warp then
     warp_mode = not warp_mode
@@ -906,7 +906,9 @@ local function draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, l
     rev_bg_color = mouse_in_rev and 0x505050FF or COLOR_BTN_OFF
   end
   reaper.ImGui_DrawList_AddRectFilled(draw_list, rev_btn_x, row2_y, rev_btn_x + rev_btn_width, row2_y + btn_height, rev_bg_color, 3)
-  reaper.ImGui_DrawList_AddText(draw_list, rev_btn_x + 4, row2_y + 2, COLOR_BTN_TEXT, "Reverse")
+  -- Center "Reverse" text (7 chars * 7px = 49px)
+  local rev_text_w = 49
+  reaper.ImGui_DrawList_AddText(draw_list, rev_btn_x + (rev_btn_width - rev_text_w) / 2, row2_y + 2, COLOR_BTN_TEXT, "Reverse")
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_rev then
     if item then
@@ -928,7 +930,9 @@ local function draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, l
 
   local edit_bg_color = mouse_in_edit and 0x505050FF or COLOR_BTN_OFF
   reaper.ImGui_DrawList_AddRectFilled(draw_list, edit_btn_x, row2_y, edit_btn_x + edit_btn_width, row2_y + btn_height, edit_bg_color, 3)
-  reaper.ImGui_DrawList_AddText(draw_list, edit_btn_x + 4, row2_y + 2, COLOR_BTN_TEXT, "Edit")
+  -- Center "Edit" text (4 chars * 7px = 28px)
+  local edit_text_w = 28
+  reaper.ImGui_DrawList_AddText(draw_list, edit_btn_x + (edit_btn_width - edit_text_w) / 2, row2_y + 2, COLOR_BTN_TEXT, "Edit")
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_edit then
     if item then
@@ -983,11 +987,13 @@ local function draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, panel
     end
   end
 
-  -- 0dB line and labels
+  -- 0dB line
   local zero_y = slider_bottom - 0.5 * slider_height
   reaper.ImGui_DrawList_AddLine(draw_list, tick_left, zero_y, tick_right, zero_y, COLOR_ZERO_LINE, 1)
-  reaper.ImGui_DrawList_AddText(draw_list, slider_x - 1, slider_top - 14, COLOR_LABEL, "24")
-  reaper.ImGui_DrawList_AddText(draw_list, slider_x - 1, slider_bottom + 3, COLOR_LABEL, "-\226\136\158")
+
+  -- Labels on right side of fader
+  reaper.ImGui_DrawList_AddText(draw_list, slider_x + GAIN_SLIDER_WIDTH + 5, slider_top - 4, COLOR_LABEL, "24")
+  reaper.ImGui_DrawList_AddText(draw_list, slider_x + GAIN_SLIDER_WIDTH + 5, slider_bottom - 10, COLOR_LABEL, "-\226\136\158")
 
   -- Fill from 0dB to current
   local handle_y = slider_bottom - slider_pos * slider_height
@@ -1054,9 +1060,14 @@ local function draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, panel
     reaper.UpdateArrange()
   end
 
-  -- Labels
-  reaper.ImGui_DrawList_AddText(draw_list, panel_x + 8, panel_y + 4, 0xAAAAAAFF, "Vol")
-  reaper.ImGui_DrawList_AddText(draw_list, panel_x + 6, slider_bottom + 4, 0xAAAAAAFF, format_db(item_db))
+  -- Labels - centered on slider axis
+  local slider_center_x = slider_x + GAIN_SLIDER_WIDTH / 2
+  -- "Gain" label (4 chars * 7px = 28px, centered)
+  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - 14, panel_y + 4, 0xAAAAAAFF, "Gain")
+  -- dB value centered below slider
+  local db_text = format_db(item_db)
+  local db_text_w = #db_text * 7
+  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - db_text_w / 2, slider_bottom + 14, 0xAAAAAAFF, db_text)
 
   return slider_pos, slider_height, slider_bottom
 end
