@@ -1592,8 +1592,7 @@ local function loop()
           -- Draw bottom time ruler (source time)
           draw_time_ruler(draw_list, wave_x, time_ruler_y, waveform_width, TIME_RULER_HEIGHT, view_start, view_length)
 
-          -- Draw original source boundary markers in ruler
-          local tri_size = 10
+          -- Draw original source boundary markers in ruler (simple lines)
           local COLOR_SOURCE_MARKER = 0xFFAA44FF  -- Bright orange
 
           -- Helper to convert source time to pixel
@@ -1601,26 +1600,16 @@ local function loop()
             return wave_x + ((t - view_start) / view_length) * waveform_width
           end
 
-          -- Original source start (at time 0)
+          -- Original source start (at time 0) - vertical line
           local orig_start_px = source_time_to_px(0)
-          if orig_start_px >= wave_x - tri_size and orig_start_px <= wave_x + waveform_width + tri_size then
-            -- Triangle pointing right
-            reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-              orig_start_px, ruler_y,
-              orig_start_px, ruler_y + tri_size * 2,
-              orig_start_px + tri_size, ruler_y + tri_size,
-              COLOR_SOURCE_MARKER)
+          if orig_start_px >= wave_x and orig_start_px <= wave_x + waveform_width then
+            reaper.ImGui_DrawList_AddLine(draw_list, orig_start_px, ruler_y, orig_start_px, ruler_y + RULER_HEIGHT, COLOR_SOURCE_MARKER, 2)
           end
 
-          -- Original source end (at source_length)
+          -- Original source end (at source_length) - vertical line
           local orig_end_px = source_time_to_px(source_length)
-          if orig_end_px >= wave_x - tri_size and orig_end_px <= wave_x + waveform_width + tri_size then
-            -- Triangle pointing left
-            reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-              orig_end_px, ruler_y,
-              orig_end_px, ruler_y + tri_size * 2,
-              orig_end_px - tri_size, ruler_y + tri_size,
-              COLOR_SOURCE_MARKER)
+          if orig_end_px >= wave_x and orig_end_px <= wave_x + waveform_width then
+            reaper.ImGui_DrawList_AddLine(draw_list, orig_end_px, ruler_y, orig_end_px, ruler_y + RULER_HEIGHT, COLOR_SOURCE_MARKER, 2)
           end
 
           -- Helper: convert pixel to time in current view
