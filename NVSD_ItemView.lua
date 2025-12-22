@@ -41,7 +41,7 @@ local GAIN_SLIDER_WIDTH = 16  -- Width of the gain slider track
 
 -- Colors (0xRRGGBBAA format)
 local COLOR_WAVEFORM = 0x5A9F5AFF        -- Green waveform
-local COLOR_WAVEFORM_INACTIVE = 0x3A3A3AFF  -- Gray for inactive parts
+local COLOR_WAVEFORM_INACTIVE = 0x3A6A3AFF  -- Muted green for inactive parts
 local COLOR_WAVEFORM_BG = 0x1A1A1AFF     -- Dark background
 local COLOR_CENTERLINE = 0x2A2A2AFF      -- Center line
 local COLOR_MARKER = 0x4A90D9FF          -- Blue markers
