@@ -10,9 +10,11 @@ end
 
 -- Configuration
 local MARKER_WIDTH = 12
-local INFO_HEIGHT = 40  -- Space for text info at top
-local WINDOW_PADDING = 10  -- Padding inside window
-local WAVEFORM_MARGIN = 20  -- Extra margin around waveform for easier marker access
+local WINDOW_PADDING = 8  -- Padding inside window
+local WAVEFORM_MARGIN_H = 20  -- Horizontal margin for easier marker access
+local WAVEFORM_MARGIN_V = 8  -- Vertical margin (smaller for docked windows)
+local RULER_HEIGHT = 20  -- Height of the bar number ruler
+local SNAP_THRESHOLD_PX = 10  -- Pixels within which markers snap to source boundaries
 
 -- Colors (0xRRGGBBAA format)
 local COLOR_WAVEFORM = 0x5A9F5AFF        -- Green waveform
@@ -22,6 +24,10 @@ local COLOR_CENTERLINE = 0x2A2A2AFF      -- Center line
 local COLOR_MARKER = 0x4A90D9FF          -- Blue markers
 local COLOR_MARKER_HOVER = 0x6AB0F9FF    -- Lighter blue on hover
 local COLOR_BORDER = 0x4A7A4AFF          -- Border around active region
+local COLOR_RULER_BG = 0x252525FF        -- Ruler background
+local COLOR_RULER_TEXT = 0xAAAAAAFF      -- Ruler text
+local COLOR_GRID_BAR = 0x555555FF        -- Bar lines
+local COLOR_GRID_BEAT = 0x333333FF       -- Beat lines
 
 -- State
 local ctx = reaper.ImGui_CreateContext("NVSD_ItemView")
@@ -40,6 +46,13 @@ local drag_start_length = 0  -- Store original length when drag starts
 local drag_start_mouse_x = 0  -- Store mouse X when drag starts
 local drag_start_view_length = 0  -- Store view length for 1:1 mouse movement
 local drag_start_playrate = 1  -- Store playrate when drag starts
+
+-- Panning state
+local is_panning = false
+local pan_start_mouse_x = 0
+local pan_offset = 0  -- Current pan offset in source time units
+local pan_start_offset = 0  -- Pan offset when pan started
+local last_panned_item = nil  -- Reset pan when item changes
 
 -- Get peaks data from audio source
 local function get_peaks(source, num_samples)
@@ -111,25 +124,124 @@ local function draw_dashed_line(draw_list, x, y1, y2, color, dash_length, gap_le
   end
 end
 
+-- Convert source time to project time
+local function source_to_project_time(source_t, item_position, start_offset, playrate)
+  return item_position + (source_t - start_offset) / playrate
+end
+
+-- Convert project time to source time
+local function project_to_source_time(project_t, item_position, start_offset, playrate)
+  return start_offset + (project_t - item_position) * playrate
+end
+
+-- Draw ruler bar with bar numbers and grid lines
+local function draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler_height, wave_height,
+                                    view_start, view_length, item_position, start_offset, playrate)
+  -- Draw ruler background
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, x, ruler_y, x + width, ruler_y + ruler_height, COLOR_RULER_BG)
+
+  -- Helper: convert source time to pixel
+  local function time_to_px(t)
+    return x + ((t - view_start) / view_length) * width
+  end
+
+  -- Get project time range visible in the view
+  local view_end = view_start + view_length
+  local project_start = source_to_project_time(view_start, item_position, start_offset, playrate)
+  local project_end = source_to_project_time(view_end, item_position, start_offset, playrate)
+
+  -- Get time signature info at project start
+  local bpm, bpi = reaper.GetProjectTimeSignature2(0, project_start)
+  local beats_per_bar = math.floor(bpi)
+  if beats_per_bar < 1 then beats_per_bar = 4 end
+
+  -- Find first bar before or at project_start
+  local _, start_measures = reaper.TimeMap2_timeToBeats(0, project_start)
+  local first_bar = math.floor(start_measures)
+
+  -- Calculate minimum pixel spacing to avoid cluttering
+  local min_bar_spacing = 30
+  local min_beat_spacing = 10
+
+  -- Draw bars and beats
+  local bar = first_bar
+  local max_iterations = 1000  -- Safety limit
+  local iterations = 0
+
+  while iterations < max_iterations do
+    iterations = iterations + 1
+
+    -- Get time at start of this bar (bar is 0-based measure index)
+    local bar_project_time = reaper.TimeMap2_beatsToTime(0, 0, bar)
+
+    if bar_project_time > project_end then break end
+
+    -- Convert to source time
+    local bar_source_time = project_to_source_time(bar_project_time, item_position, start_offset, playrate)
+
+    -- Only draw if within view
+    if bar_source_time >= view_start and bar_source_time <= view_end then
+      local bar_px = time_to_px(bar_source_time)
+
+      -- Draw bar line on waveform
+      reaper.ImGui_DrawList_AddLine(draw_list, bar_px, wave_y, bar_px, wave_y + wave_height, COLOR_GRID_BAR, 1)
+
+      -- Draw bar line on ruler
+      reaper.ImGui_DrawList_AddLine(draw_list, bar_px, ruler_y, bar_px, ruler_y + ruler_height, COLOR_GRID_BAR, 1)
+
+      -- Draw bar number (1-based display)
+      local bar_num = bar + 1
+      reaper.ImGui_DrawList_AddText(draw_list, bar_px + 3, ruler_y + 3, COLOR_RULER_TEXT, tostring(bar_num))
+
+      -- Draw beat subdivisions if there's enough space
+      local next_bar_time = reaper.TimeMap2_beatsToTime(0, 0, bar + 1)
+      local next_bar_source = project_to_source_time(next_bar_time, item_position, start_offset, playrate)
+      local bar_width_px = time_to_px(next_bar_source) - bar_px
+
+      if bar_width_px / beats_per_bar >= min_beat_spacing then
+        -- Get tempo at this bar for accurate beat timing
+        local bar_bpm = reaper.GetProjectTimeSignature2(0, bar_project_time)
+        local beat_duration = 60 / bar_bpm
+
+        for beat = 1, beats_per_bar - 1 do
+          local beat_project_time = bar_project_time + beat * beat_duration
+          if beat_project_time > project_end then break end
+
+          local beat_source_time = project_to_source_time(beat_project_time, item_position, start_offset, playrate)
+          if beat_source_time >= view_start and beat_source_time <= view_end then
+            local beat_px = time_to_px(beat_source_time)
+            reaper.ImGui_DrawList_AddLine(draw_list, beat_px, wave_y, beat_px, wave_y + wave_height, COLOR_GRID_BEAT, 1)
+          end
+        end
+      end
+    end
+
+    bar = bar + 1
+  end
+
+  -- Draw ruler bottom border
+  reaper.ImGui_DrawList_AddLine(draw_list, x, ruler_y + ruler_height, x + width, ruler_y + ruler_height, COLOR_GRID_BAR, 1)
+end
+
 -- Draw waveform with looping support
 -- source_item_length is the amount of source audio covered by the item (accounts for playrate)
-local function draw_waveform(draw_list, x, y, width, height, peaks, start_offset, source_item_length, source_length)
+-- pan_offset shifts the view left/right (positive = view shifted right, seeing earlier content)
+local function draw_waveform(draw_list, x, y, width, height, peaks, start_offset, source_item_length, source_length, pan_offset_time)
   if not peaks or #peaks == 0 or source_length <= 0 then return 0, 0, 0, source_length end
 
-  local item_end = start_offset + source_item_length
+  pan_offset_time = pan_offset_time or 0
 
-  -- Calculate view range: only expand if item extends beyond source bounds
-  local view_start, view_end
-  if start_offset >= 0 and item_end <= source_length then
-    -- Item fits within source - show original source size
-    view_start = 0
-    view_end = source_length
-  else
-    -- Item extends beyond source - expand view to fit
-    view_start = math.min(0, start_offset)
-    view_end = math.max(source_length, item_end)
-  end
-  local view_length = view_end - view_start
+  -- View is always centered on the item with fixed size
+  -- View size = max(source_length, source_item_length) to ensure we can see everything
+  local view_length = math.max(source_length, source_item_length)
+
+  -- Center the view on the item, then apply pan offset
+  local item_center = start_offset + source_item_length / 2
+  local view_start = item_center - view_length / 2 + pan_offset_time
+  local view_end = view_start + view_length
+
+  -- Item bounds in source time
+  local item_end = start_offset + source_item_length
 
   -- Background
   reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, COLOR_WAVEFORM_BG)
@@ -302,7 +414,17 @@ local function loop()
       reaper.Main_OnCommand(40030, 0)  -- Edit: Redo
     end
 
+    -- Try to get selected item first
     local item = reaper.GetSelectedMediaItem(0, 0)
+
+    -- If no selected item, try to get item under mouse cursor (for edge-dragging detection)
+    if not item then
+      local mouse_screen_x, mouse_screen_y = reaper.GetMousePosition()
+      local item_under_mouse, take_under_mouse = reaper.GetItemFromPoint(mouse_screen_x, mouse_screen_y, false)
+      if item_under_mouse then
+        item = item_under_mouse
+      end
+    end
 
     if item then
       local take = reaper.GetActiveTake(item)
@@ -328,6 +450,7 @@ local function loop()
 
         if source then
           local item_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+          local item_position = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
           local take_offset = reaper.GetMediaItemTakeInfo_Value(take, "D_STARTOFFS")
           local source_length = reaper.GetMediaSourceLength(source)
 
@@ -338,24 +461,23 @@ local function loop()
             source_length = item_length
           end
 
-          -- Get playrate for debug
+          -- Get playrate
           local playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
 
-          -- Compact info line with debug info
-          reaper.ImGui_Text(ctx, string.format("Src: %.2fs | Len: %.2fs | TakeOff: %.2fs | SectOff: %.2fs | Rate: %.2f",
-            source_length, item_length, take_offset, section_offset, playrate))
-
-          -- Get available space for waveform (with margin for easier marker access)
+          -- Get available space for waveform
           local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
-          local waveform_width = avail_w - (WAVEFORM_MARGIN * 2)
-          local waveform_height = avail_h - (WAVEFORM_MARGIN * 2)
+          local waveform_width = math.max(100, avail_w - (WAVEFORM_MARGIN_H * 2))
+          -- Reserve space for ruler above waveform, ensure minimum height
+          local waveform_height = math.max(50, avail_h - (WAVEFORM_MARGIN_V * 2) - RULER_HEIGHT)
 
           local cursor_x, cursor_y = reaper.ImGui_GetCursorScreenPos(ctx)
-          local wave_x = cursor_x + WAVEFORM_MARGIN
-          local wave_y = cursor_y + WAVEFORM_MARGIN
+          local wave_x = cursor_x + WAVEFORM_MARGIN_H
+          local ruler_y = cursor_y + WAVEFORM_MARGIN_V
+          local wave_y = ruler_y + RULER_HEIGHT
 
-          -- Reserve the full area with InvisibleButton FIRST to prevent window dragging
-          reaper.ImGui_InvisibleButton(ctx, "waveform_area", avail_w, avail_h)
+          -- Reserve the full area with InvisibleButton to prevent window dragging
+          local total_height = WAVEFORM_MARGIN_V + RULER_HEIGHT + waveform_height + WAVEFORM_MARGIN_V
+          reaper.ImGui_InvisibleButton(ctx, "waveform_area", avail_w, math.max(avail_h, total_height))
 
           -- Update peaks cache (refresh when item, source, size, or source length changes)
           local desired_samples = math.max(100, math.floor(waveform_width))
@@ -367,13 +489,26 @@ local function loop()
             cached_peaks, peaks_error = get_peaks(source, desired_samples)
           end
 
+          -- Reset pan when item changes
+          if item ~= last_panned_item then
+            pan_offset = 0
+            last_panned_item = item
+          end
+
           -- Draw waveform
           -- source_item_length = how much source audio the item covers (accounts for playrate)
           local source_item_length = item_length * playrate
           local draw_list = reaper.ImGui_GetWindowDrawList(ctx)
           local start_px, end_px, view_start, view_length = draw_waveform(draw_list, wave_x, wave_y,
             waveform_width, waveform_height,
-            cached_peaks, start_offset, source_item_length, source_length)
+            cached_peaks, start_offset, source_item_length, source_length, pan_offset)
+
+          -- Draw ruler and grid lines
+          -- Use original offset during drag to keep grid stable
+          local grid_offset = (dragging_start or dragging_end) and drag_start_offset or start_offset
+          local grid_playrate = (dragging_start or dragging_end) and drag_start_playrate or playrate
+          draw_ruler_and_grid(draw_list, wave_x, ruler_y, wave_y, waveform_width, RULER_HEIGHT, waveform_height,
+            view_start, view_length, item_position, grid_offset, grid_playrate)
 
           -- Helper: convert pixel to time in current view
           local function px_to_time(px)
@@ -399,6 +534,31 @@ local function loop()
           -- Cursor feedback
           if mouse_in_marker_area and (near_start or near_end) then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
+          elseif mouse_in_waveform and is_panning then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
+          end
+
+          -- Middle mouse panning
+          local middle_mouse = 2  -- Middle mouse button index
+          if reaper.ImGui_IsMouseClicked(ctx, middle_mouse) and mouse_in_waveform then
+            is_panning = true
+            pan_start_mouse_x = mouse_x
+            pan_start_offset = pan_offset
+          end
+
+          if reaper.ImGui_IsMouseReleased(ctx, middle_mouse) then
+            is_panning = false
+          end
+
+          if is_panning and reaper.ImGui_IsMouseDown(ctx, middle_mouse) then
+            -- Calculate mouse movement in pixels, convert to time
+            local mouse_delta_px = mouse_x - pan_start_mouse_x
+            -- Dragging right = content moves right = view shifts left = negative offset change
+            local delta_time = -(mouse_delta_px / waveform_width) * view_length
+            pan_offset = pan_start_offset + delta_time
+            -- Clamp pan to max half the item length in either direction
+            local max_pan = source_item_length / 2
+            pan_offset = math.max(-max_pan, math.min(max_pan, pan_offset))
           end
 
           -- Start dragging - store original values and begin undo block
@@ -433,6 +593,19 @@ local function loop()
             dragging_end = false
           end
 
+          -- Helper: snap time to nearest source boundary if within threshold
+          local function snap_to_source_boundary(t, src_len, threshold_time)
+            -- Find nearest multiple of source_length
+            local nearest_boundary = math.floor(t / src_len + 0.5) * src_len
+            if math.abs(t - nearest_boundary) <= threshold_time then
+              return nearest_boundary
+            end
+            return t
+          end
+
+          -- Calculate snap threshold in time units
+          local snap_threshold_time = (SNAP_THRESHOLD_PX / waveform_width) * view_length
+
           -- Dragging start marker: move start, keep end fixed (in source time)
           if dragging_start and reaper.ImGui_IsMouseDown(ctx, 0) then
             -- original_end is in source time (accounts for playrate at drag start)
@@ -448,6 +621,8 @@ local function loop()
               local overflow_time = (overflow_px / waveform_width) * source_length
               new_start = mouse_x < wave_x and (edge_time - overflow_time) or (edge_time + overflow_time)
             end
+            -- Snap to source boundaries
+            new_start = snap_to_source_boundary(new_start, source_length, snap_threshold_time)
             -- Only clamp: can't go past end (need at least 0.01s source length)
             new_start = math.min(new_start, original_source_end - 0.01)
             -- new_source_length is in source time, convert to item time by dividing by playrate
@@ -474,6 +649,8 @@ local function loop()
               local overflow_time = (overflow_px / waveform_width) * source_length
               new_end = mouse_x < wave_x and (edge_time - overflow_time) or (edge_time + overflow_time)
             end
+            -- Snap to source boundaries
+            new_end = snap_to_source_boundary(new_end, source_length, snap_threshold_time)
             -- new_source_length is in source time, convert to item time
             local new_source_length = new_end - start_offset
             local new_item_length = new_source_length / drag_start_playrate

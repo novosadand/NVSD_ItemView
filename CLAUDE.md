@@ -83,10 +83,26 @@ Using LuaUnit (single-file, no dependencies) for unit tests:
 - **GUI Framework**: ReaImGui extension for REAPER
 - **Target**: REAPER 6.0+
 
+## Research Documentation
+
+**IMPORTANT: After researching any REAPER API or technical topic, document findings in `docs/`.**
+
+- Create/update markdown files in `docs/` folder
+- Include API function signatures, parameters, and return values
+- Document buffer formats, gotchas, and working code examples
+- Reference official docs and forum discussions
+
+Current documentation:
+- `docs/REAPER_WAVEFORM_RENDERING.md` - PCM_Source_GetPeaks buffer format
+- `docs/REAPER_TIMELINE_GRID.md` - Timeline, tempo, and bar/beat conversion
+
 ## File Structure
 - `NVSD_ItemView.lua` - Main script file
 - `CLAUDE.md` - Project documentation
 - `sync.sh` - Sync script (WSL dev folder only)
+- `docs/` - Research documentation
+  - `REAPER_WAVEFORM_RENDERING.md` - Waveform API reference
+  - `REAPER_TIMELINE_GRID.md` - Timeline/grid API reference
 - `tests/` - Unit tests (not synced to Windows)
   - `luaunit.lua` - LuaUnit testing framework
   - `run_tests.lua` - Test runner
