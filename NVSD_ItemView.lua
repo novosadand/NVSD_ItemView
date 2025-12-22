@@ -31,6 +31,7 @@ local MARKER_WIDTH = 12
 local WINDOW_PADDING = 8  -- Padding inside window
 local WAVEFORM_MARGIN_H = 20  -- Horizontal margin for easier marker access
 local WAVEFORM_MARGIN_V = 8  -- Vertical margin (smaller for docked windows)
+local INFO_BAR_HEIGHT = 18  -- Height of the file info bar (top)
 local RULER_HEIGHT = 20  -- Height of the bar number ruler (top)
 local TIME_RULER_HEIGHT = 18  -- Height of the source time ruler (bottom)
 local SNAP_THRESHOLD_PX = 25  -- Pixels within which markers snap to source boundaries
@@ -51,6 +52,9 @@ local COLOR_RULER_TEXT = 0xAAAAAAFF      -- Ruler text
 local COLOR_GRID_BAR = 0x555555FF        -- Bar lines
 local COLOR_GRID_BEAT = 0x333333FF       -- Beat lines
 local COLOR_PLAYHEAD = 0x00CC00FF        -- Playhead (green, like REAPER default)
+local COLOR_INFO_BAR_BG = 0x1E1E1EFF     -- Info bar background
+local COLOR_INFO_BAR_TEXT = 0xBBBBBBFF   -- Info bar text
+local COLOR_INFO_BAR_ICON = 0x5A9F5AFF   -- Info bar waveform icon (green)
 
 -- State
 local ctx = reaper.ImGui_CreateContext("NVSD_ItemView")
@@ -542,6 +546,126 @@ local function draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler_h
 
   -- Draw ruler bottom border
   reaper.ImGui_DrawList_AddLine(draw_list, x, ruler_y + ruler_height, x + width, ruler_y + ruler_height, COLOR_GRID_BAR, 1)
+end
+
+-- Get bit depth from WAV file header (returns nil for non-WAV or on error)
+local function get_wav_bit_depth(file_path)
+  if not file_path or file_path == "" then return nil end
+  local f = io.open(file_path, "rb")
+  if not f then return nil end
+
+  -- Read RIFF header (first 12 bytes)
+  local riff = f:read(4)
+  if riff ~= "RIFF" then f:close() return nil end
+
+  f:read(4)  -- Skip file size
+  local wave = f:read(4)
+  if wave ~= "WAVE" then f:close() return nil end
+
+  -- Find fmt chunk
+  while true do
+    local chunk_id = f:read(4)
+    if not chunk_id then f:close() return nil end
+
+    local chunk_size_bytes = f:read(4)
+    if not chunk_size_bytes then f:close() return nil end
+
+    local chunk_size = string.byte(chunk_size_bytes, 1) +
+                       string.byte(chunk_size_bytes, 2) * 256 +
+                       string.byte(chunk_size_bytes, 3) * 65536 +
+                       string.byte(chunk_size_bytes, 4) * 16777216
+
+    if chunk_id == "fmt " then
+      -- Read fmt chunk: format(2), channels(2), sample_rate(4), byte_rate(4), block_align(2), bits_per_sample(2)
+      local fmt_data = f:read(math.min(chunk_size, 16))
+      if fmt_data and #fmt_data >= 16 then
+        local bits_per_sample = string.byte(fmt_data, 15) + string.byte(fmt_data, 16) * 256
+        f:close()
+        return bits_per_sample
+      end
+      f:close()
+      return nil
+    else
+      -- Skip this chunk
+      f:seek("cur", chunk_size)
+    end
+  end
+end
+
+-- Get file name from full path
+local function get_file_name(path)
+  if not path then return "" end
+  -- Match the last component after / or \
+  return path:match("([^/\\]+)$") or path
+end
+
+-- Draw file info bar at the top
+local function draw_info_bar(draw_list, x, y, width, height, source, file_path)
+  -- Draw background
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, COLOR_INFO_BAR_BG)
+
+  -- Draw bottom border
+  reaper.ImGui_DrawList_AddLine(draw_list, x, y + height, x + width, y + height, 0x333333FF, 1)
+
+  -- Draw waveform icon (simple representation: 3 vertical lines of varying height)
+  local icon_x = x + 4
+  local icon_center_y = y + height / 2
+  local icon_max_h = height * 0.6
+
+  -- Icon: stylized waveform (5 bars)
+  local bar_widths = {2, 2, 2, 2, 2}
+  local bar_heights = {0.3, 0.7, 1.0, 0.6, 0.4}
+  local bar_gap = 1
+  local current_x = icon_x
+
+  for i = 1, #bar_heights do
+    local bar_h = icon_max_h * bar_heights[i]
+    local bar_y1 = icon_center_y - bar_h / 2
+    local bar_y2 = icon_center_y + bar_h / 2
+    reaper.ImGui_DrawList_AddRectFilled(draw_list, current_x, bar_y1, current_x + bar_widths[i], bar_y2, COLOR_INFO_BAR_ICON)
+    current_x = current_x + bar_widths[i] + bar_gap
+  end
+
+  local text_x = current_x + 4
+
+  -- Build info string
+  local file_name = get_file_name(file_path)
+  local sample_rate = source and reaper.GetMediaSourceSampleRate(source) or 0
+  local num_channels = source and reaper.GetMediaSourceNumChannels(source) or 0
+  local bit_depth = get_wav_bit_depth(file_path)
+
+  local info_parts = {}
+  if file_name ~= "" then
+    table.insert(info_parts, file_name)
+  end
+
+  if sample_rate > 0 then
+    local sr_khz = sample_rate / 1000
+    if sr_khz == math.floor(sr_khz) then
+      table.insert(info_parts, string.format("%d kHz", sr_khz))
+    else
+      table.insert(info_parts, string.format("%.1f kHz", sr_khz))
+    end
+  end
+
+  if bit_depth then
+    table.insert(info_parts, string.format("%d-bit", bit_depth))
+  end
+
+  if num_channels > 0 then
+    if num_channels == 1 then
+      table.insert(info_parts, "Mono")
+    elseif num_channels == 2 then
+      table.insert(info_parts, "Stereo")
+    else
+      table.insert(info_parts, string.format("%d Ch", num_channels))
+    end
+  end
+
+  local info_text = table.concat(info_parts, " · ")
+
+  -- Draw text
+  reaper.ImGui_DrawList_AddText(draw_list, text_x, y + 3, COLOR_INFO_BAR_TEXT, info_text)
 end
 
 -- Format source time as mins:secs or mins:secs:ms depending on show_ms flag
@@ -1519,8 +1643,8 @@ local function loop()
           -- Account for both left columns in waveform width
           local total_left_width = LEFT_COLUMN_WIDTH + LEFT_PANEL_WIDTH
           local waveform_width = math.max(100, avail_w - (WAVEFORM_MARGIN_H * 2) - total_left_width)
-          -- Reserve space for top ruler and bottom time ruler, ensure minimum height
-          local waveform_height = math.max(50, avail_h - (WAVEFORM_MARGIN_V * 2) - RULER_HEIGHT - TIME_RULER_HEIGHT)
+          -- Reserve space for info bar, top ruler and bottom time ruler, ensure minimum height
+          local waveform_height = math.max(50, avail_h - (WAVEFORM_MARGIN_V * 2) - INFO_BAR_HEIGHT - RULER_HEIGHT - TIME_RULER_HEIGHT)
 
           local cursor_x, cursor_y = reaper.ImGui_GetCursorScreenPos(ctx)
           -- Far-left column position (WARP button etc)
@@ -1529,15 +1653,16 @@ local function loop()
           -- Left panel position (volume/pitch)
           local panel_x = left_col_x + LEFT_COLUMN_WIDTH
           local panel_y = cursor_y + WAVEFORM_MARGIN_V
-          local panel_height = RULER_HEIGHT + waveform_height + TIME_RULER_HEIGHT
+          local panel_height = INFO_BAR_HEIGHT + RULER_HEIGHT + waveform_height + TIME_RULER_HEIGHT
           -- Waveform starts after both left panels
           local wave_x = cursor_x + total_left_width + WAVEFORM_MARGIN_H
-          local ruler_y = cursor_y + WAVEFORM_MARGIN_V
+          local info_bar_y = cursor_y + WAVEFORM_MARGIN_V
+          local ruler_y = info_bar_y + INFO_BAR_HEIGHT
           local wave_y = ruler_y + RULER_HEIGHT
           local time_ruler_y = wave_y + waveform_height  -- Bottom time ruler
 
           -- Reserve the full area with InvisibleButton to prevent window dragging
-          local total_height = WAVEFORM_MARGIN_V + RULER_HEIGHT + waveform_height + TIME_RULER_HEIGHT + WAVEFORM_MARGIN_V
+          local total_height = WAVEFORM_MARGIN_V + INFO_BAR_HEIGHT + RULER_HEIGHT + waveform_height + TIME_RULER_HEIGHT + WAVEFORM_MARGIN_V
           reaper.ImGui_InvisibleButton(ctx, "waveform_area", avail_w, math.max(avail_h, total_height))
 
           -- Get mouse position early (needed by multiple sections)
@@ -1604,6 +1729,10 @@ local function loop()
           local start_px, end_px, view_start, view_length = draw_waveform(draw_list, wave_x, wave_y,
             waveform_width, waveform_height,
             cached_peaks, view_offset, view_item_length, source_length, pan_offset, zoom_level, ruler_y, item_vol, is_reversed)
+
+          -- Draw file info bar at the top
+          local file_path = reaper.GetMediaSourceFileName(source, "")
+          draw_info_bar(draw_list, wave_x, info_bar_y, waveform_width, INFO_BAR_HEIGHT, source, file_path)
 
           -- Calculate ACTUAL current marker positions
           -- During drag, use tracked drag positions for stable rendering (no REAPER round-trip jitter)
