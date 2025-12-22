@@ -2157,9 +2157,18 @@ local function loop()
             -- Dragging right = content moves right = view shifts left = negative offset change
             local delta_time = -(mouse_delta_px / waveform_width) * view_length
             pan_offset = pan_start_offset + delta_time
-            -- Clamp pan to max half the item length in either direction
-            local max_pan = source_item_length / 2
-            pan_offset = math.max(-max_pan, math.min(max_pan, pan_offset))
+            -- Allow panning to see full source range (from 0 to source_length)
+            -- item_center is where the view is centered by default
+            local item_center = start_offset + source_item_length / 2
+            -- To see source start (0): need pan_offset <= -item_center + view_length/2
+            -- To see source end (source_length): need pan_offset >= source_length - item_center - view_length/2
+            local min_pan = -item_center + view_length / 2
+            local max_pan = source_length - item_center - view_length / 2
+            -- Swap if needed (when zoomed out far, min might be > max)
+            if min_pan > max_pan then
+              min_pan, max_pan = max_pan, min_pan
+            end
+            pan_offset = math.max(min_pan, math.min(max_pan, pan_offset))
           end
 
           -- Start dragging - store original values and begin undo block
