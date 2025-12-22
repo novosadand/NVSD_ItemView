@@ -975,3 +975,367 @@ function TestNVSDItemView:test_ruler_mouse_detection()
     -- Left of waveform
     lu.assertFalse(is_mouse_in_ruler(90, 60, wave_x, ruler_y, width, ruler_height))
 end
+
+function TestNVSDItemView:test_alt_drag_slide_both_markers()
+    -- Test Alt+drag behavior: both markers move together, item length stays same
+    -- This slides the "window" of which part of the source is used
+    local function alt_drag_slide(drag_start_offset, drag_start_length, mouse_delta_time, playrate)
+        -- New start offset = original + delta
+        local new_start = drag_start_offset + mouse_delta_time
+        -- Item length stays the same
+        local original_source_length = drag_start_length * playrate
+        local new_end = new_start + original_source_length
+        -- Return new start, end, and item length (should be unchanged)
+        return new_start, new_end, drag_start_length
+    end
+
+    -- Original: offset=2, length=5, playrate=1
+    -- Slide right by 1 second
+    local new_start, new_end, new_length = alt_drag_slide(2, 5, 1, 1)
+    lu.assertAlmostEquals(new_start, 3, 0.001)
+    lu.assertAlmostEquals(new_end, 8, 0.001)
+    lu.assertAlmostEquals(new_length, 5, 0.001)  -- length unchanged
+
+    -- Slide left by 1 second
+    new_start, new_end, new_length = alt_drag_slide(2, 5, -1, 1)
+    lu.assertAlmostEquals(new_start, 1, 0.001)
+    lu.assertAlmostEquals(new_end, 6, 0.001)
+    lu.assertAlmostEquals(new_length, 5, 0.001)  -- length unchanged
+
+    -- Slide into negative (before source start - for looping)
+    new_start, new_end, new_length = alt_drag_slide(2, 5, -4, 1)
+    lu.assertAlmostEquals(new_start, -2, 0.001)
+    lu.assertAlmostEquals(new_end, 3, 0.001)
+    lu.assertAlmostEquals(new_length, 5, 0.001)  -- length unchanged
+
+    -- With playrate 2 (double speed)
+    new_start, new_end, new_length = alt_drag_slide(2, 5, 1, 2)
+    lu.assertAlmostEquals(new_start, 3, 0.001)
+    lu.assertAlmostEquals(new_end, 13, 0.001)  -- source length = 5 * 2 = 10
+    lu.assertAlmostEquals(new_length, 5, 0.001)  -- item length unchanged
+end
+
+function TestNVSDItemView:test_format_source_time()
+    -- Test formatting source time as mins:secs or mins:secs:ms
+    local function format_source_time(seconds, show_ms)
+        local negative = seconds < 0
+        local abs_secs = math.abs(seconds)
+        local mins = math.floor(abs_secs / 60)
+        local secs = abs_secs - mins * 60
+
+        local sign = negative and "-" or ""
+
+        if show_ms then
+            local whole_secs = math.floor(secs)
+            local ms = math.floor((secs - whole_secs) * 1000)
+            return string.format("%s%d:%02d:%03d", sign, mins, whole_secs, ms)
+        else
+            return string.format("%s%d:%02d", sign, mins, math.floor(secs))
+        end
+    end
+
+    -- Basic formatting without ms
+    lu.assertEquals(format_source_time(0, false), "0:00")
+    lu.assertEquals(format_source_time(5, false), "0:05")
+    lu.assertEquals(format_source_time(65, false), "1:05")
+    lu.assertEquals(format_source_time(125, false), "2:05")
+
+    -- With milliseconds
+    lu.assertEquals(format_source_time(0, true), "0:00:000")
+    lu.assertEquals(format_source_time(1.5, true), "0:01:500")
+    lu.assertEquals(format_source_time(0.25, true), "0:00:250")
+    lu.assertEquals(format_source_time(65.123, true), "1:05:123")
+
+    -- Negative times
+    lu.assertEquals(format_source_time(-5, false), "-0:05")
+    lu.assertEquals(format_source_time(-65, false), "-1:05")
+    lu.assertEquals(format_source_time(-1.5, true), "-0:01:500")
+end
+
+function TestNVSDItemView:test_time_ruler_interval_selection()
+    -- Test selecting appropriate time intervals based on zoom level
+    local function select_interval(target_interval)
+        local nice_intervals = {0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600}
+        local interval = nice_intervals[#nice_intervals]
+        for _, ni in ipairs(nice_intervals) do
+            if ni >= target_interval then
+                interval = ni
+                break
+            end
+        end
+        return interval
+    end
+
+    -- Very zoomed in (need sub-second intervals)
+    lu.assertEquals(select_interval(0.005), 0.01)
+    lu.assertEquals(select_interval(0.015), 0.02)
+    lu.assertEquals(select_interval(0.08), 0.1)
+
+    -- Medium zoom (second intervals)
+    lu.assertEquals(select_interval(0.8), 1)
+    lu.assertEquals(select_interval(1.5), 2)
+    lu.assertEquals(select_interval(4), 5)
+
+    -- Zoomed out (larger intervals)
+    lu.assertEquals(select_interval(8), 10)
+    lu.assertEquals(select_interval(25), 30)
+    lu.assertEquals(select_interval(50), 60)
+    lu.assertEquals(select_interval(100), 120)
+end
+
+function TestNVSDItemView:test_alt_drag_snap_only_grabbed_marker_start()
+    -- Test that alt+drag only snaps the grabbed marker, not both
+    local function alt_drag_with_snap_start(raw_start, raw_end, source_length, snap_threshold, dragging_start)
+        local function snap_to_source_boundary(t, src_len, threshold_time)
+            local nearest_boundary = math.floor(t / src_len + 0.5) * src_len
+            if math.abs(t - nearest_boundary) <= threshold_time then
+                return nearest_boundary
+            end
+            return t
+        end
+
+        local original_source_length = raw_end - raw_start
+        local new_start
+
+        if dragging_start then
+            -- Grabbed start marker - only snap start to boundary
+            local start_snapped = snap_to_source_boundary(raw_start, source_length, snap_threshold)
+            if start_snapped ~= raw_start then
+                new_start = start_snapped
+            else
+                new_start = raw_start
+            end
+        else
+            -- Grabbed end marker - only snap end to boundary
+            local end_snapped = snap_to_source_boundary(raw_end, source_length, snap_threshold)
+            if end_snapped ~= raw_end then
+                new_start = end_snapped - original_source_length
+            else
+                new_start = raw_start
+            end
+        end
+
+        return new_start, new_start + original_source_length
+    end
+
+    local source_length = 10
+    local snap_threshold = 0.5
+
+    -- Dragging start marker, start near 0 -> should snap start to 0
+    local new_start, new_end = alt_drag_with_snap_start(0.2, 5.2, source_length, snap_threshold, true)
+    lu.assertAlmostEquals(new_start, 0, 0.001)  -- snapped
+    lu.assertAlmostEquals(new_end, 5, 0.001)    -- follows
+
+    -- Dragging start marker, end near 10 -> should NOT snap (only grabbed marker snaps)
+    new_start, new_end = alt_drag_with_snap_start(4.8, 9.8, source_length, snap_threshold, true)
+    lu.assertAlmostEquals(new_start, 4.8, 0.001)  -- not snapped (start not near boundary)
+    lu.assertAlmostEquals(new_end, 9.8, 0.001)    -- follows
+
+    -- Dragging end marker, end near 10 -> should snap end to 10
+    new_start, new_end = alt_drag_with_snap_start(4.8, 9.8, source_length, snap_threshold, false)
+    lu.assertAlmostEquals(new_start, 5, 0.001)    -- adjusted
+    lu.assertAlmostEquals(new_end, 10, 0.001)     -- snapped
+
+    -- Dragging end marker, start near 0 -> should NOT snap (only grabbed marker snaps)
+    new_start, new_end = alt_drag_with_snap_start(0.2, 5.2, source_length, snap_threshold, false)
+    lu.assertAlmostEquals(new_start, 0.2, 0.001)  -- not adjusted
+    lu.assertAlmostEquals(new_end, 5.2, 0.001)    -- not snapped (end not near boundary)
+end
+
+function TestNVSDItemView:test_semitones_to_playrate()
+    -- Test converting semitones to playrate (for non-warp mode)
+    local function semitones_to_playrate(semitones)
+        return 2 ^ (semitones / 12)
+    end
+
+    -- 0 semitones = no change
+    lu.assertAlmostEquals(semitones_to_playrate(0), 1.0, 0.001)
+
+    -- +12 semitones = double speed (octave up)
+    lu.assertAlmostEquals(semitones_to_playrate(12), 2.0, 0.001)
+
+    -- -12 semitones = half speed (octave down)
+    lu.assertAlmostEquals(semitones_to_playrate(-12), 0.5, 0.001)
+
+    -- +7 semitones = perfect fifth up
+    lu.assertAlmostEquals(semitones_to_playrate(7), 2^(7/12), 0.001)
+
+    -- -5 semitones = perfect fourth down
+    lu.assertAlmostEquals(semitones_to_playrate(-5), 2^(-5/12), 0.001)
+end
+
+function TestNVSDItemView:test_playrate_to_semitones()
+    -- Test converting playrate to semitones (for non-warp mode)
+    local function playrate_to_semitones(playrate)
+        return 12 * math.log(playrate) / math.log(2)
+    end
+
+    -- Normal speed = 0 semitones
+    lu.assertAlmostEquals(playrate_to_semitones(1.0), 0, 0.001)
+
+    -- Double speed = +12 semitones
+    lu.assertAlmostEquals(playrate_to_semitones(2.0), 12, 0.001)
+
+    -- Half speed = -12 semitones
+    lu.assertAlmostEquals(playrate_to_semitones(0.5), -12, 0.001)
+
+    -- Roundtrip test
+    local original = 7.5
+    local playrate = 2 ^ (original / 12)
+    local back = playrate_to_semitones(playrate)
+    lu.assertAlmostEquals(back, original, 0.001)
+end
+
+function TestNVSDItemView:test_db_to_linear_and_back()
+    -- Test dB to linear conversion for gain slider
+    local function db_to_linear(db)
+        return 10 ^ (db / 20)
+    end
+
+    local function linear_to_db(linear)
+        if linear <= 0 then return -math.huge end
+        return 20 * math.log(linear) / math.log(10)
+    end
+
+    -- 0 dB = unity gain
+    lu.assertAlmostEquals(db_to_linear(0), 1.0, 0.001)
+
+    -- +6 dB = ~2x
+    lu.assertAlmostEquals(db_to_linear(6), 1.995, 0.01)
+
+    -- -6 dB = ~0.5x
+    lu.assertAlmostEquals(db_to_linear(-6), 0.501, 0.01)
+
+    -- +24 dB (max gain in UI)
+    lu.assertAlmostEquals(db_to_linear(24), 15.85, 0.1)
+
+    -- Roundtrip
+    local original_db = -12
+    local linear = db_to_linear(original_db)
+    local back = linear_to_db(linear)
+    lu.assertAlmostEquals(back, original_db, 0.001)
+end
+
+function TestNVSDItemView:test_mouse_in_full_view_area()
+    -- Test detecting mouse in full waveform view (waveform + both rulers)
+    local function is_mouse_in_view(mouse_x, mouse_y, wave_x, ruler_y, waveform_width, time_ruler_y, time_ruler_height)
+        return mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
+               and mouse_y >= ruler_y and mouse_y <= time_ruler_y + time_ruler_height
+    end
+
+    local wave_x = 100
+    local ruler_y = 50      -- top ruler starts here
+    local waveform_width = 500
+    local time_ruler_y = 250   -- bottom ruler starts here
+    local time_ruler_height = 20
+
+    -- In top ruler
+    lu.assertTrue(is_mouse_in_view(300, 55, wave_x, ruler_y, waveform_width, time_ruler_y, time_ruler_height))
+
+    -- In waveform area
+    lu.assertTrue(is_mouse_in_view(300, 150, wave_x, ruler_y, waveform_width, time_ruler_y, time_ruler_height))
+
+    -- In bottom time ruler
+    lu.assertTrue(is_mouse_in_view(300, 260, wave_x, ruler_y, waveform_width, time_ruler_y, time_ruler_height))
+
+    -- Above top ruler
+    lu.assertFalse(is_mouse_in_view(300, 40, wave_x, ruler_y, waveform_width, time_ruler_y, time_ruler_height))
+
+    -- Below bottom ruler
+    lu.assertFalse(is_mouse_in_view(300, 280, wave_x, ruler_y, waveform_width, time_ruler_y, time_ruler_height))
+
+    -- Left of waveform
+    lu.assertFalse(is_mouse_in_view(90, 150, wave_x, ruler_y, waveform_width, time_ruler_y, time_ruler_height))
+
+    -- Right of waveform
+    lu.assertFalse(is_mouse_in_view(610, 150, wave_x, ruler_y, waveform_width, time_ruler_y, time_ruler_height))
+end
+
+function TestNVSDItemView:test_adaptive_peak_samples_for_zoom()
+    -- Test that peak samples scale properly with zoom for resolution
+    local function calc_desired_samples_for_zoom(waveform_width, zoom_level, source_length, base_view_length, max_samples)
+        -- Formula: pixels_per_source = (waveform_width * zoom_level) / base_view * source_length
+        local pixels_per_source = (waveform_width * zoom_level) / base_view_length * source_length
+        return math.max(200, math.min(max_samples, math.floor(pixels_per_source)))
+    end
+
+    local waveform_width = 800
+    local source_length = 10
+    local base_view_length = 10
+    local max_samples = 50000
+
+    -- At zoom 1: ~800 samples (matches width)
+    lu.assertEquals(calc_desired_samples_for_zoom(waveform_width, 1, source_length, base_view_length, max_samples), 800)
+
+    -- At zoom 10: ~8000 samples
+    lu.assertEquals(calc_desired_samples_for_zoom(waveform_width, 10, source_length, base_view_length, max_samples), 8000)
+
+    -- At zoom 50: ~40000 samples
+    lu.assertEquals(calc_desired_samples_for_zoom(waveform_width, 50, source_length, base_view_length, max_samples), 40000)
+
+    -- At zoom 100: capped at max
+    lu.assertEquals(calc_desired_samples_for_zoom(waveform_width, 100, source_length, base_view_length, max_samples), 50000)
+
+    -- With different source/base ratio
+    lu.assertEquals(calc_desired_samples_for_zoom(waveform_width, 1, 5, 10, max_samples), 400)  -- half source
+end
+
+function TestNVSDItemView:test_zoom_to_cursor_view_consistency()
+    -- Test that zoom calculations use consistent values with draw function
+    local function simulate_zoom_to_cursor(
+        cursor_x, wave_x, waveform_width,
+        view_offset, view_item_length, source_length,
+        old_zoom, new_zoom, current_pan_offset
+    )
+        -- These should match what draw_waveform uses
+        local zoom_base_view_length = math.max(source_length, view_item_length)
+        local zoom_item_center = view_offset + view_item_length / 2
+
+        -- Current view (before zoom)
+        local view_length = zoom_base_view_length / old_zoom
+        local view_start = zoom_item_center - view_length / 2 + current_pan_offset
+
+        -- Calculate cursor position
+        local cursor_fraction = math.max(0, math.min(1, (cursor_x - wave_x) / waveform_width))
+        local time_under_cursor = view_start + cursor_fraction * view_length
+
+        -- Apply new zoom
+        local new_view_length = zoom_base_view_length / new_zoom
+
+        -- Calculate new pan to keep time_under_cursor at same fraction
+        local new_pan = time_under_cursor - zoom_item_center + new_view_length * (0.5 - cursor_fraction)
+
+        -- Calculate new view_start
+        local new_view_start = zoom_item_center - new_view_length / 2 + new_pan
+        local time_at_cursor_after = new_view_start + cursor_fraction * new_view_length
+
+        return time_under_cursor, time_at_cursor_after
+    end
+
+    -- Test that time under cursor stays the same after zoom
+    local time_before, time_after = simulate_zoom_to_cursor(
+        350, 100, 500,  -- cursor at center
+        2, 5, 10,       -- view_offset, view_item_length, source_length
+        1, 2,           -- zoom from 1 to 2
+        0               -- no pan
+    )
+    lu.assertAlmostEquals(time_before, time_after, 0.001)
+
+    -- Test with offset cursor
+    time_before, time_after = simulate_zoom_to_cursor(
+        200, 100, 500,  -- cursor at 20% from left
+        2, 5, 10,
+        1, 4,           -- zoom from 1 to 4
+        0
+    )
+    lu.assertAlmostEquals(time_before, time_after, 0.001)
+
+    -- Test with pan offset
+    time_before, time_after = simulate_zoom_to_cursor(
+        400, 100, 500,  -- cursor at 60%
+        2, 5, 10,
+        2, 3,           -- zoom from 2 to 3
+        1.5             -- with pan
+    )
+    lu.assertAlmostEquals(time_before, time_after, 0.001)
+end
