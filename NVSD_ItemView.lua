@@ -1341,8 +1341,10 @@ local function loop()
           local parent = reaper.GetMediaSourceParent(source)
           while parent do
             -- Get this section's offset within its parent
-            local sect_offs, sect_len, is_reversed = reaper.PCM_Source_GetSectionInfo(source)
-            section_offset = section_offset + (sect_offs or 0)
+            local retval, sect_offs, sect_len, is_reversed = reaper.PCM_Source_GetSectionInfo(source)
+            if retval then
+              section_offset = section_offset + (sect_offs or 0)
+            end
             source = parent
             parent = reaper.GetMediaSourceParent(source)
           end
