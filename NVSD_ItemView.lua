@@ -35,7 +35,7 @@ local RULER_HEIGHT = 20  -- Height of the bar number ruler (top)
 local TIME_RULER_HEIGHT = 18  -- Height of the source time ruler (bottom)
 local SNAP_THRESHOLD_PX = 25  -- Pixels within which markers snap to source boundaries
 local LEFT_PANEL_WIDTH = 70  -- Width of the left control panel (volume/pitch)
-local LEFT_COLUMN_WIDTH = 90  -- Width of the far-left column (warp button etc)
+local LEFT_COLUMN_WIDTH = 130  -- Width of the far-left column (warp button etc)
 local GAIN_SLIDER_WIDTH = 16  -- Width of the gain slider track
 
 -- Colors (0xRRGGBBAA format)
@@ -125,6 +125,22 @@ local has_js_extension = reaper.JS_Mouse_SetPosition ~= nil
 
 -- Warp mode state (true = pitch shift preserves length, false = playrate changes length)
 local warp_mode = false
+local warp_dropdown_open = false
+
+-- Pitch shift mode values (I_PITCHMODE)
+-- Format: high word = shifter algorithm, low word = parameter
+local PITCH_MODES = {
+  {name = "Project Default", value = -1},
+  {name = "SoundTouch", value = 0},
+  {name = "Simple Windowed", value = 131072},
+  {name = "Elastique 3 Pro", value = 589824},
+  {name = "Elastique 3 Efficient", value = 655360},
+  {name = "Elastique 3 Soloist", value = 720896},
+  {name = "Elastique 2 Pro", value = 393216},
+  {name = "Elastique 2 Efficient", value = 458752},
+  {name = "Elastique 2 Soloist", value = 524288},
+  {name = "Rubber Band", value = 851968},
+}
 
 -- Convert semitones to playrate (for non-warp mode)
 local function semitones_to_playrate(semitones)
@@ -298,12 +314,8 @@ end
 
 -- Format dB value for display
 local function format_db(db)
-  if db <= -60 then return "-∞" end
-  if db >= 0 then
-    return string.format("+%.1f", db)
-  else
-    return string.format("%.1f", db)
-  end
+  if db <= -60 then return "-∞ dB" end
+  return string.format("%.1f dB", db)
 end
 
 -- Format pitch value for display (semitones)
@@ -868,6 +880,7 @@ local function draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, l
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_warp then
     warp_mode = not warp_mode
+    warp_dropdown_open = false  -- Close dropdown when toggling warp
     if take then
       reaper.Undo_BeginBlock()
       local current_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
@@ -891,8 +904,120 @@ local function draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, l
     end
   end
 
+  -- Warp mode dropdown (always visible, disabled when warp is off)
+  local dropdown_y = warp_btn_y + btn_height + 2
+  local dropdown_btn_height = 14
+  local dropdown_height = dropdown_btn_height + 4
+  local dropdown_x = left_col_x + 4
+  local dropdown_width = warp_btn_width
+
+  -- Get current pitch mode from take
+  local current_mode = -1
+  local current_mode_name = "Default"
+  if take then
+    current_mode = reaper.GetMediaItemTakeInfo_Value(take, "I_PITCHMODE")
+    -- Find matching mode name
+    for _, mode in ipairs(PITCH_MODES) do
+      if mode.value == current_mode then
+        current_mode_name = mode.name
+        break
+      elseif current_mode >= 0 then
+        -- Check if it's a variant of this mode (same high word)
+        local mode_shifter = mode.value >= 0 and (mode.value >> 16) or -1
+        local current_shifter = current_mode >= 0 and (current_mode >> 16) or -1
+        if mode_shifter == current_shifter and mode_shifter >= 0 then
+          current_mode_name = mode.name
+          break
+        end
+      end
+    end
+  end
+
+  -- Dropdown colors depend on warp_mode state
+  local dropdown_enabled = warp_mode
+  local mouse_in_dropdown = mouse_x >= dropdown_x and mouse_x <= dropdown_x + dropdown_width
+                            and mouse_y >= dropdown_y and mouse_y <= dropdown_y + dropdown_btn_height
+
+  local dropdown_bg, text_color, arrow_color
+  if dropdown_enabled then
+    dropdown_bg = mouse_in_dropdown and 0x505050FF or 0x353535FF
+    text_color = 0xCCCCCCFF
+    arrow_color = 0xAAAAAAFF
+  else
+    dropdown_bg = 0x252525FF  -- Darker, disabled look
+    text_color = 0x666666FF   -- Grayed out text
+    arrow_color = 0x555555FF  -- Grayed out arrow
+    warp_dropdown_open = false  -- Close if warp gets disabled
+  end
+
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, dropdown_x, dropdown_y, dropdown_x + dropdown_width, dropdown_y + dropdown_btn_height, dropdown_bg, 2)
+
+  -- Draw dropdown text and arrow
+  reaper.ImGui_DrawList_AddText(draw_list, dropdown_x + 3, dropdown_y + 1, text_color, current_mode_name)
+  -- Down arrow
+  reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
+    dropdown_x + dropdown_width - 10, dropdown_y + 4,
+    dropdown_x + dropdown_width - 4, dropdown_y + 4,
+    dropdown_x + dropdown_width - 7, dropdown_y + dropdown_btn_height - 4,
+    arrow_color)
+
+  -- Toggle dropdown on click (only if enabled)
+  if dropdown_enabled and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_dropdown then
+    warp_dropdown_open = not warp_dropdown_open
+  end
+
+  -- Draw dropdown menu if open
+  if warp_dropdown_open then
+    local menu_y = dropdown_y + dropdown_btn_height + 1
+    local menu_item_height = 16
+    local menu_height = #PITCH_MODES * menu_item_height + 4
+
+    -- Menu background
+    reaper.ImGui_DrawList_AddRectFilled(draw_list, dropdown_x, menu_y, dropdown_x + dropdown_width, menu_y + menu_height, 0x2A2A2AFF, 2)
+    reaper.ImGui_DrawList_AddRect(draw_list, dropdown_x, menu_y, dropdown_x + dropdown_width, menu_y + menu_height, 0x555555FF, 2)
+
+    -- Menu items
+    for i, mode in ipairs(PITCH_MODES) do
+      local item_y = menu_y + 2 + (i - 1) * menu_item_height
+      local mouse_in_item = mouse_x >= dropdown_x and mouse_x <= dropdown_x + dropdown_width
+                            and mouse_y >= item_y and mouse_y <= item_y + menu_item_height
+
+      if mouse_in_item then
+        reaper.ImGui_DrawList_AddRectFilled(draw_list, dropdown_x + 1, item_y, dropdown_x + dropdown_width - 1, item_y + menu_item_height, 0x4A4A4AFF)
+      end
+
+      local item_text_color = (mode.value == current_mode or
+        (current_mode >= 0 and mode.value >= 0 and (mode.value >> 16) == (current_mode >> 16)))
+        and 0x4A90D9FF or 0xCCCCCCFF
+      reaper.ImGui_DrawList_AddText(draw_list, dropdown_x + 4, item_y + 2, item_text_color, mode.name)
+
+      -- Select mode on click
+      if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_item then
+        if take then
+          reaper.Undo_BeginBlock()
+          reaper.SetMediaItemTakeInfo_Value(take, "I_PITCHMODE", mode.value)
+          reaper.UpdateArrange()
+          reaper.Undo_EndBlock("NVSD_ItemView: Set pitch mode", -1)
+        end
+        warp_dropdown_open = false
+      end
+    end
+
+    -- Close dropdown if clicking outside
+    if reaper.ImGui_IsMouseClicked(ctx, 0) and not mouse_in_dropdown then
+      local menu_bottom = menu_y + menu_height
+      local mouse_in_menu = mouse_x >= dropdown_x and mouse_x <= dropdown_x + dropdown_width
+                            and mouse_y >= menu_y and mouse_y <= menu_bottom
+      if not mouse_in_menu then
+        warp_dropdown_open = false
+      end
+    end
+
+    dropdown_height = dropdown_height + menu_height
+  end
+
   -- Second row: Reverse and Edit side by side (action buttons, not toggles)
-  local row2_y = warp_btn_y + btn_height + btn_margin
+  local row2_y = warp_btn_y + btn_height + btn_margin + dropdown_height
   local gap = 2
   local rev_btn_width = 52
   local edit_btn_width = LEFT_COLUMN_WIDTH - 8 - rev_btn_width - gap

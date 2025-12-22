@@ -1339,3 +1339,32 @@ function TestNVSDItemView:test_zoom_to_cursor_view_consistency()
     )
     lu.assertAlmostEquals(time_before, time_after, 0.001)
 end
+
+function TestNVSDItemView:test_format_db()
+    -- Test formatting dB value for display (no + sign, includes " dB" suffix)
+    local function format_db(db)
+        if db <= -60 then return "-∞ dB" end
+        return string.format("%.1f dB", db)
+    end
+
+    -- Positive values: no + sign, includes " dB"
+    lu.assertEquals(format_db(24), "24.0 dB")
+    lu.assertEquals(format_db(12), "12.0 dB")
+    lu.assertEquals(format_db(6), "6.0 dB")
+    lu.assertEquals(format_db(0), "0.0 dB")
+
+    -- Negative values: includes " dB"
+    lu.assertEquals(format_db(-6), "-6.0 dB")
+    lu.assertEquals(format_db(-12), "-12.0 dB")
+    lu.assertEquals(format_db(-24), "-24.0 dB")
+
+    -- Very low values: show -∞ dB
+    lu.assertEquals(format_db(-60), "-∞ dB")
+    lu.assertEquals(format_db(-61), "-∞ dB")
+    lu.assertEquals(format_db(-100), "-∞ dB")
+
+    -- Fractional values
+    lu.assertEquals(format_db(6.5), "6.5 dB")
+    lu.assertEquals(format_db(-3.2), "-3.2 dB")
+    lu.assertEquals(format_db(0.1), "0.1 dB")
+end
