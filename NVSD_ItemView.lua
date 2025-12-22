@@ -805,15 +805,16 @@ local function draw_waveform(draw_list, x, y, width, height, peaks, start_offset
   visual_gain = visual_gain or 1.0
   is_reversed = is_reversed or false
 
-  -- Base view size = source_item_length (the item portion between markers)
-  -- At zoom 1.0, view fits exactly the item; zoom out to see more of source
-  local base_view_length = source_item_length
+  -- Base view size = source_length (the full original sample)
+  -- At zoom 1.0, view shows full source with orange boundaries at edges
+  local base_view_length = source_length
   -- Apply zoom: higher zoom = smaller view_length = more zoomed in
   local view_length = base_view_length / zoom_lvl
 
-  -- Center the view on the item, then apply pan offset
-  local item_center = start_offset + source_item_length / 2
-  local view_start = item_center - view_length / 2 + pan_offset_time
+  -- Center the view on the source, then apply pan offset
+  -- At zoom 1.0 with pan 0, view shows full source (0 to source_length)
+  local source_center = source_length / 2
+  local view_start = source_center - view_length / 2 + pan_offset_time
   local view_end = view_start + view_length
 
   -- Item bounds in source time
@@ -890,8 +891,8 @@ local function draw_waveform(draw_list, x, y, width, height, peaks, start_offset
         outline_color = 0x5ABF5AFF
       end
     else
-      fill_color = 0x2A2A2ACC      -- Gray for inactive
-      outline_color = 0x3A3A3AFF
+      fill_color = 0x2A4A2ACC      -- Muted green for inactive, semi-transparent
+      outline_color = 0x3A6A3AFF   -- Muted green outline
     end
 
     -- Draw filled quad connecting to previous sample for smooth fill
@@ -2158,17 +2159,11 @@ local function loop()
             -- Dragging right = content moves right = view shifts left = negative offset change
             local delta_time = -(mouse_delta_px / waveform_width) * view_length
             pan_offset = pan_start_offset + delta_time
-            -- Allow panning to see full source range (from 0 to source_length)
-            -- item_center is where the view is centered by default
-            local item_center = start_offset + source_item_length / 2
-            -- To see source start (0): need pan_offset <= -item_center + view_length/2
-            -- To see source end (source_length): need pan_offset >= source_length - item_center - view_length/2
-            local min_pan = -item_center + view_length / 2
-            local max_pan = source_length - item_center - view_length / 2
-            -- Swap if needed (when zoomed out far, min might be > max)
-            if min_pan > max_pan then
-              min_pan, max_pan = max_pan, min_pan
-            end
+            -- Panning limits based on source-centered view
+            -- At zoom 1.0, view_length = source_length, no panning needed
+            -- When zoomed in, allow panning to see from 0 to source_length
+            local min_pan = (view_length - source_length) / 2  -- pan left limit
+            local max_pan = (source_length - view_length) / 2  -- pan right limit
             pan_offset = math.max(min_pan, math.min(max_pan, pan_offset))
           end
 
