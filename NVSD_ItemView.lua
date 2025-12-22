@@ -60,6 +60,7 @@ local cached_source = nil
 local cached_item = nil
 local cached_num_samples = 0
 local cached_source_length = 0
+local cached_reversed = false
 local peaks_error = nil
 
 
@@ -618,12 +619,14 @@ end
 -- zoom_lvl: 1.0 = fit to view, >1 = zoomed in
 -- ruler_y: top of ruler bar (for extending source boundary lines through ruler)
 -- visual_gain: multiplier for waveform height (1.0 = normal, matches item volume)
-local function draw_waveform(draw_list, x, y, width, height, peaks, start_offset, source_item_length, source_length, pan_offset_time, zoom_lvl, ruler_y, visual_gain)
+-- is_reversed: if true, flip the waveform horizontally to match reversed take
+local function draw_waveform(draw_list, x, y, width, height, peaks, start_offset, source_item_length, source_length, pan_offset_time, zoom_lvl, ruler_y, visual_gain, is_reversed)
   if not peaks or #peaks == 0 or source_length <= 0 then return 0, 0, 0, source_length end
 
   pan_offset_time = pan_offset_time or 0
   zoom_lvl = zoom_lvl or 1.0
   visual_gain = visual_gain or 1.0
+  is_reversed = is_reversed or false
 
   -- Base view size = max(source_length, source_item_length) to ensure we can see everything at zoom 1.0
   local base_view_length = math.max(source_length, source_item_length)
@@ -658,6 +661,11 @@ local function draw_waveform(draw_list, x, y, width, height, peaks, start_offset
     -- Wrap time to source range (0 to source_length) for looping
     local wrapped = t % source_length
     if wrapped < 0 then wrapped = wrapped + source_length end
+
+    -- If reversed, flip the lookup position
+    if is_reversed then
+      wrapped = source_length - wrapped
+    end
 
     -- Map wrapped time to peak index (peaks cover 0 to source_length)
     local peak_idx = math.floor((wrapped / source_length) * #peaks) + 1
@@ -827,16 +835,17 @@ end
 
 -- Draw WARP/Reverse/Edit buttons in the left column
 local function draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take)
-  local btn_height = 16
+  local btn_height = 18
   local btn_margin = 4
   local row_y = left_col_y + 4
+  local text_height = 13  -- Approximate text height for vertical centering
 
   local COLOR_BTN_ON = 0x4A90D9FF
   local COLOR_BTN_OFF = 0x404040FF
   local COLOR_BTN_HOVER = 0x5AA0E9FF
   local COLOR_BTN_TEXT = 0xFFFFFFFF
 
-  -- WARP button (full width, top row)
+  -- WARP button (full width, top row) - toggle state button
   local warp_btn_width = LEFT_COLUMN_WIDTH - 8
   local warp_btn_x = left_col_x + 4
   local warp_btn_y = row_y
@@ -851,9 +860,11 @@ local function draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, l
     warp_bg_color = mouse_in_warp and 0x505050FF or COLOR_BTN_OFF
   end
   reaper.ImGui_DrawList_AddRectFilled(draw_list, warp_btn_x, warp_btn_y, warp_btn_x + warp_btn_width, warp_btn_y + btn_height, warp_bg_color, 3)
-  -- Center "WARP" text (4 chars * 7px = 28px)
+  -- Center "WARP" text
   local warp_text_w = 28
-  reaper.ImGui_DrawList_AddText(draw_list, warp_btn_x + (warp_btn_width - warp_text_w) / 2, warp_btn_y + 2, COLOR_BTN_TEXT, "WARP")
+  local warp_text_x = warp_btn_x + (warp_btn_width - warp_text_w) / 2
+  local warp_text_y = warp_btn_y + (btn_height - text_height) / 2
+  reaper.ImGui_DrawList_AddText(draw_list, warp_text_x, warp_text_y, COLOR_BTN_TEXT, "WARP")
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_warp then
     warp_mode = not warp_mode
@@ -880,35 +891,25 @@ local function draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, l
     end
   end
 
-  -- Second row: Reverse and Edit side by side
+  -- Second row: Reverse and Edit side by side (action buttons, not toggles)
   local row2_y = warp_btn_y + btn_height + btn_margin
   local gap = 2
   local rev_btn_width = 52
   local edit_btn_width = LEFT_COLUMN_WIDTH - 8 - rev_btn_width - gap
 
-  -- REVERSE button (left side of row 2)
+  -- REVERSE button (left side of row 2) - action button, not toggle
   local rev_btn_x = left_col_x + 4
-
-  local is_reversed = false
-  local has_sws = reaper.BR_GetMediaSourceProperties ~= nil
-  if has_sws and take then
-    local retval, section, start_pos, length, fade, reverse = reaper.BR_GetMediaSourceProperties(take)
-    if retval then is_reversed = reverse end
-  end
 
   local mouse_in_rev = mouse_x >= rev_btn_x and mouse_x <= rev_btn_x + rev_btn_width
                        and mouse_y >= row2_y and mouse_y <= row2_y + btn_height
 
-  local rev_bg_color
-  if is_reversed then
-    rev_bg_color = mouse_in_rev and COLOR_BTN_HOVER or COLOR_BTN_ON
-  else
-    rev_bg_color = mouse_in_rev and 0x505050FF or COLOR_BTN_OFF
-  end
+  local rev_bg_color = mouse_in_rev and 0x505050FF or COLOR_BTN_OFF
   reaper.ImGui_DrawList_AddRectFilled(draw_list, rev_btn_x, row2_y, rev_btn_x + rev_btn_width, row2_y + btn_height, rev_bg_color, 3)
-  -- Center "Reverse" text (7 chars * 7px = 49px)
+  -- Center "Reverse" text
   local rev_text_w = 49
-  reaper.ImGui_DrawList_AddText(draw_list, rev_btn_x + (rev_btn_width - rev_text_w) / 2, row2_y + 2, COLOR_BTN_TEXT, "Reverse")
+  local rev_text_x = rev_btn_x + (rev_btn_width - rev_text_w) / 2
+  local rev_text_y = row2_y + (btn_height - text_height) / 2
+  reaper.ImGui_DrawList_AddText(draw_list, rev_text_x, rev_text_y, COLOR_BTN_TEXT, "Reverse")
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_rev then
     if item then
@@ -917,12 +918,12 @@ local function draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, l
       reaper.SetMediaItemSelected(item, true)
       reaper.Main_OnCommand(41051, 0)
       reaper.UpdateArrange()
-      reaper.Undo_EndBlock("NVSD_ItemView: Toggle Reverse", -1)
+      reaper.Undo_EndBlock("NVSD_ItemView: Reverse", -1)
       cached_peaks = nil
     end
   end
 
-  -- EDIT button (right side of row 2)
+  -- EDIT button (right side of row 2) - action button
   local edit_btn_x = rev_btn_x + rev_btn_width + gap
 
   local mouse_in_edit = mouse_x >= edit_btn_x and mouse_x <= edit_btn_x + edit_btn_width
@@ -930,9 +931,11 @@ local function draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, l
 
   local edit_bg_color = mouse_in_edit and 0x505050FF or COLOR_BTN_OFF
   reaper.ImGui_DrawList_AddRectFilled(draw_list, edit_btn_x, row2_y, edit_btn_x + edit_btn_width, row2_y + btn_height, edit_bg_color, 3)
-  -- Center "Edit" text (4 chars * 7px = 28px)
+  -- Center "Edit" text
   local edit_text_w = 28
-  reaper.ImGui_DrawList_AddText(draw_list, edit_btn_x + (edit_btn_width - edit_text_w) / 2, row2_y + 2, COLOR_BTN_TEXT, "Edit")
+  local edit_text_x = edit_btn_x + (edit_btn_width - edit_text_w) / 2
+  local edit_text_y = row2_y + (btn_height - text_height) / 2
+  reaper.ImGui_DrawList_AddText(draw_list, edit_text_x, edit_text_y, COLOR_BTN_TEXT, "Edit")
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_edit then
     if item then
@@ -1063,11 +1066,11 @@ local function draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, panel
   -- Labels - centered on slider axis
   local slider_center_x = slider_x + GAIN_SLIDER_WIDTH / 2
   -- "Gain" label (4 chars * 7px = 28px, centered)
-  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - 14, panel_y + 4, 0xAAAAAAFF, "Gain")
+  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - 14, panel_y + 2, 0xAAAAAAFF, "Gain")
   -- dB value centered below slider
   local db_text = format_db(item_db)
   local db_text_w = #db_text * 7
-  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - db_text_w / 2, slider_bottom + 14, 0xAAAAAAFF, db_text)
+  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - db_text_w / 2, slider_bottom + 6, 0xAAAAAAFF, db_text)
 
   return slider_pos, slider_height, slider_bottom
 end
@@ -1418,6 +1421,13 @@ local function loop()
           -- Calculate source_item_length early (needed below)
           local source_item_length = item_length * playrate
 
+          -- Check if take is reversed (using SWS extension)
+          local is_reversed = false
+          if reaper.BR_GetMediaSourceProperties and take then
+            local retval, section, start_pos, length, fade, reverse = reaper.BR_GetMediaSourceProperties(take)
+            if retval then is_reversed = reverse end
+          end
+
           -- Peaks caching: fetch for full source, scale with zoom for better resolution
           -- Formula: at zoom Z, we view (source_length/Z) seconds in waveform_width pixels
           -- To get 1 peak per pixel: num_peaks = waveform_width * zoom_level
@@ -1430,12 +1440,14 @@ local function loop()
           local source_changed = source ~= cached_source or source_length ~= cached_source_length
           local item_changed = item ~= cached_item
           local samples_changed = desired_samples ~= cached_num_samples
+          local reversed_changed = is_reversed ~= cached_reversed
 
-          if item_changed or source_changed or samples_changed then
+          if item_changed or source_changed or samples_changed or reversed_changed then
             cached_item = item
             cached_source = source
             cached_source_length = source_length
             cached_num_samples = desired_samples
+            cached_reversed = is_reversed
             -- Fetch peaks for FULL source (0 to source_length) - required for looping to work
             cached_peaks, peaks_error = get_peaks(source, desired_samples)
           end
@@ -1466,7 +1478,7 @@ local function loop()
 
           local start_px, end_px, view_start, view_length = draw_waveform(draw_list, wave_x, wave_y,
             waveform_width, waveform_height,
-            cached_peaks, view_offset, view_item_length, source_length, pan_offset, zoom_level, ruler_y, item_vol)
+            cached_peaks, view_offset, view_item_length, source_length, pan_offset, zoom_level, ruler_y, item_vol, is_reversed)
 
           -- Calculate ACTUAL current marker positions
           -- During drag, use tracked drag positions for stable rendering (no REAPER round-trip jitter)
