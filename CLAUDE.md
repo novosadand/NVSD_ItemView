@@ -5,13 +5,27 @@ NVSD_ItemView is a REAPER script that provides an Ableton-style clip view for au
 
 ## Task Management
 
+**IMPORTANT: The todo list is ALWAYS in this file (CLAUDE.md). When user says "add to todo", add it here.**
+
 **WORKFLOW: When given multiple tasks, add them to the todo list below FIRST, then work through them and update status.**
 - Skip this for single/simple tasks
 - Mark items as done when completed
 - Remove completed items periodically to keep list clean
 
 ### Current Todo List
-- (empty)
+(empty)
+
+### Recently Completed
+- [x] Always allow zoom out enough so both left and right markers are visible in view
+- [x] Source boundary dashed lines extend through ruler bar to top edge
+- [x] Source boundary dashed lines are now 2px wide (bolder)
+- [x] Playhead (edit cursor) visible in waveform view with triangle in ruler
+- [x] Ctrl+mouse wheel up/down to zoom in/out the waveform view
+- [x] Click and drag up/down on ruler bar to zoom (cursor changes to hand on hover)
+- [x] Show waveform only after clicking item edge (not just hovering) - requires SWS/JS extension
+- [x] Sticky item: waveform stays displayed after releasing mouse
+- [x] Sticky item overrides selection when dragging different item's edge
+- [x] Sticky clears when user clicks to select a different item
 
 ---
 

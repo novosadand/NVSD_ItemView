@@ -642,3 +642,336 @@ function TestNVSDItemView:test_playrate_source_length_calculation()
     -- 1.5x speed: 4 second item covers 6 seconds of source
     lu.assertAlmostEquals(calc_source_item_length(4, 1.5), 6, 0.001)
 end
+
+function TestNVSDItemView:test_source_to_project_time()
+    -- Test converting source time to project timeline time
+    local function source_to_project_time(source_t, item_position, start_offset, playrate)
+        return item_position + (source_t - start_offset) / playrate
+    end
+
+    -- Simple case: item at position 10, offset 2, playrate 1
+    -- Source time 2 (at offset) -> project time 10 (at item start)
+    lu.assertAlmostEquals(source_to_project_time(2, 10, 2, 1), 10, 0.001)
+
+    -- Source time 5 (3 seconds after offset) -> project time 13
+    lu.assertAlmostEquals(source_to_project_time(5, 10, 2, 1), 13, 0.001)
+
+    -- With playrate 2 (double speed): source time 5 -> project time 11.5
+    lu.assertAlmostEquals(source_to_project_time(5, 10, 2, 2), 11.5, 0.001)
+
+    -- With playrate 0.5 (half speed): source time 5 -> project time 16
+    lu.assertAlmostEquals(source_to_project_time(5, 10, 2, 0.5), 16, 0.001)
+end
+
+function TestNVSDItemView:test_project_to_source_time()
+    -- Test converting project timeline time to source time
+    local function project_to_source_time(project_t, item_position, start_offset, playrate)
+        return start_offset + (project_t - item_position) * playrate
+    end
+
+    -- Simple case: item at position 10, offset 2, playrate 1
+    -- Project time 10 (at item start) -> source time 2 (at offset)
+    lu.assertAlmostEquals(project_to_source_time(10, 10, 2, 1), 2, 0.001)
+
+    -- Project time 13 -> source time 5
+    lu.assertAlmostEquals(project_to_source_time(13, 10, 2, 1), 5, 0.001)
+
+    -- With playrate 2: project time 11.5 -> source time 5
+    lu.assertAlmostEquals(project_to_source_time(11.5, 10, 2, 2), 5, 0.001)
+
+    -- With playrate 0.5: project time 16 -> source time 5
+    lu.assertAlmostEquals(project_to_source_time(16, 10, 2, 0.5), 5, 0.001)
+end
+
+function TestNVSDItemView:test_source_project_time_roundtrip()
+    -- Test that source->project->source is identity
+    local function source_to_project_time(source_t, item_position, start_offset, playrate)
+        return item_position + (source_t - start_offset) / playrate
+    end
+
+    local function project_to_source_time(project_t, item_position, start_offset, playrate)
+        return start_offset + (project_t - item_position) * playrate
+    end
+
+    local item_position = 10
+    local start_offset = 2
+    local playrate = 1.5
+
+    local source_time = 7.5
+    local project_time = source_to_project_time(source_time, item_position, start_offset, playrate)
+    local back_to_source = project_to_source_time(project_time, item_position, start_offset, playrate)
+
+    lu.assertAlmostEquals(back_to_source, source_time, 0.0001)
+end
+
+function TestNVSDItemView:test_zoom_min_calculation()
+    -- Test calculating minimum zoom to show both markers
+    local function calc_min_zoom(start_offset, source_item_length, source_length)
+        local left_marker = start_offset
+        local right_marker = start_offset + source_item_length
+        local marker_span = right_marker - left_marker
+        local padded_span = marker_span * 1.4  -- 20% padding each side
+        local base_view_length = math.max(source_length, source_item_length)
+        local min_zoom = base_view_length / padded_span
+        return math.max(0.1, min_zoom)
+    end
+
+    -- Item same size as source: min_zoom should be around 0.71 (1/1.4)
+    local min_zoom = calc_min_zoom(0, 10, 10)
+    lu.assertAlmostEquals(min_zoom, 10 / 14, 0.01)
+
+    -- Item smaller than source: min_zoom should be lower
+    min_zoom = calc_min_zoom(2, 5, 10)
+    lu.assertAlmostEquals(min_zoom, 10 / 7, 0.01)  -- base=10, padded_span=7
+
+    -- Item larger than source (looping): base uses item length
+    min_zoom = calc_min_zoom(0, 20, 10)
+    lu.assertAlmostEquals(min_zoom, 20 / 28, 0.01)  -- base=20, padded_span=28
+end
+
+function TestNVSDItemView:test_pan_offset_adjustment_at_drag_end()
+    -- Test that pan_offset is adjusted correctly when drag ends to keep view stable
+    local function calc_pan_adjustment(
+        drag_start_offset, drag_start_length, drag_start_playrate,
+        new_start_offset, new_item_length, new_playrate,
+        source_length, zoom_level, current_pan_offset
+    )
+        local old_item_length = drag_start_length * drag_start_playrate
+        local new_source_item_length = new_item_length * new_playrate
+
+        local old_center = drag_start_offset + old_item_length / 2
+        local new_center = new_start_offset + new_source_item_length / 2
+
+        local old_base = math.max(source_length, old_item_length)
+        local new_base = math.max(source_length, new_source_item_length)
+        local old_view_length = old_base / zoom_level
+        local new_view_length = new_base / zoom_level
+
+        return current_pan_offset + (old_center - new_center) + (new_view_length - old_view_length) / 2
+    end
+
+    -- No change in item -> no change in pan
+    local new_pan = calc_pan_adjustment(2, 5, 1, 2, 5, 1, 10, 1, 0)
+    lu.assertAlmostEquals(new_pan, 0, 0.001)
+
+    -- Item center moved left (start dragged left, end fixed)
+    -- Original: offset=2, length=5, center=4.5
+    -- New: offset=1, length=6, center=4 (end stayed at 7)
+    new_pan = calc_pan_adjustment(2, 5, 1, 1, 6, 1, 10, 1, 0)
+    -- Old center=4.5, new center=4, diff=0.5
+    -- View length unchanged (both fit in source)
+    lu.assertAlmostEquals(new_pan, 0.5, 0.001)
+end
+
+function TestNVSDItemView:test_snap_to_source_boundary()
+    -- Test snapping time to nearest source length boundary
+    local function snap_to_source_boundary(t, source_length, threshold_time)
+        local nearest_boundary = math.floor(t / source_length + 0.5) * source_length
+        if math.abs(t - nearest_boundary) <= threshold_time then
+            return nearest_boundary
+        end
+        return t
+    end
+
+    local source_length = 10
+    local threshold = 0.5
+
+    -- Close to 0 -> snap to 0
+    lu.assertAlmostEquals(snap_to_source_boundary(0.3, source_length, threshold), 0, 0.001)
+
+    -- Close to source_length -> snap to source_length
+    lu.assertAlmostEquals(snap_to_source_boundary(9.8, source_length, threshold), 10, 0.001)
+
+    -- Close to 2*source_length -> snap to 20
+    lu.assertAlmostEquals(snap_to_source_boundary(19.7, source_length, threshold), 20, 0.001)
+
+    -- Not close to any boundary -> no snap
+    lu.assertAlmostEquals(snap_to_source_boundary(5.5, source_length, threshold), 5.5, 0.001)
+
+    -- Negative, close to -source_length -> snap to -10
+    lu.assertAlmostEquals(snap_to_source_boundary(-9.8, source_length, threshold), -10, 0.001)
+end
+
+function TestNVSDItemView:test_overlay_zone_detection()
+    -- Test detecting which overlay zone a position falls into
+    -- Zones: outside_source (dark), unused_source (light), active (no overlay)
+    local function get_overlay_zone(source_t, start_offset, source_item_length, source_length)
+        local item_end = start_offset + source_item_length
+
+        -- Check if in active region (between markers)
+        if source_t >= start_offset and source_t <= item_end then
+            return "active"
+        end
+
+        -- Check if within original source bounds
+        if source_t >= 0 and source_t <= source_length then
+            return "unused_source"  -- light overlay
+        end
+
+        return "outside_source"  -- dark overlay
+    end
+
+    -- Item from 2 to 7 in a 10-second source
+    local start_offset = 2
+    local source_item_length = 5
+    local source_length = 10
+
+    -- In active region
+    lu.assertEquals(get_overlay_zone(3, start_offset, source_item_length, source_length), "active")
+    lu.assertEquals(get_overlay_zone(5, start_offset, source_item_length, source_length), "active")
+
+    -- In unused source (within source but outside item)
+    lu.assertEquals(get_overlay_zone(0, start_offset, source_item_length, source_length), "unused_source")
+    lu.assertEquals(get_overlay_zone(1, start_offset, source_item_length, source_length), "unused_source")
+    lu.assertEquals(get_overlay_zone(8, start_offset, source_item_length, source_length), "unused_source")
+    lu.assertEquals(get_overlay_zone(10, start_offset, source_item_length, source_length), "unused_source")
+
+    -- Outside source bounds (looped content)
+    lu.assertEquals(get_overlay_zone(-1, start_offset, source_item_length, source_length), "outside_source")
+    lu.assertEquals(get_overlay_zone(11, start_offset, source_item_length, source_length), "outside_source")
+end
+
+function TestNVSDItemView:test_view_start_calculation()
+    -- Test view_start calculation (centering view on item)
+    local function calc_view_start(start_offset, source_item_length, source_length, zoom_level, pan_offset)
+        local base_view_length = math.max(source_length, source_item_length)
+        local view_length = base_view_length / zoom_level
+        local item_center = start_offset + source_item_length / 2
+        local view_start = item_center - view_length / 2 + pan_offset
+        return view_start, view_length
+    end
+
+    -- Item fits in source, zoom 1, no pan
+    local view_start, view_length = calc_view_start(2, 5, 10, 1, 0)
+    lu.assertAlmostEquals(view_length, 10, 0.001)
+    lu.assertAlmostEquals(view_start, 4.5 - 5, 0.001)  -- center=4.5, half_view=5
+
+    -- Zoom 2x
+    view_start, view_length = calc_view_start(2, 5, 10, 2, 0)
+    lu.assertAlmostEquals(view_length, 5, 0.001)
+    lu.assertAlmostEquals(view_start, 4.5 - 2.5, 0.001)
+
+    -- With pan offset
+    view_start, view_length = calc_view_start(2, 5, 10, 1, 2)
+    lu.assertAlmostEquals(view_start, -0.5 + 2, 0.001)  -- shifted by pan
+end
+
+function TestNVSDItemView:test_adaptive_sample_count()
+    -- Test that sample count scales with zoom level
+    local function calc_desired_samples(waveform_width, zoom_level, max_samples)
+        local base_samples = math.max(100, math.floor(waveform_width))
+        return math.min(max_samples, math.floor(base_samples * zoom_level))
+    end
+
+    -- At zoom 1, should equal base samples
+    lu.assertEquals(calc_desired_samples(500, 1, 8000), 500)
+
+    -- At zoom 2, should double (but capped at max)
+    lu.assertEquals(calc_desired_samples(500, 2, 8000), 1000)
+
+    -- At zoom 10, should be 5000 (10 * 500)
+    lu.assertEquals(calc_desired_samples(500, 10, 8000), 5000)
+
+    -- At zoom 20, should be capped at max
+    lu.assertEquals(calc_desired_samples(500, 20, 8000), 8000)
+
+    -- Small width still gets minimum 100
+    lu.assertEquals(calc_desired_samples(50, 1, 8000), 100)
+end
+
+function TestNVSDItemView:test_file_size_change_detection()
+    -- Test detecting file changes by size (for auto-reload)
+    local function has_file_changed(current_size, initial_size)
+        if not current_size or current_size == 0 then return false end
+        if not initial_size or initial_size == 0 then return false end
+        return current_size ~= initial_size
+    end
+
+    -- No change
+    lu.assertFalse(has_file_changed(1000, 1000))
+
+    -- File grew
+    lu.assertTrue(has_file_changed(1100, 1000))
+
+    -- File shrunk
+    lu.assertTrue(has_file_changed(900, 1000))
+
+    -- Invalid sizes
+    lu.assertFalse(has_file_changed(0, 1000))
+    lu.assertFalse(has_file_changed(nil, 1000))
+    lu.assertFalse(has_file_changed(1000, 0))
+    lu.assertFalse(has_file_changed(1000, nil))
+end
+
+function TestNVSDItemView:test_zoom_to_cursor_pan_calculation()
+    -- Test that zooming to cursor keeps the time under cursor fixed
+    local function calc_new_pan_offset(
+        cursor_x, wave_x, waveform_width,
+        view_start, view_length,
+        old_zoom, new_zoom,
+        base_view_length, item_center
+    )
+        local cursor_fraction = math.max(0, math.min(1, (cursor_x - wave_x) / waveform_width))
+        local time_under_cursor = view_start + cursor_fraction * view_length
+        local new_view_length = base_view_length / new_zoom
+        return time_under_cursor - item_center + new_view_length * (0.5 - cursor_fraction)
+    end
+
+    -- Cursor at center, zoom in: pan should stay 0
+    local new_pan = calc_new_pan_offset(
+        350, 100, 500,  -- cursor at center of waveform
+        -0.5, 10,       -- view_start, view_length
+        1, 2,           -- old_zoom, new_zoom
+        10, 4.5         -- base_view_length, item_center
+    )
+    -- At center, cursor_fraction=0.5, time_under_cursor=4.5
+    -- new_view_length=5, pan = 4.5 - 4.5 + 5*(0.5-0.5) = 0
+    lu.assertAlmostEquals(new_pan, 0, 0.01)
+end
+
+function TestNVSDItemView:test_dashed_line_segments()
+    -- Test calculating dashed line segment positions
+    local function calc_dash_segments(y1, y2, dash_length, gap_length)
+        local segments = {}
+        local y = y1
+        while y < y2 do
+            local dash_end = math.min(y + dash_length, y2)
+            table.insert(segments, {start_y = y, end_y = dash_end})
+            y = y + dash_length + gap_length
+        end
+        return segments
+    end
+
+    -- Simple case
+    local segs = calc_dash_segments(0, 20, 5, 3)
+    lu.assertEquals(#segs, 3)
+    lu.assertEquals(segs[1].start_y, 0)
+    lu.assertEquals(segs[1].end_y, 5)
+    lu.assertEquals(segs[2].start_y, 8)
+    lu.assertEquals(segs[2].end_y, 13)
+    lu.assertEquals(segs[3].start_y, 16)
+    lu.assertEquals(segs[3].end_y, 20)  -- clamped to y2
+end
+
+function TestNVSDItemView:test_ruler_mouse_detection()
+    -- Test detecting if mouse is in ruler area
+    local function is_mouse_in_ruler(mouse_x, mouse_y, wave_x, ruler_y, width, ruler_height)
+        return mouse_x >= wave_x and mouse_x <= wave_x + width
+               and mouse_y >= ruler_y and mouse_y <= ruler_y + ruler_height
+    end
+
+    local wave_x, ruler_y = 100, 50
+    local width, ruler_height = 500, 20
+
+    -- Inside ruler
+    lu.assertTrue(is_mouse_in_ruler(300, 60, wave_x, ruler_y, width, ruler_height))
+
+    -- In waveform area (below ruler)
+    lu.assertFalse(is_mouse_in_ruler(300, 80, wave_x, ruler_y, width, ruler_height))
+
+    -- Above ruler
+    lu.assertFalse(is_mouse_in_ruler(300, 40, wave_x, ruler_y, width, ruler_height))
+
+    -- Left of waveform
+    lu.assertFalse(is_mouse_in_ruler(90, 60, wave_x, ruler_y, width, ruler_height))
+end
