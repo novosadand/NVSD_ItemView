@@ -822,6 +822,424 @@ local function check_for_changes()
   return false
 end
 
+-- ========== HELPER FUNCTIONS FOR LEFT PANEL CONTROLS ==========
+-- These are extracted from loop() to reduce local variable count (Lua limit: 200)
+
+-- Draw WARP/REV/EDIT buttons in the left column
+local function draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take)
+  local warp_btn_width = 36
+  local warp_btn_height = 16
+  local warp_btn_x = left_col_x + (LEFT_COLUMN_WIDTH - warp_btn_width) / 2 - 1
+  local warp_btn_y = left_col_y + 4
+
+  local COLOR_WARP_ON = 0x4A90D9FF
+  local COLOR_WARP_OFF = 0x404040FF
+  local COLOR_WARP_HOVER = 0x5AA0E9FF
+  local COLOR_WARP_TEXT = 0xFFFFFFFF
+
+  local mouse_in_warp = mouse_x >= warp_btn_x and mouse_x <= warp_btn_x + warp_btn_width
+                        and mouse_y >= warp_btn_y and mouse_y <= warp_btn_y + warp_btn_height
+
+  local warp_bg_color
+  if warp_mode then
+    warp_bg_color = mouse_in_warp and COLOR_WARP_HOVER or COLOR_WARP_ON
+  else
+    warp_bg_color = mouse_in_warp and 0x505050FF or COLOR_WARP_OFF
+  end
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, warp_btn_x, warp_btn_y, warp_btn_x + warp_btn_width, warp_btn_y + warp_btn_height, warp_bg_color, 3)
+  reaper.ImGui_DrawList_AddText(draw_list, warp_btn_x + 4, warp_btn_y + 2, COLOR_WARP_TEXT, "WARP")
+
+  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_warp then
+    warp_mode = not warp_mode
+    if take then
+      reaper.Undo_BeginBlock()
+      local current_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
+      local current_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+      if warp_mode then
+        local pitch_from_rate = playrate_to_semitones(current_playrate)
+        reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", pitch_from_rate)
+        local original_length = current_length * current_playrate
+        reaper.SetMediaItemInfo_Value(item, "D_LENGTH", original_length)
+        reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", 1.0)
+      else
+        local current_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH")
+        local rate_from_pitch = semitones_to_playrate(current_pitch)
+        reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", rate_from_pitch)
+        local new_length = current_length / rate_from_pitch
+        reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_length)
+        reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", 0)
+      end
+      reaper.UpdateArrange()
+      reaper.Undo_EndBlock("NVSD_ItemView: Toggle WARP mode", -1)
+    end
+  end
+
+  -- REVERSE button
+  local rev_btn_width = 30
+  local rev_btn_height = 16
+  local rev_btn_x = left_col_x + (LEFT_COLUMN_WIDTH - rev_btn_width) / 2 - 1
+  local rev_btn_y = warp_btn_y + warp_btn_height + 4
+
+  local is_reversed = false
+  local has_sws = reaper.BR_GetMediaSourceProperties ~= nil
+  if has_sws and take then
+    local retval, section, start_pos, length, fade, reverse = reaper.BR_GetMediaSourceProperties(take)
+    if retval then is_reversed = reverse end
+  end
+
+  local mouse_in_rev = mouse_x >= rev_btn_x and mouse_x <= rev_btn_x + rev_btn_width
+                       and mouse_y >= rev_btn_y and mouse_y <= rev_btn_y + rev_btn_height
+
+  local rev_bg_color
+  if is_reversed then
+    rev_bg_color = mouse_in_rev and COLOR_WARP_HOVER or COLOR_WARP_ON
+  else
+    rev_bg_color = mouse_in_rev and 0x505050FF or COLOR_WARP_OFF
+  end
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, rev_btn_x, rev_btn_y, rev_btn_x + rev_btn_width, rev_btn_y + rev_btn_height, rev_bg_color, 3)
+  reaper.ImGui_DrawList_AddText(draw_list, rev_btn_x + 4, rev_btn_y + 2, COLOR_WARP_TEXT, "REV")
+
+  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_rev then
+    if item then
+      reaper.Undo_BeginBlock()
+      reaper.SelectAllMediaItems(0, false)
+      reaper.SetMediaItemSelected(item, true)
+      reaper.Main_OnCommand(41051, 0)
+      reaper.UpdateArrange()
+      reaper.Undo_EndBlock("NVSD_ItemView: Toggle Reverse", -1)
+      cached_peaks = nil
+    end
+  end
+
+  -- EDIT button
+  local edit_btn_width = 32
+  local edit_btn_height = 16
+  local edit_btn_x = left_col_x + (LEFT_COLUMN_WIDTH - edit_btn_width) / 2 - 1
+  local edit_btn_y = rev_btn_y + rev_btn_height + 4
+
+  local mouse_in_edit = mouse_x >= edit_btn_x and mouse_x <= edit_btn_x + edit_btn_width
+                        and mouse_y >= edit_btn_y and mouse_y <= edit_btn_y + edit_btn_height
+
+  local edit_bg_color = mouse_in_edit and 0x505050FF or COLOR_WARP_OFF
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, edit_btn_x, edit_btn_y, edit_btn_x + edit_btn_width, edit_btn_y + edit_btn_height, edit_bg_color, 3)
+  reaper.ImGui_DrawList_AddText(draw_list, edit_btn_x + 4, edit_btn_y + 2, COLOR_WARP_TEXT, "EDIT")
+
+  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_edit then
+    if item then
+      reaper.Undo_BeginBlock()
+      reaper.SelectAllMediaItems(0, false)
+      reaper.SetMediaItemSelected(item, true)
+      reaper.Main_OnCommand(40109, 0)
+      reaper.Undo_EndBlock("NVSD_ItemView: Open in External Editor", -1)
+    end
+  end
+end
+
+-- Draw gain slider with tick marks
+local function draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_y, panel_split, item, item_vol)
+  local item_db = gain_to_db(item_vol)
+  local slider_pos = db_to_slider(item_db)
+
+  local slider_x = panel_x + (LEFT_PANEL_WIDTH - GAIN_SLIDER_WIDTH) / 2 - 2
+  local slider_top = panel_y + 20
+  local slider_bottom = panel_split - 20
+  local slider_height = slider_bottom - slider_top
+
+  local COLOR_SLIDER_TRACK = 0x404040FF
+  local COLOR_SLIDER_FILL = 0x4A90D9FF
+  local COLOR_SLIDER_HANDLE = 0xAAAAAAFF
+  local COLOR_SLIDER_HANDLE_HOVER = 0xFFFFFFFF
+  local COLOR_ZERO_LINE = 0x666666FF
+  local COLOR_TICK = 0x555555FF
+  local COLOR_TICK_MAJOR = 0x666666FF
+  local COLOR_LABEL = 0x888888FF
+
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, slider_x, slider_top, slider_x + GAIN_SLIDER_WIDTH, slider_bottom, COLOR_SLIDER_TRACK, 3)
+
+  -- Tick marks
+  local tick_left = slider_x - 3
+  local tick_right = slider_x + GAIN_SLIDER_WIDTH + 3
+  local tick_marks = {
+    {db = 24, major = true}, {db = 18, major = false}, {db = 12, major = true},
+    {db = 6, major = false}, {db = 0, major = true}, {db = -6, major = false},
+    {db = -12, major = true}, {db = -18, major = false}, {db = -24, major = true},
+    {db = -36, major = false}, {db = -48, major = true},
+  }
+
+  for _, tick in ipairs(tick_marks) do
+    local tick_pos = db_to_slider(tick.db)
+    local tick_y = slider_bottom - tick_pos * slider_height
+    if tick_y >= slider_top and tick_y <= slider_bottom then
+      local color = tick.major and COLOR_TICK_MAJOR or COLOR_TICK
+      local left = tick.major and tick_left or (slider_x - 1)
+      local right = tick.major and tick_right or (slider_x + GAIN_SLIDER_WIDTH + 1)
+      reaper.ImGui_DrawList_AddLine(draw_list, left, tick_y, right, tick_y, color, 1)
+    end
+  end
+
+  -- 0dB line and labels
+  local zero_y = slider_bottom - 0.5 * slider_height
+  reaper.ImGui_DrawList_AddLine(draw_list, tick_left, zero_y, tick_right, zero_y, COLOR_ZERO_LINE, 1)
+  reaper.ImGui_DrawList_AddText(draw_list, slider_x - 1, slider_top - 14, COLOR_LABEL, "24")
+  reaper.ImGui_DrawList_AddText(draw_list, slider_x - 1, slider_bottom + 3, COLOR_LABEL, "-\226\136\158")
+
+  -- Fill from 0dB to current
+  local handle_y = slider_bottom - slider_pos * slider_height
+  if slider_pos > 0.5 then
+    reaper.ImGui_DrawList_AddRectFilled(draw_list, slider_x + 2, handle_y, slider_x + GAIN_SLIDER_WIDTH - 2, zero_y, COLOR_SLIDER_FILL, 2)
+  elseif slider_pos < 0.5 then
+    reaper.ImGui_DrawList_AddRectFilled(draw_list, slider_x + 2, zero_y, slider_x + GAIN_SLIDER_WIDTH - 2, handle_y, COLOR_SLIDER_FILL, 2)
+  end
+
+  -- Handle
+  local handle_height = 8
+  local mouse_in_slider = mouse_x >= slider_x - 5 and mouse_x <= slider_x + GAIN_SLIDER_WIDTH + 5
+                          and mouse_y >= slider_top - handle_height and mouse_y <= slider_bottom + handle_height
+  local handle_color = (mouse_in_slider or is_dragging_gain) and COLOR_SLIDER_HANDLE_HOVER or COLOR_SLIDER_HANDLE
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, slider_x - 2, handle_y - handle_height/2, slider_x + GAIN_SLIDER_WIDTH + 2, handle_y + handle_height/2, handle_color, 3)
+
+  -- Interaction
+  local double_clicked = reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_slider
+  if double_clicked then
+    reaper.Undo_BeginBlock()
+    reaper.SetMediaItemInfo_Value(item, "D_VOL", 1.0)
+    reaper.UpdateArrange()
+    reaper.Undo_EndBlock("NVSD_ItemView: Reset item volume to 0dB", -1)
+    is_dragging_gain = false
+  elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_slider then
+    is_dragging_gain = true
+    gain_drag_start_y = mouse_y
+    gain_drag_start_value = slider_pos
+    gain_shift_was_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
+    if has_js_extension then
+      local screen_x, screen_y = reaper.GetMousePosition()
+      drag_lock_screen_x, drag_lock_screen_y = screen_x, screen_y
+      drag_cumulative_delta_y = 0
+      drag_window_to_screen_y = screen_y - mouse_y
+    end
+    reaper.Undo_BeginBlock()
+  end
+
+  if reaper.ImGui_IsMouseReleased(ctx, 0) and is_dragging_gain then
+    is_dragging_gain = false
+    if has_js_extension then
+      local final_handle_y = slider_bottom - slider_pos * slider_height
+      local screen_handle_y = final_handle_y + drag_window_to_screen_y
+      reaper.JS_Mouse_SetPosition(drag_lock_screen_x, math.floor(screen_handle_y))
+    end
+    reaper.Undo_EndBlock("NVSD_ItemView: Adjust item volume", -1)
+  end
+
+  if is_dragging_gain and reaper.ImGui_IsMouseDown(ctx, 0) then
+    local shift_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
+    if shift_held ~= gain_shift_was_held then
+      gain_drag_start_y = mouse_y
+      gain_drag_start_value = slider_pos
+      gain_shift_was_held = shift_held
+      if has_js_extension then drag_cumulative_delta_y = 0 end
+    end
+    local sensitivity = shift_held and 0.15 or 1.0
+    local delta_y = has_js_extension and drag_cumulative_delta_y or (gain_drag_start_y - mouse_y)
+    local delta_pos = (delta_y / slider_height) * sensitivity
+    local new_pos = math.max(0, math.min(1, gain_drag_start_value + delta_pos))
+    local new_db = slider_to_db(new_pos)
+    local new_gain = db_to_gain(new_db)
+    reaper.SetMediaItemInfo_Value(item, "D_VOL", new_gain)
+    reaper.UpdateArrange()
+  end
+
+  -- Labels
+  reaper.ImGui_DrawList_AddText(draw_list, panel_x + 8, panel_y + 4, 0xAAAAAAFF, "Vol")
+  reaper.ImGui_DrawList_AddText(draw_list, panel_x + 6, slider_bottom + 4, 0xAAAAAAFF, format_db(item_db))
+
+  return slider_pos, slider_height, slider_bottom
+end
+
+-- Draw pitch knob
+local function draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_split, panel_bottom, take)
+  local take_pitch = 0
+  if take then
+    if warp_mode then
+      take_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH")
+    else
+      local take_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
+      take_pitch = playrate_to_semitones(take_playrate)
+    end
+  end
+
+  local knob_cx = panel_x + LEFT_PANEL_WIDTH / 2 - 2
+  local knob_cy = panel_split + (panel_bottom - panel_split) / 2
+  local knob_angle = pitch_to_angle(take_pitch)
+
+  local knob_dx = mouse_x - knob_cx
+  local knob_dy = mouse_y - knob_cy
+  local knob_dist = math.sqrt(knob_dx * knob_dx + knob_dy * knob_dy)
+  local mouse_in_knob = knob_dist <= PITCH_KNOB_RADIUS + 8
+
+  draw_knob(draw_list, knob_cx, knob_cy, PITCH_KNOB_RADIUS, knob_angle, mouse_in_knob, is_dragging_pitch)
+
+  local pitch_double_clicked = reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_knob
+  if pitch_double_clicked then
+    if take then
+      reaper.Undo_BeginBlock()
+      set_take_pitch(take, 0)
+      reaper.UpdateArrange()
+      reaper.Undo_EndBlock("NVSD_ItemView: Reset pitch to 0", -1)
+    end
+    is_dragging_pitch = false
+  elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_knob then
+    is_dragging_pitch = true
+    pitch_drag_start_y = mouse_y
+    pitch_drag_start_value = take_pitch
+    pitch_shift_was_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
+    if has_js_extension then
+      local screen_x, screen_y = reaper.GetMousePosition()
+      drag_lock_screen_x, drag_lock_screen_y = screen_x, screen_y
+      drag_cumulative_delta_y = 0
+    end
+    reaper.Undo_BeginBlock()
+  end
+
+  if reaper.ImGui_IsMouseReleased(ctx, 0) and is_dragging_pitch then
+    is_dragging_pitch = false
+    reaper.Undo_EndBlock("NVSD_ItemView: Adjust pitch", -1)
+  end
+
+  if is_dragging_pitch and reaper.ImGui_IsMouseDown(ctx, 0) then
+    local shift_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
+    if shift_held ~= pitch_shift_was_held then
+      pitch_drag_start_y = mouse_y
+      pitch_drag_start_value = take_pitch
+      pitch_shift_was_held = shift_held
+      if has_js_extension then drag_cumulative_delta_y = 0 end
+    end
+    local sensitivity = shift_held and 0.2 or 1.0
+    local delta_y = has_js_extension and drag_cumulative_delta_y or (pitch_drag_start_y - mouse_y)
+    local delta_semitones = math.floor((delta_y / 10) * sensitivity + 0.5)
+    local start_semitones = math.floor(pitch_drag_start_value + 0.5)
+    local new_pitch = math.max(PITCH_MIN, math.min(PITCH_MAX, start_semitones + delta_semitones))
+    if take then
+      set_take_pitch(take, new_pitch)
+      reaper.UpdateArrange()
+    end
+  end
+
+  return take_pitch, knob_cx, knob_cy
+end
+
+-- Draw semitones/cents boxes
+local function draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, panel_x, knob_cy, take, take_pitch)
+  local display_semitones, display_cents = pitch_to_semitones_cents(take_pitch)
+
+  local box_width = 22
+  local box_height = 16
+  local box_y = knob_cy + PITCH_KNOB_RADIUS + 18
+  local box_gap = 1
+  local boxes_total_width = box_width * 2 + box_gap
+  local box_left_x = panel_x + (LEFT_PANEL_WIDTH - boxes_total_width) / 2 - 2
+  local box_right_x = box_left_x + box_width + box_gap
+
+  local COLOR_BOX_BG = 0x252525FF
+  local COLOR_BOX_BORDER = 0x444444FF
+  local COLOR_BOX_HOVER = 0x555555FF
+  local COLOR_BOX_TEXT = 0xCCCCCCFF
+
+  local mouse_in_semitones_box = mouse_x >= box_left_x and mouse_x <= box_left_x + box_width
+                                 and mouse_y >= box_y and mouse_y <= box_y + box_height
+  local mouse_in_cents_box = mouse_x >= box_right_x and mouse_x <= box_right_x + box_width
+                             and mouse_y >= box_y and mouse_y <= box_y + box_height
+
+  -- Semitones box
+  local semitones_border = (mouse_in_semitones_box or is_dragging_semitones) and COLOR_BOX_HOVER or COLOR_BOX_BORDER
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, box_left_x, box_y, box_left_x + box_width, box_y + box_height, COLOR_BOX_BG)
+  reaper.ImGui_DrawList_AddRect(draw_list, box_left_x, box_y, box_left_x + box_width, box_y + box_height, semitones_border)
+  local semitones_text = tostring(display_semitones)
+  reaper.ImGui_DrawList_AddText(draw_list, box_left_x + box_width / 2 - (#semitones_text * 3), box_y + 2, COLOR_BOX_TEXT, semitones_text)
+
+  -- Cents box
+  local cents_border = (mouse_in_cents_box or is_dragging_cents) and COLOR_BOX_HOVER or COLOR_BOX_BORDER
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, box_right_x, box_y, box_right_x + box_width, box_y + box_height, COLOR_BOX_BG)
+  reaper.ImGui_DrawList_AddRect(draw_list, box_right_x, box_y, box_right_x + box_width, box_y + box_height, cents_border)
+  local cents_text = tostring(display_cents)
+  reaper.ImGui_DrawList_AddText(draw_list, box_right_x + box_width / 2 - (#cents_text * 3), box_y + 2, COLOR_BOX_TEXT, cents_text)
+
+  -- Semitones interaction
+  local semitones_double_clicked = reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_semitones_box
+  if semitones_double_clicked then
+    if take then
+      reaper.Undo_BeginBlock()
+      local new_pitch = math.max(PITCH_MIN, math.min(PITCH_MAX, semitones_cents_to_pitch(0, display_cents)))
+      set_take_pitch(take, new_pitch)
+      reaper.UpdateArrange()
+      reaper.Undo_EndBlock("NVSD_ItemView: Reset semitones to 0", -1)
+    end
+    is_dragging_semitones = false
+  elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_semitones_box then
+    is_dragging_semitones = true
+    semitones_drag_start_y = mouse_y
+    semitones_drag_start_value = display_semitones
+    if has_js_extension then
+      local screen_x, screen_y = reaper.GetMousePosition()
+      drag_lock_screen_x, drag_lock_screen_y = screen_x, screen_y
+      drag_cumulative_delta_y = 0
+    end
+    reaper.Undo_BeginBlock()
+  end
+
+  if reaper.ImGui_IsMouseReleased(ctx, 0) and is_dragging_semitones then
+    is_dragging_semitones = false
+    reaper.Undo_EndBlock("NVSD_ItemView: Adjust semitones", -1)
+  end
+
+  if is_dragging_semitones and reaper.ImGui_IsMouseDown(ctx, 0) then
+    local delta_y = has_js_extension and drag_cumulative_delta_y or (semitones_drag_start_y - mouse_y)
+    local delta_semitones = math.floor(delta_y / 10 + 0.5)
+    local new_pitch = math.max(PITCH_MIN, math.min(PITCH_MAX, semitones_cents_to_pitch(semitones_drag_start_value + delta_semitones, display_cents)))
+    if take then
+      set_take_pitch(take, new_pitch)
+      reaper.UpdateArrange()
+    end
+  end
+
+  -- Cents interaction
+  local cents_double_clicked = reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_cents_box
+  if cents_double_clicked then
+    if take then
+      reaper.Undo_BeginBlock()
+      local new_pitch = math.max(PITCH_MIN, math.min(PITCH_MAX, semitones_cents_to_pitch(display_semitones, 0)))
+      set_take_pitch(take, new_pitch)
+      reaper.UpdateArrange()
+      reaper.Undo_EndBlock("NVSD_ItemView: Reset cents to 0", -1)
+    end
+    is_dragging_cents = false
+  elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_cents_box then
+    is_dragging_cents = true
+    cents_drag_start_y = mouse_y
+    cents_drag_start_value = display_cents
+    if has_js_extension then
+      local screen_x, screen_y = reaper.GetMousePosition()
+      drag_lock_screen_x, drag_lock_screen_y = screen_x, screen_y
+      drag_cumulative_delta_y = 0
+    end
+    reaper.Undo_BeginBlock()
+  end
+
+  if reaper.ImGui_IsMouseReleased(ctx, 0) and is_dragging_cents then
+    is_dragging_cents = false
+    reaper.Undo_EndBlock("NVSD_ItemView: Adjust cents", -1)
+  end
+
+  if is_dragging_cents and reaper.ImGui_IsMouseDown(ctx, 0) then
+    local delta_y = has_js_extension and drag_cumulative_delta_y or (cents_drag_start_y - mouse_y)
+    local delta_cents = math.floor(delta_y / 2 + 0.5)
+    local new_pitch = math.max(PITCH_MIN, math.min(PITCH_MAX, semitones_cents_to_pitch(display_semitones, cents_drag_start_value + delta_cents)))
+    if take then
+      set_take_pitch(take, new_pitch)
+      reaper.UpdateArrange()
+    end
+  end
+end
+
 -- Main GUI function
 local function loop()
   -- Auto-reload check
@@ -1249,552 +1667,31 @@ local function loop()
             end
           end
 
-          -- ========== FAR-LEFT COLUMN (WARP etc) ==========
+          -- ========== LEFT PANEL CONTROLS (using extracted helper functions) ==========
           local COLOR_LEFT_COL_BG = 0x1A1A1AFF
           reaper.ImGui_DrawList_AddRectFilled(draw_list, left_col_x, left_col_y, left_col_x + LEFT_COLUMN_WIDTH - 2, left_col_y + panel_height, COLOR_LEFT_COL_BG)
 
-          -- WARP button at top
-          local warp_btn_width = 38
-          local warp_btn_height = 16
-          local warp_btn_x = left_col_x + (LEFT_COLUMN_WIDTH - warp_btn_width) / 2 - 1
-          local warp_btn_y = left_col_y + 4
+          -- Draw buttons (WARP/REV/EDIT)
+          draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take)
 
-          -- Button colors
-          local COLOR_WARP_ON = 0x4A90D9FF      -- Blue when on
-          local COLOR_WARP_OFF = 0x404040FF     -- Dark gray when off
-          local COLOR_WARP_HOVER = 0x5AA0E9FF   -- Lighter blue on hover
-          local COLOR_WARP_TEXT = 0xFFFFFFFF
-
-          local mouse_in_warp = mouse_x >= warp_btn_x and mouse_x <= warp_btn_x + warp_btn_width
-                                and mouse_y >= warp_btn_y and mouse_y <= warp_btn_y + warp_btn_height
-
-          -- Draw button
-          local warp_bg_color
-          if warp_mode then
-            warp_bg_color = mouse_in_warp and COLOR_WARP_HOVER or COLOR_WARP_ON
-          else
-            warp_bg_color = mouse_in_warp and 0x505050FF or COLOR_WARP_OFF
-          end
-          reaper.ImGui_DrawList_AddRectFilled(draw_list, warp_btn_x, warp_btn_y, warp_btn_x + warp_btn_width, warp_btn_y + warp_btn_height, warp_bg_color, 3)
-          reaper.ImGui_DrawList_AddText(draw_list, warp_btn_x + 4, warp_btn_y + 2, COLOR_WARP_TEXT, "WARP")
-
-          -- Button interaction
-          if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_warp then
-            warp_mode = not warp_mode
-            -- When switching modes, convert the current pitch value
-            if take then
-              reaper.Undo_BeginBlock()
-              local current_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
-              local current_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
-
-              if warp_mode then
-                -- Switching to warp: convert playrate to pitch, reset playrate, restore length
-                local pitch_from_rate = playrate_to_semitones(current_playrate)
-                reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", pitch_from_rate)
-                -- Restore original length (undo the playrate stretching)
-                local original_length = current_length * current_playrate
-                reaper.SetMediaItemInfo_Value(item, "D_LENGTH", original_length)
-                reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", 1.0)
-              else
-                -- Switching to non-warp: convert pitch to playrate, adjust length, reset pitch
-                local current_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH")
-                local rate_from_pitch = semitones_to_playrate(current_pitch)
-                reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", rate_from_pitch)
-                -- Adjust length for new playrate
-                local new_length = current_length / rate_from_pitch
-                reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_length)
-                reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", 0)
-              end
-              reaper.UpdateArrange()
-              reaper.Undo_EndBlock("NVSD_ItemView: Toggle WARP mode", -1)
-            end
-          end
-
-          -- REVERSE button under WARP
-          local rev_btn_width = 30
-          local rev_btn_height = 16
-          local rev_btn_x = left_col_x + (LEFT_COLUMN_WIDTH - rev_btn_width) / 2 - 1
-          local rev_btn_y = warp_btn_y + warp_btn_height + 4
-
-          -- Check if take is reversed (using SWS extension if available)
-          local is_reversed = false
-          local has_sws = reaper.BR_GetMediaSourceProperties ~= nil
-          if has_sws and take then
-            local retval, section, start_pos, length, fade, reverse = reaper.BR_GetMediaSourceProperties(take)
-            if retval then
-              is_reversed = reverse
-            end
-          end
-
-          local mouse_in_rev = mouse_x >= rev_btn_x and mouse_x <= rev_btn_x + rev_btn_width
-                               and mouse_y >= rev_btn_y and mouse_y <= rev_btn_y + rev_btn_height
-
-          -- Draw REVERSE button
-          local rev_bg_color
-          if is_reversed then
-            rev_bg_color = mouse_in_rev and COLOR_WARP_HOVER or COLOR_WARP_ON
-          else
-            rev_bg_color = mouse_in_rev and 0x505050FF or COLOR_WARP_OFF
-          end
-          reaper.ImGui_DrawList_AddRectFilled(draw_list, rev_btn_x, rev_btn_y, rev_btn_x + rev_btn_width, rev_btn_y + rev_btn_height, rev_bg_color, 3)
-          reaper.ImGui_DrawList_AddText(draw_list, rev_btn_x + 4, rev_btn_y + 2, COLOR_WARP_TEXT, "REV")
-
-          -- REVERSE button interaction
-          if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_rev then
-            if item then
-              reaper.Undo_BeginBlock()
-              -- Select only this item to ensure action works on it
-              reaper.SelectAllMediaItems(0, false)
-              reaper.SetMediaItemSelected(item, true)
-              -- Toggle take reverse (action 41051)
-              reaper.Main_OnCommand(41051, 0)
-              reaper.UpdateArrange()
-              reaper.Undo_EndBlock("NVSD_ItemView: Toggle Reverse", -1)
-              -- Clear peaks cache to force refresh with reversed waveform
-              cached_peaks = nil
-            end
-          end
-
-          -- EDIT button under REVERSE
-          local edit_btn_width = 32
-          local edit_btn_height = 16
-          local edit_btn_x = left_col_x + (LEFT_COLUMN_WIDTH - edit_btn_width) / 2 - 1
-          local edit_btn_y = rev_btn_y + rev_btn_height + 4
-
-          local mouse_in_edit = mouse_x >= edit_btn_x and mouse_x <= edit_btn_x + edit_btn_width
-                                and mouse_y >= edit_btn_y and mouse_y <= edit_btn_y + edit_btn_height
-
-          -- Draw EDIT button
-          local edit_bg_color = mouse_in_edit and 0x505050FF or COLOR_WARP_OFF
-          reaper.ImGui_DrawList_AddRectFilled(draw_list, edit_btn_x, edit_btn_y, edit_btn_x + edit_btn_width, edit_btn_y + edit_btn_height, edit_bg_color, 3)
-          reaper.ImGui_DrawList_AddText(draw_list, edit_btn_x + 4, edit_btn_y + 2, COLOR_WARP_TEXT, "EDIT")
-
-          -- EDIT button interaction - opens source in external editor
-          if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_edit then
-            if item then
-              reaper.Undo_BeginBlock()
-              -- Select only this item
-              reaper.SelectAllMediaItems(0, false)
-              reaper.SetMediaItemSelected(item, true)
-              -- Open items in external editor (action 40109)
-              reaper.Main_OnCommand(40109, 0)
-              reaper.Undo_EndBlock("NVSD_ItemView: Open in External Editor", -1)
-            end
-          end
-
-          -- ========== LEFT PANEL WITH CONTROLS ==========
-          -- item_vol already retrieved earlier for waveform scaling
-          local item_db = gain_to_db(item_vol)
-          local slider_pos = db_to_slider(item_db)
-
-          -- Get pitch from take (source depends on warp mode)
-          local take_pitch = 0
-          local take_playrate = 1
-          if take then
-            if warp_mode then
-              take_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH")
-            else
-              take_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
-              take_pitch = playrate_to_semitones(take_playrate)
-            end
-          end
-
-          -- Panel background
+          -- Panel background and split calculation
           local COLOR_PANEL_BG = 0x202020FF
           reaper.ImGui_DrawList_AddRectFilled(draw_list, panel_x, panel_y, panel_x + LEFT_PANEL_WIDTH - 4, panel_y + panel_height, COLOR_PANEL_BG)
-
-          -- Split panel: top 55% for volume slider, bottom 45% for pitch knob
           local panel_split = panel_y + panel_height * 0.55
 
-          -- Gain slider dimensions (top section)
-          local slider_x = panel_x + (LEFT_PANEL_WIDTH - GAIN_SLIDER_WIDTH) / 2 - 2
-          local slider_top = panel_y + 20  -- Leave room for label
-          local slider_bottom = panel_split - 20  -- Leave room for value display
-          local slider_height = slider_bottom - slider_top
+          -- Draw gain slider
+          draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_y, panel_split, item, item_vol)
 
-          -- Slider track
-          local COLOR_SLIDER_TRACK = 0x404040FF
-          local COLOR_SLIDER_FILL = 0x4A90D9FF
-          local COLOR_SLIDER_HANDLE = 0xAAAAAAFF
-          local COLOR_SLIDER_HANDLE_HOVER = 0xFFFFFFFF
-          local COLOR_ZERO_LINE = 0x666666FF
+          -- Draw pitch knob
+          local take_pitch, knob_cx, knob_cy = draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_split, panel_y + panel_height, take)
 
-          reaper.ImGui_DrawList_AddRectFilled(draw_list, slider_x, slider_top, slider_x + GAIN_SLIDER_WIDTH, slider_bottom, COLOR_SLIDER_TRACK, 3)
-
-          -- Draw tick marks at key dB levels
-          local COLOR_TICK = 0x555555FF
-          local COLOR_TICK_MAJOR = 0x666666FF
-          local tick_left = slider_x - 3
-          local tick_right = slider_x + GAIN_SLIDER_WIDTH + 3
-
-          -- Tick marks and their slider positions (db_to_slider values)
-          -- Major ticks: +24, +12, 0, -12, -24, -48, -inf
-          local tick_marks = {
-            {db = 24, major = true},
-            {db = 18, major = false},
-            {db = 12, major = true},
-            {db = 6, major = false},
-            {db = 0, major = true},
-            {db = -6, major = false},
-            {db = -12, major = true},
-            {db = -18, major = false},
-            {db = -24, major = true},
-            {db = -36, major = false},
-            {db = -48, major = true},
-          }
-
-          for _, tick in ipairs(tick_marks) do
-            local tick_pos = db_to_slider(tick.db)
-            local tick_y = slider_bottom - tick_pos * slider_height
-            if tick_y >= slider_top and tick_y <= slider_bottom then
-              local color = tick.major and COLOR_TICK_MAJOR or COLOR_TICK
-              local left = tick.major and tick_left or (slider_x - 1)
-              local right = tick.major and tick_right or (slider_x + GAIN_SLIDER_WIDTH + 1)
-              reaper.ImGui_DrawList_AddLine(draw_list, left, tick_y, right, tick_y, color, 1)
-            end
-          end
-
-          -- Draw 0dB line (emphasized)
-          local zero_y = slider_bottom - 0.5 * slider_height
-          reaper.ImGui_DrawList_AddLine(draw_list, tick_left, zero_y, tick_right, zero_y, COLOR_ZERO_LINE, 1)
-
-          -- Draw labels: "24" at top, "-∞" at bottom
-          local COLOR_LABEL = 0x888888FF
-          reaper.ImGui_DrawList_AddText(draw_list, slider_x - 1, slider_top - 14, COLOR_LABEL, "24")
-          reaper.ImGui_DrawList_AddText(draw_list, slider_x - 1, slider_bottom + 3, COLOR_LABEL, "-\226\136\158")  -- UTF-8 for ∞
-
-          -- Draw fill from 0dB to current value
-          local handle_y = slider_bottom - slider_pos * slider_height
-          if slider_pos > 0.5 then
-            -- Above 0dB: fill from 0dB up to handle
-            reaper.ImGui_DrawList_AddRectFilled(draw_list, slider_x + 2, handle_y, slider_x + GAIN_SLIDER_WIDTH - 2, zero_y, COLOR_SLIDER_FILL, 2)
-          elseif slider_pos < 0.5 then
-            -- Below 0dB: fill from handle down to 0dB
-            reaper.ImGui_DrawList_AddRectFilled(draw_list, slider_x + 2, zero_y, slider_x + GAIN_SLIDER_WIDTH - 2, handle_y, COLOR_SLIDER_FILL, 2)
-          end
-
-          -- Slider handle
-          local handle_height = 8
-          local mouse_in_slider = mouse_x >= slider_x - 5 and mouse_x <= slider_x + GAIN_SLIDER_WIDTH + 5
-                                  and mouse_y >= slider_top - handle_height and mouse_y <= slider_bottom + handle_height
-
-          local handle_color = (mouse_in_slider or is_dragging_gain) and COLOR_SLIDER_HANDLE_HOVER or COLOR_SLIDER_HANDLE
-          reaper.ImGui_DrawList_AddRectFilled(draw_list, slider_x - 2, handle_y - handle_height/2, slider_x + GAIN_SLIDER_WIDTH + 2, handle_y + handle_height/2, handle_color, 3)
-
-          -- Slider interaction
-          -- Check double-click FIRST (before regular click) to avoid drag interference
-          local double_clicked = reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_slider
-
-          if double_clicked then
-            -- Double-click to reset to 0dB
-            reaper.Undo_BeginBlock()
-            reaper.SetMediaItemInfo_Value(item, "D_VOL", 1.0)  -- 0dB = gain 1.0
-            reaper.UpdateArrange()
-            reaper.Undo_EndBlock("NVSD_ItemView: Reset item volume to 0dB", -1)
-            is_dragging_gain = false  -- Cancel any drag
-          elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_slider then
-            is_dragging_gain = true
-            gain_drag_start_y = mouse_y
-            gain_drag_start_value = slider_pos
-            gain_shift_was_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
-            -- Capture screen position for cursor lock
-            if has_js_extension then
-              local screen_x, screen_y = reaper.GetMousePosition()
-              drag_lock_screen_x = screen_x
-              drag_lock_screen_y = screen_y
-              drag_cumulative_delta_y = 0
-              drag_window_to_screen_y = screen_y - mouse_y  -- Store offset for cursor repositioning
-            end
-            reaper.Undo_BeginBlock()
-          end
-
-          if reaper.ImGui_IsMouseReleased(ctx, 0) and is_dragging_gain then
-            is_dragging_gain = false
-            -- Reposition cursor at handle location
-            if has_js_extension then
-              local final_handle_y = slider_bottom - slider_pos * slider_height
-              local screen_handle_y = final_handle_y + drag_window_to_screen_y
-              reaper.JS_Mouse_SetPosition(drag_lock_screen_x, math.floor(screen_handle_y))
-            end
-            reaper.Undo_EndBlock("NVSD_ItemView: Adjust item volume", -1)
-          end
-
-          if is_dragging_gain and reaper.ImGui_IsMouseDown(ctx, 0) then
-            -- Check if Shift is held for fine adjustment
-            local shift_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
-
-            -- If shift state changed, reset drag start to current position/value for smooth transition
-            if shift_held ~= gain_shift_was_held then
-              gain_drag_start_y = mouse_y
-              gain_drag_start_value = slider_pos  -- Current slider position
-              gain_shift_was_held = shift_held
-              if has_js_extension then drag_cumulative_delta_y = 0 end
-            end
-
-            local sensitivity = shift_held and 0.15 or 1.0  -- 15% sensitivity when Shift held
-
-            -- Calculate delta from drag start, apply sensitivity
-            local delta_y
-            if has_js_extension then
-              delta_y = drag_cumulative_delta_y
-            else
-              delta_y = gain_drag_start_y - mouse_y  -- Positive = moving up = increase
-            end
-            local delta_pos = (delta_y / slider_height) * sensitivity
-
-            -- Apply delta to start value
-            local new_pos = gain_drag_start_value + delta_pos
-            new_pos = math.max(0, math.min(1, new_pos))
-
-            -- Convert to dB and then to linear gain
-            local new_db = slider_to_db(new_pos)
-            local new_gain = db_to_gain(new_db)
-
-            -- Update item volume
-            reaper.SetMediaItemInfo_Value(item, "D_VOL", new_gain)
-            reaper.UpdateArrange()
-          end
-
-          -- Volume Labels
-          local COLOR_LABEL = 0xAAAAAAFF
-          reaper.ImGui_DrawList_AddText(draw_list, panel_x + 8, panel_y + 4, COLOR_LABEL, "Vol")
-
-          -- Current dB value below slider
-          local db_text = format_db(item_db)
-          reaper.ImGui_DrawList_AddText(draw_list, panel_x + 6, slider_bottom + 4, COLOR_LABEL, db_text)
-
-          -- dB scale markers (fewer marks due to shorter slider)
-          local scale_marks = {{db = 12, label = "+12"}, {db = 0, label = "0"}, {db = -12, label = "-12"}}
-          for _, mark in ipairs(scale_marks) do
-            local mark_pos = db_to_slider(mark.db)
-            local mark_y = slider_bottom - mark_pos * slider_height
-            if mark_y >= slider_top and mark_y <= slider_bottom then
-              reaper.ImGui_DrawList_AddLine(draw_list, slider_x + GAIN_SLIDER_WIDTH + 2, mark_y, slider_x + GAIN_SLIDER_WIDTH + 5, mark_y, COLOR_LABEL, 1)
-            end
-          end
-
-          -- ========== PITCH KNOB (bottom section) ==========
-          local knob_cx = panel_x + LEFT_PANEL_WIDTH / 2 - 2
-          local knob_cy = panel_split + (panel_y + panel_height - panel_split) / 2
-          local knob_angle = pitch_to_angle(take_pitch)
-
-          -- Check mouse in knob area
-          local knob_dx = mouse_x - knob_cx
-          local knob_dy = mouse_y - knob_cy
-          local knob_dist = math.sqrt(knob_dx * knob_dx + knob_dy * knob_dy)
-          local mouse_in_knob = knob_dist <= PITCH_KNOB_RADIUS + 8  -- Slightly larger hit area
-
-          -- Draw the knob
-          draw_knob(draw_list, knob_cx, knob_cy, PITCH_KNOB_RADIUS, knob_angle, mouse_in_knob, is_dragging_pitch)
-
-          -- Pitch knob interaction
-          local pitch_double_clicked = reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_knob
-
-          if pitch_double_clicked then
-            -- Double-click to reset to 0 semitones
-            if take then
-              reaper.Undo_BeginBlock()
-              set_take_pitch(take, 0)
-              reaper.UpdateArrange()
-              reaper.Undo_EndBlock("NVSD_ItemView: Reset pitch to 0", -1)
-            end
-            is_dragging_pitch = false
-          elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_knob then
-            is_dragging_pitch = true
-            pitch_drag_start_y = mouse_y
-            pitch_drag_start_value = take_pitch
-            pitch_shift_was_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
-            -- Capture screen position for cursor lock
-            if has_js_extension then
-              local screen_x, screen_y = reaper.GetMousePosition()
-              drag_lock_screen_x = screen_x
-              drag_lock_screen_y = screen_y
-              drag_cumulative_delta_y = 0
-            end
-            reaper.Undo_BeginBlock()
-          end
-
-          if reaper.ImGui_IsMouseReleased(ctx, 0) and is_dragging_pitch then
-            is_dragging_pitch = false
-            reaper.Undo_EndBlock("NVSD_ItemView: Adjust pitch", -1)
-          end
-
-          if is_dragging_pitch and reaper.ImGui_IsMouseDown(ctx, 0) then
-            local shift_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
-
-            -- If shift state changed, reset drag start for smooth transition
-            if shift_held ~= pitch_shift_was_held then
-              pitch_drag_start_y = mouse_y
-              pitch_drag_start_value = take_pitch
-              pitch_shift_was_held = shift_held
-              if has_js_extension then drag_cumulative_delta_y = 0 end
-            end
-
-            local sensitivity = shift_held and 0.2 or 1.0  -- 20% sensitivity when Shift held
-
-            -- Drag up = increase pitch, drag down = decrease
-            local delta_y
-            if has_js_extension then
-              delta_y = drag_cumulative_delta_y
-            else
-              delta_y = pitch_drag_start_y - mouse_y
-            end
-            -- 10px per semitone, knob only changes whole semitones
-            local delta_semitones = math.floor((delta_y / 10) * sensitivity + 0.5)
-            local start_semitones = math.floor(pitch_drag_start_value + 0.5)  -- Round start value too
-
-            local new_pitch = start_semitones + delta_semitones
-            new_pitch = math.max(PITCH_MIN, math.min(PITCH_MAX, new_pitch))
-
-            if take then
-              set_take_pitch(take, new_pitch)
-              reaper.UpdateArrange()
-            end
-          end
-
-          -- ========== SEMITONES/CENTS BOXES ==========
-          local display_semitones, display_cents = pitch_to_semitones_cents(take_pitch)
-
-          -- Box dimensions
-          local box_width = 22
-          local box_height = 16
-          local box_y = knob_cy + PITCH_KNOB_RADIUS + 18  -- Position just below the knob
-          local box_gap = 1
-          local boxes_total_width = box_width * 2 + box_gap
-          local box_left_x = panel_x + (LEFT_PANEL_WIDTH - boxes_total_width) / 2 - 2
-          local box_right_x = box_left_x + box_width + box_gap
-
-          -- Colors
-          local COLOR_BOX_BG = 0x252525FF
-          local COLOR_BOX_BORDER = 0x444444FF
-          local COLOR_BOX_HOVER = 0x555555FF
-          local COLOR_BOX_TEXT = 0xCCCCCCFF
-
-          -- Check mouse in boxes
-          local mouse_in_semitones_box = mouse_x >= box_left_x and mouse_x <= box_left_x + box_width
-                                         and mouse_y >= box_y and mouse_y <= box_y + box_height
-          local mouse_in_cents_box = mouse_x >= box_right_x and mouse_x <= box_right_x + box_width
-                                     and mouse_y >= box_y and mouse_y <= box_y + box_height
-
-          -- Draw semitones box (left)
-          local semitones_border = (mouse_in_semitones_box or is_dragging_semitones) and COLOR_BOX_HOVER or COLOR_BOX_BORDER
-          reaper.ImGui_DrawList_AddRectFilled(draw_list, box_left_x, box_y, box_left_x + box_width, box_y + box_height, COLOR_BOX_BG)
-          reaper.ImGui_DrawList_AddRect(draw_list, box_left_x, box_y, box_left_x + box_width, box_y + box_height, semitones_border)
-          local semitones_text = tostring(display_semitones)
-          local st_text_x = box_left_x + box_width / 2 - (#semitones_text * 3)
-          reaper.ImGui_DrawList_AddText(draw_list, st_text_x, box_y + 2, COLOR_BOX_TEXT, semitones_text)
-
-          -- Draw cents box (right)
-          local cents_border = (mouse_in_cents_box or is_dragging_cents) and COLOR_BOX_HOVER or COLOR_BOX_BORDER
-          reaper.ImGui_DrawList_AddRectFilled(draw_list, box_right_x, box_y, box_right_x + box_width, box_y + box_height, COLOR_BOX_BG)
-          reaper.ImGui_DrawList_AddRect(draw_list, box_right_x, box_y, box_right_x + box_width, box_y + box_height, cents_border)
-          local cents_text = tostring(display_cents)
-          local ct_text_x = box_right_x + box_width / 2 - (#cents_text * 3)
-          reaper.ImGui_DrawList_AddText(draw_list, ct_text_x, box_y + 2, COLOR_BOX_TEXT, cents_text)
-
-          -- Semitones box interaction
-          local semitones_double_clicked = reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_semitones_box
-          if semitones_double_clicked then
-            -- Double-click to reset semitones to 0 (keep cents)
-            if take then
-              reaper.Undo_BeginBlock()
-              local new_pitch = semitones_cents_to_pitch(0, display_cents)
-              new_pitch = math.max(PITCH_MIN, math.min(PITCH_MAX, new_pitch))
-              set_take_pitch(take, new_pitch)
-              reaper.UpdateArrange()
-              reaper.Undo_EndBlock("NVSD_ItemView: Reset semitones to 0", -1)
-            end
-            is_dragging_semitones = false
-          elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_semitones_box then
-            is_dragging_semitones = true
-            semitones_drag_start_y = mouse_y
-            semitones_drag_start_value = display_semitones
-            -- Capture screen position for cursor lock
-            if has_js_extension then
-              local screen_x, screen_y = reaper.GetMousePosition()
-              drag_lock_screen_x = screen_x
-              drag_lock_screen_y = screen_y
-              drag_cumulative_delta_y = 0
-            end
-            reaper.Undo_BeginBlock()
-          end
-
-          if reaper.ImGui_IsMouseReleased(ctx, 0) and is_dragging_semitones then
-            is_dragging_semitones = false
-            reaper.Undo_EndBlock("NVSD_ItemView: Adjust semitones", -1)
-          end
-
-          if is_dragging_semitones and reaper.ImGui_IsMouseDown(ctx, 0) then
-            local delta_y
-            if has_js_extension then
-              delta_y = drag_cumulative_delta_y
-            else
-              delta_y = semitones_drag_start_y - mouse_y
-            end
-            local delta_semitones = math.floor(delta_y / 10 + 0.5)  -- 10px per semitone
-            local new_semitones = semitones_drag_start_value + delta_semitones
-            local new_pitch = semitones_cents_to_pitch(new_semitones, display_cents)
-            new_pitch = math.max(PITCH_MIN, math.min(PITCH_MAX, new_pitch))
-            if take then
-              set_take_pitch(take, new_pitch)
-              reaper.UpdateArrange()
-            end
-          end
-
-          -- Cents box interaction
-          local cents_double_clicked = reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_cents_box
-          if cents_double_clicked then
-            -- Double-click to reset cents to 0 (keep semitones)
-            if take then
-              reaper.Undo_BeginBlock()
-              local new_pitch = semitones_cents_to_pitch(display_semitones, 0)
-              new_pitch = math.max(PITCH_MIN, math.min(PITCH_MAX, new_pitch))
-              set_take_pitch(take, new_pitch)
-              reaper.UpdateArrange()
-              reaper.Undo_EndBlock("NVSD_ItemView: Reset cents to 0", -1)
-            end
-            is_dragging_cents = false
-          elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_cents_box then
-            is_dragging_cents = true
-            cents_drag_start_y = mouse_y
-            cents_drag_start_value = take_pitch  -- Store full pitch for smooth dragging
-            -- Capture screen position for cursor lock
-            if has_js_extension then
-              local screen_x, screen_y = reaper.GetMousePosition()
-              drag_lock_screen_x = screen_x
-              drag_lock_screen_y = screen_y
-              drag_cumulative_delta_y = 0
-            end
-            reaper.Undo_BeginBlock()
-          end
-
-          if reaper.ImGui_IsMouseReleased(ctx, 0) and is_dragging_cents then
-            is_dragging_cents = false
-            reaper.Undo_EndBlock("NVSD_ItemView: Adjust cents", -1)
-          end
-
-          if is_dragging_cents and reaper.ImGui_IsMouseDown(ctx, 0) then
-            local delta_y
-            if has_js_extension then
-              delta_y = drag_cumulative_delta_y
-            else
-              delta_y = cents_drag_start_y - mouse_y
-            end
-            local delta_cents = delta_y  -- 1px per cent
-            local new_pitch = cents_drag_start_value + delta_cents / 100
-            new_pitch = math.max(PITCH_MIN, math.min(PITCH_MAX, new_pitch))
-            if take then
-              set_take_pitch(take, new_pitch)
-              reaper.UpdateArrange()
-            end
-          end
+          -- Draw semitones/cents boxes
+          draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, panel_x, knob_cy, take, take_pitch)
 
           -- Hide and lock cursor while dragging any control
           if is_dragging_gain or is_dragging_pitch or is_dragging_semitones or is_dragging_cents then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
-            -- Lock cursor position using JS extension
             if has_js_extension then
-              -- Get current position and accumulate delta before resetting
               local cur_screen_x, cur_screen_y = reaper.GetMousePosition()
               drag_cumulative_delta_y = drag_cumulative_delta_y + (drag_lock_screen_y - cur_screen_y)
               reaper.JS_Mouse_SetPosition(drag_lock_screen_x, drag_lock_screen_y)
