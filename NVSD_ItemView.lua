@@ -805,8 +805,9 @@ local function draw_waveform(draw_list, x, y, width, height, peaks, start_offset
   visual_gain = visual_gain or 1.0
   is_reversed = is_reversed or false
 
-  -- Base view size = max(source_length, source_item_length) to ensure we can see everything at zoom 1.0
-  local base_view_length = math.max(source_length, source_item_length)
+  -- Base view size = source_item_length (the item portion between markers)
+  -- At zoom 1.0, view fits exactly the item; zoom out to see more of source
+  local base_view_length = source_item_length
   -- Apply zoom: higher zoom = smaller view_length = more zoomed in
   local view_length = base_view_length / zoom_lvl
 
