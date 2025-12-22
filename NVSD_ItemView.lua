@@ -805,20 +805,22 @@ local function draw_waveform(draw_list, x, y, width, height, peaks, start_offset
   visual_gain = visual_gain or 1.0
   is_reversed = is_reversed or false
 
-  -- Base view size = source_length (the full original sample)
-  -- At zoom 1.0, view shows full source with orange boundaries at edges
-  local base_view_length = source_length
+  -- Item bounds in source time
+  local item_end = start_offset + source_item_length
+
+  -- Base view should show both source boundaries AND item boundaries
+  -- If item extends beyond source (looping), expand view to include it
+  local view_left_bound = math.min(0, start_offset)
+  local view_right_bound = math.max(source_length, item_end)
+  local base_view_length = view_right_bound - view_left_bound
+
   -- Apply zoom: higher zoom = smaller view_length = more zoomed in
   local view_length = base_view_length / zoom_lvl
 
-  -- Center the view on the source, then apply pan offset
-  -- At zoom 1.0 with pan 0, view shows full source (0 to source_length)
-  local source_center = source_length / 2
-  local view_start = source_center - view_length / 2 + pan_offset_time
+  -- Center the view on the full range (source + any extensions)
+  local range_center = (view_left_bound + view_right_bound) / 2
+  local view_start = range_center - view_length / 2 + pan_offset_time
   local view_end = view_start + view_length
-
-  -- Item bounds in source time
-  local item_end = start_offset + source_item_length
 
   -- Background
   reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, COLOR_WAVEFORM_BG)
@@ -2159,11 +2161,13 @@ local function loop()
             -- Dragging right = content moves right = view shifts left = negative offset change
             local delta_time = -(mouse_delta_px / waveform_width) * view_length
             pan_offset = pan_start_offset + delta_time
-            -- Panning limits based on source-centered view
-            -- At zoom 1.0, view_length = source_length, no panning needed
-            -- When zoomed in, allow panning to see from 0 to source_length
-            local min_pan = (view_length - source_length) / 2  -- pan left limit
-            local max_pan = (source_length - view_length) / 2  -- pan right limit
+            -- Panning limits based on full view range (source + any item extensions)
+            local view_left_bound = math.min(0, start_offset)
+            local view_right_bound = math.max(source_length, start_offset + source_item_length)
+            local full_range = view_right_bound - view_left_bound
+            -- At zoom 1.0, view_length = full_range, no panning needed
+            local min_pan = (view_length - full_range) / 2  -- pan left limit
+            local max_pan = (full_range - view_length) / 2  -- pan right limit
             pan_offset = math.max(min_pan, math.min(max_pan, pan_offset))
           end
 
