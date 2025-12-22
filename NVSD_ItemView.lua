@@ -699,10 +699,10 @@ local function draw_info_bar(draw_list, ctx, x, y, width, height, source, file_p
     reaper.ImGui_DrawList_AddText(draw_list, text_x, text_y, COLOR_INFO_BAR_TEXT, meta_text)
   end
 
-  -- Handle click on file name - open REAPER's Media Explorer
+  -- Handle click on file name - open source in REAPER's Media Explorer
   if mouse_over_filename and reaper.ImGui_IsMouseClicked(ctx, 0) then
-    -- Open Media Explorer (action 50124)
-    reaper.Main_OnCommand(50124, 0)
+    -- Open selected item source media in media explorer (action 41623)
+    reaper.Main_OnCommand(41623, 0)
     return true
   end
 
