@@ -1368,3 +1368,542 @@ function TestNVSDItemView:test_format_db()
     lu.assertEquals(format_db(-3.2), "-3.2 dB")
     lu.assertEquals(format_db(0.1), "0.1 dB")
 end
+
+function TestNVSDItemView:test_mute_toggle()
+    -- Test mute toggle logic
+    local function toggle_mute(is_muted)
+        return is_muted and 0 or 1
+    end
+
+    -- Muted -> unmute
+    lu.assertEquals(toggle_mute(true), 0)
+
+    -- Unmuted -> mute
+    lu.assertEquals(toggle_mute(false), 1)
+end
+
+function TestNVSDItemView:test_gain_to_db()
+    -- Test converting linear gain to dB
+    local function gain_to_db(gain)
+        if gain <= 0 then return -math.huge end
+        return 20 * math.log(gain) / math.log(10)
+    end
+
+    -- Unity gain = 0 dB
+    lu.assertAlmostEquals(gain_to_db(1.0), 0, 0.001)
+
+    -- Double = +6.02 dB
+    lu.assertAlmostEquals(gain_to_db(2.0), 6.02, 0.1)
+
+    -- Half = -6.02 dB
+    lu.assertAlmostEquals(gain_to_db(0.5), -6.02, 0.1)
+
+    -- +24 dB gain (~15.85x)
+    lu.assertAlmostEquals(gain_to_db(15.85), 24, 0.1)
+
+    -- Zero gain = -inf
+    lu.assertEquals(gain_to_db(0), -math.huge)
+end
+
+function TestNVSDItemView:test_db_to_slider_position()
+    -- Test converting dB to slider position (0-1) with logarithmic curve below 0dB
+    local function db_to_slider(db)
+        local DB_MAX = 24
+        local DB_MIN = -60
+
+        if db >= 0 then
+            -- Linear above 0dB: 0dB -> 0.5, +24dB -> 1.0
+            return 0.5 + (db / DB_MAX) * 0.5
+        else
+            -- Logarithmic below 0dB for finer control
+            local normalized = (db - DB_MIN) / (0 - DB_MIN)  -- 0 to 1
+            normalized = math.max(0, math.min(1, normalized))
+            -- Apply curve: sqrt for more resolution near 0dB
+            return math.sqrt(normalized) * 0.5
+        end
+    end
+
+    -- +24 dB = top (1.0)
+    lu.assertAlmostEquals(db_to_slider(24), 1.0, 0.001)
+
+    -- 0 dB = middle (0.5)
+    lu.assertAlmostEquals(db_to_slider(0), 0.5, 0.001)
+
+    -- +12 dB = 0.75
+    lu.assertAlmostEquals(db_to_slider(12), 0.75, 0.001)
+
+    -- -60 dB = bottom (0.0)
+    lu.assertAlmostEquals(db_to_slider(-60), 0, 0.001)
+
+    -- Check logarithmic curve: -6 dB should be higher than linear would suggest
+    local pos_neg6 = db_to_slider(-6)
+    lu.assertTrue(pos_neg6 > 0.4)  -- Should be above linear (which would be ~0.45)
+    lu.assertTrue(pos_neg6 < 0.5)  -- But still below 0dB position
+end
+
+function TestNVSDItemView:test_slider_to_db()
+    -- Test converting slider position to dB
+    local function slider_to_db(pos)
+        local DB_MAX = 24
+        local DB_MIN = -60
+
+        if pos >= 0.5 then
+            -- Linear above 0dB
+            return ((pos - 0.5) / 0.5) * DB_MAX
+        else
+            -- Inverse of logarithmic curve
+            local normalized = (pos / 0.5) ^ 2  -- inverse of sqrt
+            return DB_MIN + normalized * (0 - DB_MIN)
+        end
+    end
+
+    -- Top = +24 dB
+    lu.assertAlmostEquals(slider_to_db(1.0), 24, 0.001)
+
+    -- Middle = 0 dB
+    lu.assertAlmostEquals(slider_to_db(0.5), 0, 0.001)
+
+    -- 0.75 = +12 dB
+    lu.assertAlmostEquals(slider_to_db(0.75), 12, 0.001)
+
+    -- Bottom = -60 dB
+    lu.assertAlmostEquals(slider_to_db(0), -60, 0.001)
+end
+
+function TestNVSDItemView:test_pitch_to_semitones_cents()
+    -- Test splitting pitch value into semitones and cents
+    local function pitch_to_semitones_cents(pitch)
+        local semitones = math.floor(pitch + 0.5)  -- round to nearest
+        local cents = math.floor((pitch - semitones) * 100 + 0.5)
+        return semitones, cents
+    end
+
+    -- Exact semitone
+    local semi, cents = pitch_to_semitones_cents(5.0)
+    lu.assertEquals(semi, 5)
+    lu.assertEquals(cents, 0)
+
+    -- Positive cents
+    semi, cents = pitch_to_semitones_cents(5.25)
+    lu.assertEquals(semi, 5)
+    lu.assertEquals(cents, 25)
+
+    -- Negative cents (pitch slightly below semitone)
+    semi, cents = pitch_to_semitones_cents(4.75)
+    lu.assertEquals(semi, 5)  -- rounds to 5
+    lu.assertEquals(cents, -25)
+
+    -- Negative pitch
+    semi, cents = pitch_to_semitones_cents(-3.5)
+    lu.assertEquals(semi, -3)  -- floor(-3.5 + 0.5) = floor(-3) = -3
+    lu.assertEquals(cents, -50)
+
+    -- Zero pitch
+    semi, cents = pitch_to_semitones_cents(0)
+    lu.assertEquals(semi, 0)
+    lu.assertEquals(cents, 0)
+end
+
+function TestNVSDItemView:test_semitones_cents_to_pitch()
+    -- Test combining semitones and cents into pitch value
+    local function semitones_cents_to_pitch(semitones, cents)
+        return semitones + cents / 100
+    end
+
+    -- Basic cases
+    lu.assertAlmostEquals(semitones_cents_to_pitch(5, 0), 5.0, 0.001)
+    lu.assertAlmostEquals(semitones_cents_to_pitch(5, 50), 5.5, 0.001)
+    lu.assertAlmostEquals(semitones_cents_to_pitch(5, -25), 4.75, 0.001)
+    lu.assertAlmostEquals(semitones_cents_to_pitch(-3, 50), -2.5, 0.001)
+    lu.assertAlmostEquals(semitones_cents_to_pitch(0, 0), 0, 0.001)
+end
+
+function TestNVSDItemView:test_multi_channel_peak_parsing()
+    -- Test parsing peaks into separate channels (for multi-channel display)
+    local function parse_peaks_per_channel(buf, actual_samples, num_channels)
+        local peaks = {}
+        local min_block_offset = actual_samples * num_channels
+
+        for i = 1, actual_samples do
+            local channels = {}
+            if num_channels == 1 then
+                channels[1] = { min = buf[min_block_offset + i] or 0, max = buf[i] or 0 }
+            else
+                local base_idx = (i - 1) * num_channels + 1
+                for ch = 1, num_channels do
+                    channels[ch] = {
+                        max = buf[base_idx + ch - 1] or 0,
+                        min = buf[min_block_offset + base_idx + ch - 1] or 0
+                    }
+                end
+            end
+            peaks[i] = channels
+        end
+        return peaks
+    end
+
+    -- Test stereo buffer: 2 samples, 2 channels
+    local buf = {
+        -- max block: L0=0.8, R0=0.6, L1=0.4, R1=0.9
+        0.8, 0.6, 0.4, 0.9,
+        -- min block: L0=-0.7, R0=-0.5, L1=-0.3, R1=-0.8
+        -0.7, -0.5, -0.3, -0.8
+    }
+
+    local peaks = parse_peaks_per_channel(buf, 2, 2)
+
+    -- Sample 1, Channel 1 (Left)
+    lu.assertAlmostEquals(peaks[1][1].max, 0.8, 0.001)
+    lu.assertAlmostEquals(peaks[1][1].min, -0.7, 0.001)
+
+    -- Sample 1, Channel 2 (Right)
+    lu.assertAlmostEquals(peaks[1][2].max, 0.6, 0.001)
+    lu.assertAlmostEquals(peaks[1][2].min, -0.5, 0.001)
+
+    -- Sample 2, Channel 1 (Left)
+    lu.assertAlmostEquals(peaks[2][1].max, 0.4, 0.001)
+    lu.assertAlmostEquals(peaks[2][1].min, -0.3, 0.001)
+
+    -- Sample 2, Channel 2 (Right)
+    lu.assertAlmostEquals(peaks[2][2].max, 0.9, 0.001)
+    lu.assertAlmostEquals(peaks[2][2].min, -0.8, 0.001)
+end
+
+function TestNVSDItemView:test_range_based_view_calculation()
+    -- Test view range that includes both markers AND orange source edges
+    local function calc_full_range(start_offset, source_item_length, source_length)
+        local item_end = start_offset + source_item_length
+        local left_bound = math.min(0, start_offset)
+        local right_bound = math.max(source_length, item_end)
+        return left_bound, right_bound, right_bound - left_bound
+    end
+
+    -- Item within source
+    local left, right, range = calc_full_range(2, 5, 10)
+    lu.assertAlmostEquals(left, 0, 0.001)
+    lu.assertAlmostEquals(right, 10, 0.001)
+    lu.assertAlmostEquals(range, 10, 0.001)
+
+    -- Item starts before source
+    left, right, range = calc_full_range(-3, 8, 10)
+    lu.assertAlmostEquals(left, -3, 0.001)
+    lu.assertAlmostEquals(right, 10, 0.001)
+    lu.assertAlmostEquals(range, 13, 0.001)
+
+    -- Item extends past source
+    left, right, range = calc_full_range(5, 10, 10)
+    lu.assertAlmostEquals(left, 0, 0.001)
+    lu.assertAlmostEquals(right, 15, 0.001)
+    lu.assertAlmostEquals(range, 15, 0.001)
+
+    -- Item extends both ways
+    left, right, range = calc_full_range(-2, 20, 10)
+    lu.assertAlmostEquals(left, -2, 0.001)
+    lu.assertAlmostEquals(right, 18, 0.001)
+    lu.assertAlmostEquals(range, 20, 0.001)
+end
+
+function TestNVSDItemView:test_quick_marker_positioning_left()
+    -- Test mouse button 4 quick positioning of left marker
+    local function move_left_marker_to(click_time, current_end)
+        local new_start = click_time
+        -- Clamp: can't go past end marker
+        new_start = math.min(new_start, current_end - 0.01)
+        local new_length = current_end - new_start
+        return new_start, new_length
+    end
+
+    -- Normal case: move left marker to position 3, end at 8
+    local new_start, new_length = move_left_marker_to(3, 8)
+    lu.assertAlmostEquals(new_start, 3, 0.001)
+    lu.assertAlmostEquals(new_length, 5, 0.001)
+
+    -- Click before current start (extend item)
+    new_start, new_length = move_left_marker_to(1, 8)
+    lu.assertAlmostEquals(new_start, 1, 0.001)
+    lu.assertAlmostEquals(new_length, 7, 0.001)
+
+    -- Click past end marker (clamp to just before end)
+    new_start, new_length = move_left_marker_to(10, 8)
+    lu.assertAlmostEquals(new_start, 7.99, 0.02)
+    lu.assertAlmostEquals(new_length, 0.01, 0.02)
+
+    -- Negative click position (before source)
+    new_start, new_length = move_left_marker_to(-2, 8)
+    lu.assertAlmostEquals(new_start, -2, 0.001)
+    lu.assertAlmostEquals(new_length, 10, 0.001)
+end
+
+function TestNVSDItemView:test_quick_marker_positioning_right()
+    -- Test mouse button 5 quick positioning of right marker
+    local function move_right_marker_to(click_time, start_offset, playrate)
+        local new_end = click_time
+        -- Clamp: can't go before start marker
+        new_end = math.max(new_end, start_offset + 0.01)
+        local new_source_length = new_end - start_offset
+        local new_item_length = new_source_length / playrate
+        return new_end, new_item_length
+    end
+
+    -- Normal case: move right marker to position 8, start at 2, playrate 1
+    local new_end, new_length = move_right_marker_to(8, 2, 1)
+    lu.assertAlmostEquals(new_end, 8, 0.001)
+    lu.assertAlmostEquals(new_length, 6, 0.001)
+
+    -- Shrink item
+    new_end, new_length = move_right_marker_to(5, 2, 1)
+    lu.assertAlmostEquals(new_end, 5, 0.001)
+    lu.assertAlmostEquals(new_length, 3, 0.001)
+
+    -- Click before start marker (clamp to just after start)
+    new_end, new_length = move_right_marker_to(1, 2, 1)
+    lu.assertAlmostEquals(new_end, 2.01, 0.02)
+    lu.assertAlmostEquals(new_length, 0.01, 0.02)
+
+    -- With playrate 2 (double speed)
+    new_end, new_length = move_right_marker_to(12, 2, 2)
+    lu.assertAlmostEquals(new_end, 12, 0.001)
+    lu.assertAlmostEquals(new_length, 5, 0.001)  -- (12-2)/2 = 5
+end
+
+function TestNVSDItemView:test_file_name_extraction()
+    -- Test extracting file name from full path
+    local function get_file_name(path)
+        if not path or path == "" then return "" end
+        return path:match("([^/\\]+)$") or path
+    end
+
+    -- Unix path
+    lu.assertEquals(get_file_name("/home/user/audio/kick.wav"), "kick.wav")
+
+    -- Windows path
+    lu.assertEquals(get_file_name("C:\\Users\\audio\\snare.wav"), "snare.wav")
+
+    -- Just filename
+    lu.assertEquals(get_file_name("hihat.wav"), "hihat.wav")
+
+    -- Empty path
+    lu.assertEquals(get_file_name(""), "")
+    lu.assertEquals(get_file_name(nil), "")
+
+    -- Path with spaces
+    lu.assertEquals(get_file_name("/home/user/My Audio/cool sound.wav"), "cool sound.wav")
+end
+
+function TestNVSDItemView:test_channel_height_calculation()
+    -- Test calculating per-channel height for multi-channel display
+    local function calc_channel_height(total_height, num_channels)
+        return total_height / num_channels
+    end
+
+    -- Mono
+    lu.assertAlmostEquals(calc_channel_height(200, 1), 200, 0.001)
+
+    -- Stereo
+    lu.assertAlmostEquals(calc_channel_height(200, 2), 100, 0.001)
+
+    -- 4 channels
+    lu.assertAlmostEquals(calc_channel_height(200, 4), 50, 0.001)
+end
+
+function TestNVSDItemView:test_channel_y_position()
+    -- Test calculating Y position for each channel
+    local function calc_channel_y(base_y, channel_index, channel_height)
+        return base_y + (channel_index - 1) * channel_height
+    end
+
+    local base_y = 100
+    local channel_height = 50
+
+    -- Channel 1
+    lu.assertAlmostEquals(calc_channel_y(base_y, 1, channel_height), 100, 0.001)
+
+    -- Channel 2
+    lu.assertAlmostEquals(calc_channel_y(base_y, 2, channel_height), 150, 0.001)
+
+    -- Channel 3
+    lu.assertAlmostEquals(calc_channel_y(base_y, 3, channel_height), 200, 0.001)
+end
+
+function TestNVSDItemView:test_waveform_minimum_height()
+    -- Test that silent waveform has minimum visible height
+    local function calc_waveform_rect(peak_min, peak_max, center_y, height, min_height)
+        local half_height = height / 2
+        local top_y = center_y - (peak_max * half_height * 0.95)
+        local bot_y = center_y - (peak_min * half_height * 0.95)
+
+        -- Ensure minimum height for visibility
+        if bot_y - top_y < min_height then
+            top_y = center_y - min_height / 2
+            bot_y = center_y + min_height / 2
+        end
+
+        return top_y, bot_y
+    end
+
+    local center_y = 100
+    local height = 100
+    local min_height = 1
+
+    -- Silent (0, 0) - should get minimum height
+    local top, bot = calc_waveform_rect(0, 0, center_y, height, min_height)
+    lu.assertAlmostEquals(bot - top, min_height, 0.001)
+    lu.assertAlmostEquals((top + bot) / 2, center_y, 0.001)  -- centered
+
+    -- Very quiet - still minimum height
+    top, bot = calc_waveform_rect(-0.001, 0.001, center_y, height, min_height)
+    lu.assertTrue(bot - top >= min_height)
+
+    -- Normal amplitude - larger than minimum
+    top, bot = calc_waveform_rect(-0.5, 0.5, center_y, height, min_height)
+    lu.assertTrue(bot - top > min_height)
+end
+
+function TestNVSDItemView:test_overlay_alpha_values()
+    -- Test that overlay alpha values are appropriate for visibility
+    local COLOR_UNUSED_SOURCE = 0x00000038    -- ~22% opacity
+    local COLOR_OUTSIDE_SOURCE = 0x00000058   -- ~35% opacity
+
+    -- Extract alpha from RGBA
+    local function get_alpha(color)
+        return color & 0xFF
+    end
+
+    local unused_alpha = get_alpha(COLOR_UNUSED_SOURCE)
+    local outside_alpha = get_alpha(COLOR_OUTSIDE_SOURCE)
+
+    -- Unused source should be lighter (lower alpha)
+    lu.assertTrue(unused_alpha < outside_alpha)
+
+    -- Both should be semi-transparent (not fully opaque)
+    lu.assertTrue(unused_alpha < 128)
+    lu.assertTrue(outside_alpha < 128)
+
+    -- But still visible
+    lu.assertTrue(unused_alpha > 20)
+    lu.assertTrue(outside_alpha > 40)
+end
+
+function TestNVSDItemView:test_bracket_indicator_direction()
+    -- Test that bracket indicators point in correct direction
+    -- Left edge: "[" shape (horizontal lines extend right)
+    -- Right edge: "]" shape (horizontal lines extend left)
+
+    local function calc_bracket_lines(edge_x, is_left_edge, bracket_len)
+        if is_left_edge then
+            -- "[" shape: lines extend to the right
+            return edge_x, edge_x + bracket_len
+        else
+            -- "]" shape: lines extend to the left
+            return edge_x - bracket_len, edge_x
+        end
+    end
+
+    local bracket_len = 4
+
+    -- Left edge at x=100
+    local start_x, end_x = calc_bracket_lines(100, true, bracket_len)
+    lu.assertEquals(start_x, 100)
+    lu.assertEquals(end_x, 104)  -- extends right
+
+    -- Right edge at x=500
+    start_x, end_x = calc_bracket_lines(500, false, bracket_len)
+    lu.assertEquals(start_x, 496)  -- extends left
+    lu.assertEquals(end_x, 500)
+end
+
+function TestNVSDItemView:test_pan_limits_include_markers_and_edges()
+    -- Test that pan limits allow seeing both blue markers and orange source edges
+    local function calc_pan_limits(view_length, start_offset, source_item_length, source_length)
+        local item_end = start_offset + source_item_length
+        local left_bound = math.min(0, start_offset)
+        local right_bound = math.max(source_length, item_end)
+        local range_center = (left_bound + right_bound) / 2
+
+        -- Pan limits: allow scrolling to see full range
+        local min_pan = left_bound - (range_center - view_length / 2)
+        local max_pan = right_bound - (range_center + view_length / 2)
+
+        return min_pan, max_pan
+    end
+
+    -- Item within source, view fits all
+    local min_pan, max_pan = calc_pan_limits(10, 2, 5, 10)
+    -- Range is 0-10, center=5, view_length=10 fits exactly
+    lu.assertTrue(min_pan <= 0)
+    lu.assertTrue(max_pan >= 0)
+
+    -- Item extends past source
+    min_pan, max_pan = calc_pan_limits(10, 5, 10, 10)
+    -- Range is 0-15, center=7.5
+    lu.assertTrue(max_pan > 0)  -- Can pan right to see extended area
+end
+
+function TestNVSDItemView:test_center_text_positioning()
+    -- Test calculating centered text position
+    local function calc_centered_text_pos(area_width, area_height, text_width, text_height)
+        local x = (area_width - text_width) / 2
+        local y = (area_height - text_height) / 2
+        return x, y
+    end
+
+    -- Center in 800x600 area, text is 100x20
+    local x, y = calc_centered_text_pos(800, 600, 100, 20)
+    lu.assertAlmostEquals(x, 350, 0.001)
+    lu.assertAlmostEquals(y, 290, 0.001)
+
+    -- Small area
+    x, y = calc_centered_text_pos(200, 100, 50, 15)
+    lu.assertAlmostEquals(x, 75, 0.001)
+    lu.assertAlmostEquals(y, 42.5, 0.001)
+end
+
+function TestNVSDItemView:test_mute_button_bounds()
+    -- Test mute button position and size in info bar
+    local function calc_mute_button_bounds(info_bar_x, info_bar_y, info_bar_height)
+        local mute_size = 10
+        local mute_x = info_bar_x + 4
+        local mute_y = info_bar_y + (info_bar_height - mute_size) / 2
+        return mute_x, mute_y, mute_size
+    end
+
+    local info_bar_x = 100
+    local info_bar_y = 50
+    local info_bar_height = 18
+
+    local x, y, size = calc_mute_button_bounds(info_bar_x, info_bar_y, info_bar_height)
+
+    lu.assertEquals(x, 104)  -- 4px padding from left
+    lu.assertEquals(size, 10)
+    -- Vertically centered
+    lu.assertAlmostEquals(y, 50 + (18 - 10) / 2, 0.001)
+end
+
+function TestNVSDItemView:test_mouse_in_mute_button()
+    -- Test mouse detection in mute button area
+    local function is_mouse_in_mute(mouse_x, mouse_y, mute_x, mute_y, mute_size)
+        return mouse_x >= mute_x and mouse_x <= mute_x + mute_size
+               and mouse_y >= mute_y and mouse_y <= mute_y + mute_size
+    end
+
+    local mute_x, mute_y, mute_size = 104, 54, 10
+
+    -- Inside
+    lu.assertTrue(is_mouse_in_mute(109, 59, mute_x, mute_y, mute_size))
+
+    -- Corner
+    lu.assertTrue(is_mouse_in_mute(104, 54, mute_x, mute_y, mute_size))
+    lu.assertTrue(is_mouse_in_mute(114, 64, mute_x, mute_y, mute_size))
+
+    -- Outside left
+    lu.assertFalse(is_mouse_in_mute(103, 59, mute_x, mute_y, mute_size))
+
+    -- Outside right
+    lu.assertFalse(is_mouse_in_mute(115, 59, mute_x, mute_y, mute_size))
+
+    -- Outside top
+    lu.assertFalse(is_mouse_in_mute(109, 53, mute_x, mute_y, mute_size))
+
+    -- Outside bottom
+    lu.assertFalse(is_mouse_in_mute(109, 65, mute_x, mute_y, mute_size))
+end
