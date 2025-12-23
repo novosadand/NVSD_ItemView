@@ -1640,8 +1640,8 @@ local function loop()
     -- Get selected item
     local selected_item = reaper.GetSelectedMediaItem(0, 0)
 
-    -- Clear sticky when selection changes to a new item
-    if selected_item and selected_item ~= last_selected_item then
+    -- Clear sticky when selection changes (including deselect)
+    if selected_item ~= last_selected_item then
       sticky_item = nil
     end
     last_selected_item = selected_item
