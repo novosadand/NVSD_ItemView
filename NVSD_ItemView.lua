@@ -1652,7 +1652,8 @@ local function loop()
     -- Requires SWS/JS extension for JS_Mouse_GetState
     if reaper.JS_Mouse_GetState then
       local mouse_state = reaper.JS_Mouse_GetState(1)  -- 1 = left mouse button
-      if mouse_state == 1 then
+      -- Use bitwise check since mouse_state is a bitmask (includes modifier keys)
+      if (mouse_state & 1) ~= 0 then
         local mouse_screen_x, mouse_screen_y = reaper.GetMousePosition()
         local item_under_mouse, take_under_mouse = reaper.GetItemFromPoint(mouse_screen_x, mouse_screen_y, false)
         if item_under_mouse then
