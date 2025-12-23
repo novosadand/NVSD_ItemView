@@ -102,28 +102,10 @@ local last_zoomed_item = nil  -- Reset zoom when item changes
 local sticky_item = nil
 local last_selected_item = nil  -- Track selection changes to clear sticky
 
--- Gain slider state
-local is_dragging_gain = false
-local gain_drag_start_y = 0
-local gain_drag_start_value = 0
-local gain_shift_was_held = false  -- Track shift state for smooth fine-adjust transition
-
--- Pitch knob state
-local is_dragging_pitch = false
-local pitch_drag_start_y = 0
-local pitch_drag_start_value = 0
-local pitch_shift_was_held = false  -- Track shift state for smooth fine-adjust transition
+-- Pitch constants
 local PITCH_KNOB_RADIUS = 16  -- Knob radius in pixels
 local PITCH_MIN = -48  -- Minimum semitones
 local PITCH_MAX = 48   -- Maximum semitones
-
--- Semitones/cents box drag state
-local is_dragging_semitones = false
-local is_dragging_cents = false
-local semitones_drag_start_y = 0
-local cents_drag_start_y = 0
-local semitones_drag_start_value = 0
-local cents_drag_start_value = 0
 
 -- Cursor lock state (for hiding and locking cursor during drag)
 local drag_lock_screen_x = 0
@@ -131,6 +113,72 @@ local drag_lock_screen_y = 0
 local drag_cumulative_delta_y = 0  -- Accumulated Y delta for locked cursor dragging
 local drag_window_to_screen_y = 0  -- Offset to convert window Y to screen Y
 local has_js_extension = reaper.JS_Mouse_SetPosition ~= nil
+
+-- Unified drag control state (replaces individual is_dragging_*, *_drag_start_*, etc.)
+local drag_controls = {
+  gain = { active = false, start_y = 0, start_value = 0, shift_held = false },
+  pitch = { active = false, start_y = 0, start_value = 0, shift_held = false },
+  semitones = { active = false, start_y = 0, start_value = 0 },
+  cents = { active = false, start_y = 0, start_value = 0 },
+}
+
+-- Start a drag operation
+local function start_drag(name, mouse_y, value, track_shift)
+  local ctrl = drag_controls[name]
+  ctrl.active = true
+  ctrl.start_y = mouse_y
+  ctrl.start_value = value
+  if track_shift then
+    ctrl.shift_held = false
+  end
+  if has_js_extension then
+    local screen_x, screen_y = reaper.GetMousePosition()
+    drag_lock_screen_x, drag_lock_screen_y = screen_x, screen_y
+    drag_cumulative_delta_y = 0
+  end
+  if not undo_block_open then
+    undo_block_open = name
+  end
+end
+
+-- End a drag operation
+local function end_drag(name)
+  drag_controls[name].active = false
+end
+
+-- Check if a drag is active
+local function is_dragging(name)
+  return drag_controls[name].active
+end
+
+-- Check if any control drag is active (for cursor hiding)
+local function is_any_control_dragging()
+  return drag_controls.gain.active or drag_controls.pitch.active
+      or drag_controls.semitones.active or drag_controls.cents.active
+end
+
+-- Get drag delta (in pixels), handling shift modifier for fine control
+-- Returns: delta_y (adjusted for sensitivity), and updates shift state
+local function get_drag_delta(ctx, name, mouse_y, current_value, fine_sensitivity)
+  local ctrl = drag_controls[name]
+  if not ctrl.active then return 0 end
+
+  local sensitivity = 1.0
+  if fine_sensitivity then
+    local shift_now = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
+    if shift_now ~= ctrl.shift_held then
+      -- Shift state changed - reset baseline for smooth transition
+      ctrl.start_y = mouse_y
+      ctrl.start_value = current_value
+      ctrl.shift_held = shift_now
+      if has_js_extension then drag_cumulative_delta_y = 0 end
+    end
+    sensitivity = ctrl.shift_held and fine_sensitivity or 1.0
+  end
+
+  local delta_y = has_js_extension and drag_cumulative_delta_y or (ctrl.start_y - mouse_y)
+  return delta_y * sensitivity
+end
 
 -- Warp mode state (true = pitch shift preserves length, false = playrate changes length)
 local warp_mode = false
@@ -1342,7 +1390,7 @@ local function draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, panel
   local handle_height = 8
   local mouse_in_slider = mouse_x >= slider_x - 5 and mouse_x <= slider_x + GAIN_SLIDER_WIDTH + 5
                           and mouse_y >= slider_top - handle_height and mouse_y <= slider_bottom + handle_height
-  local handle_color = (mouse_in_slider or is_dragging_gain) and COLOR_SLIDER_HANDLE_HOVER or COLOR_SLIDER_HANDLE
+  local handle_color = (mouse_in_slider or is_dragging("gain")) and COLOR_SLIDER_HANDLE_HOVER or COLOR_SLIDER_HANDLE
   reaper.ImGui_DrawList_AddRectFilled(draw_list, slider_x - 2, handle_y - handle_height/2, slider_x + GAIN_SLIDER_WIDTH + 2, handle_y + handle_height/2, handle_color, 3)
 
   -- Interaction
@@ -1352,45 +1400,23 @@ local function draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, panel
     reaper.SetMediaItemInfo_Value(item, "D_VOL", 1.0)
     reaper.UpdateArrange()
     reaper.Undo_EndBlock("NVSD_ItemView: Reset item volume to 0dB", -1)
-    is_dragging_gain = false
+    end_drag("gain")
   elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_slider then
-    is_dragging_gain = true
-    gain_drag_start_y = mouse_y
-    gain_drag_start_value = slider_pos
-    gain_shift_was_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
+    start_drag("gain", mouse_y, slider_pos, true)
     if has_js_extension then
-      local screen_x, screen_y = reaper.GetMousePosition()
-      drag_lock_screen_x, drag_lock_screen_y = screen_x, screen_y
-      drag_cumulative_delta_y = 0
+      local _, screen_y = reaper.GetMousePosition()
       drag_window_to_screen_y = screen_y - mouse_y
     end
-    if not undo_block_open then
-      undo_block_open = "gain"
-    end
   end
 
-  if reaper.ImGui_IsMouseReleased(ctx, 0) and is_dragging_gain then
-    is_dragging_gain = false
-    if has_js_extension then
-      local final_handle_y = slider_bottom - slider_pos * slider_height
-      local screen_handle_y = final_handle_y + drag_window_to_screen_y
-      reaper.JS_Mouse_SetPosition(drag_lock_screen_x, math.floor(screen_handle_y))
-    end
-    -- undo block closed at top level
+  if reaper.ImGui_IsMouseReleased(ctx, 0) and is_dragging("gain") then
+    end_drag("gain")
   end
 
-  if is_dragging_gain and reaper.ImGui_IsMouseDown(ctx, 0) then
-    local shift_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
-    if shift_held ~= gain_shift_was_held then
-      gain_drag_start_y = mouse_y
-      gain_drag_start_value = slider_pos
-      gain_shift_was_held = shift_held
-      if has_js_extension then drag_cumulative_delta_y = 0 end
-    end
-    local sensitivity = shift_held and 0.15 or 1.0
-    local delta_y = has_js_extension and drag_cumulative_delta_y or (gain_drag_start_y - mouse_y)
-    local delta_pos = (delta_y / slider_height) * sensitivity
-    local new_pos = math.max(0, math.min(1, gain_drag_start_value + delta_pos))
+  if is_dragging("gain") and reaper.ImGui_IsMouseDown(ctx, 0) then
+    local delta_y = get_drag_delta(ctx, "gain", mouse_y, slider_pos, 0.15)
+    local delta_pos = delta_y / slider_height
+    local new_pos = math.max(0, math.min(1, drag_controls.gain.start_value + delta_pos))
     local new_db = slider_to_db(new_pos)
     local new_gain = db_to_gain(new_db)
     reaper.SetMediaItemInfo_Value(item, "D_VOL", new_gain)
@@ -1430,7 +1456,7 @@ local function draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_
   local knob_dist = math.sqrt(knob_dx * knob_dx + knob_dy * knob_dy)
   local mouse_in_knob = knob_dist <= PITCH_KNOB_RADIUS + 8
 
-  draw_knob(draw_list, knob_cx, knob_cy, PITCH_KNOB_RADIUS, knob_angle, mouse_in_knob, is_dragging_pitch)
+  draw_knob(draw_list, knob_cx, knob_cy, PITCH_KNOB_RADIUS, knob_angle, mouse_in_knob, is_dragging("pitch"))
 
   local pitch_double_clicked = reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_knob
   if pitch_double_clicked then
@@ -1440,39 +1466,19 @@ local function draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_
       reaper.UpdateArrange()
       reaper.Undo_EndBlock("NVSD_ItemView: Reset pitch to 0", -1)
     end
-    is_dragging_pitch = false
+    end_drag("pitch")
   elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_knob then
-    is_dragging_pitch = true
-    pitch_drag_start_y = mouse_y
-    pitch_drag_start_value = take_pitch
-    pitch_shift_was_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
-    if has_js_extension then
-      local screen_x, screen_y = reaper.GetMousePosition()
-      drag_lock_screen_x, drag_lock_screen_y = screen_x, screen_y
-      drag_cumulative_delta_y = 0
-    end
-    if not undo_block_open then
-      undo_block_open = "pitch"
-    end
+    start_drag("pitch", mouse_y, take_pitch, true)
   end
 
-  if reaper.ImGui_IsMouseReleased(ctx, 0) and is_dragging_pitch then
-    is_dragging_pitch = false
-    -- undo block closed at top level
+  if reaper.ImGui_IsMouseReleased(ctx, 0) and is_dragging("pitch") then
+    end_drag("pitch")
   end
 
-  if is_dragging_pitch and reaper.ImGui_IsMouseDown(ctx, 0) then
-    local shift_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
-    if shift_held ~= pitch_shift_was_held then
-      pitch_drag_start_y = mouse_y
-      pitch_drag_start_value = take_pitch
-      pitch_shift_was_held = shift_held
-      if has_js_extension then drag_cumulative_delta_y = 0 end
-    end
-    local sensitivity = shift_held and 0.2 or 1.0
-    local delta_y = has_js_extension and drag_cumulative_delta_y or (pitch_drag_start_y - mouse_y)
-    local delta_semitones = math.floor((delta_y / 10) * sensitivity + 0.5)
-    local start_semitones = math.floor(pitch_drag_start_value + 0.5)
+  if is_dragging("pitch") and reaper.ImGui_IsMouseDown(ctx, 0) then
+    local delta_y = get_drag_delta(ctx, "pitch", mouse_y, take_pitch, 0.2)
+    local delta_semitones = math.floor(delta_y / 10 + 0.5)
+    local start_semitones = math.floor(drag_controls.pitch.start_value + 0.5)
     local new_pitch = math.max(PITCH_MIN, math.min(PITCH_MAX, start_semitones + delta_semitones))
     if take then
       set_take_pitch(take, new_pitch)
@@ -1506,14 +1512,14 @@ local function draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, pane
                              and mouse_y >= box_y and mouse_y <= box_y + box_height
 
   -- Semitones box
-  local semitones_border = (mouse_in_semitones_box or is_dragging_semitones) and COLOR_BOX_HOVER or COLOR_BOX_BORDER
+  local semitones_border = (mouse_in_semitones_box or is_dragging("semitones")) and COLOR_BOX_HOVER or COLOR_BOX_BORDER
   reaper.ImGui_DrawList_AddRectFilled(draw_list, box_left_x, box_y, box_left_x + box_width, box_y + box_height, COLOR_BOX_BG)
   reaper.ImGui_DrawList_AddRect(draw_list, box_left_x, box_y, box_left_x + box_width, box_y + box_height, semitones_border)
   local semitones_text = tostring(display_semitones)
   reaper.ImGui_DrawList_AddText(draw_list, box_left_x + box_width / 2 - (#semitones_text * 3), box_y + 2, COLOR_BOX_TEXT, semitones_text)
 
   -- Cents box
-  local cents_border = (mouse_in_cents_box or is_dragging_cents) and COLOR_BOX_HOVER or COLOR_BOX_BORDER
+  local cents_border = (mouse_in_cents_box or is_dragging("cents")) and COLOR_BOX_HOVER or COLOR_BOX_BORDER
   reaper.ImGui_DrawList_AddRectFilled(draw_list, box_right_x, box_y, box_right_x + box_width, box_y + box_height, COLOR_BOX_BG)
   reaper.ImGui_DrawList_AddRect(draw_list, box_right_x, box_y, box_right_x + box_width, box_y + box_height, cents_border)
   local cents_text = tostring(display_cents)
@@ -1529,30 +1535,19 @@ local function draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, pane
       reaper.UpdateArrange()
       reaper.Undo_EndBlock("NVSD_ItemView: Reset semitones to 0", -1)
     end
-    is_dragging_semitones = false
+    end_drag("semitones")
   elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_semitones_box then
-    is_dragging_semitones = true
-    semitones_drag_start_y = mouse_y
-    semitones_drag_start_value = display_semitones
-    if has_js_extension then
-      local screen_x, screen_y = reaper.GetMousePosition()
-      drag_lock_screen_x, drag_lock_screen_y = screen_x, screen_y
-      drag_cumulative_delta_y = 0
-    end
-    if not undo_block_open then
-      undo_block_open = "semitones"
-    end
+    start_drag("semitones", mouse_y, display_semitones, false)
   end
 
-  if reaper.ImGui_IsMouseReleased(ctx, 0) and is_dragging_semitones then
-    is_dragging_semitones = false
-    -- undo block closed at top level
+  if reaper.ImGui_IsMouseReleased(ctx, 0) and is_dragging("semitones") then
+    end_drag("semitones")
   end
 
-  if is_dragging_semitones and reaper.ImGui_IsMouseDown(ctx, 0) then
-    local delta_y = has_js_extension and drag_cumulative_delta_y or (semitones_drag_start_y - mouse_y)
+  if is_dragging("semitones") and reaper.ImGui_IsMouseDown(ctx, 0) then
+    local delta_y = get_drag_delta(ctx, "semitones", mouse_y, display_semitones, nil)
     local delta_semitones = math.floor(delta_y / 10 + 0.5)
-    local new_pitch = math.max(PITCH_MIN, math.min(PITCH_MAX, semitones_cents_to_pitch(semitones_drag_start_value + delta_semitones, display_cents)))
+    local new_pitch = math.max(PITCH_MIN, math.min(PITCH_MAX, semitones_cents_to_pitch(drag_controls.semitones.start_value + delta_semitones, display_cents)))
     if take then
       set_take_pitch(take, new_pitch)
       reaper.UpdateArrange()
@@ -1569,30 +1564,19 @@ local function draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, pane
       reaper.UpdateArrange()
       reaper.Undo_EndBlock("NVSD_ItemView: Reset cents to 0", -1)
     end
-    is_dragging_cents = false
+    end_drag("cents")
   elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_cents_box then
-    is_dragging_cents = true
-    cents_drag_start_y = mouse_y
-    cents_drag_start_value = display_cents
-    if has_js_extension then
-      local screen_x, screen_y = reaper.GetMousePosition()
-      drag_lock_screen_x, drag_lock_screen_y = screen_x, screen_y
-      drag_cumulative_delta_y = 0
-    end
-    if not undo_block_open then
-      undo_block_open = "cents"
-    end
+    start_drag("cents", mouse_y, display_cents, false)
   end
 
-  if reaper.ImGui_IsMouseReleased(ctx, 0) and is_dragging_cents then
-    is_dragging_cents = false
-    -- undo block closed at top level
+  if reaper.ImGui_IsMouseReleased(ctx, 0) and is_dragging("cents") then
+    end_drag("cents")
   end
 
-  if is_dragging_cents and reaper.ImGui_IsMouseDown(ctx, 0) then
-    local delta_y = has_js_extension and drag_cumulative_delta_y or (cents_drag_start_y - mouse_y)
+  if is_dragging("cents") and reaper.ImGui_IsMouseDown(ctx, 0) then
+    local delta_y = get_drag_delta(ctx, "cents", mouse_y, display_cents, nil)
     local delta_cents = math.floor(delta_y / 2 + 0.5)
-    local new_pitch = math.max(PITCH_MIN, math.min(PITCH_MAX, semitones_cents_to_pitch(display_semitones, cents_drag_start_value + delta_cents)))
+    local new_pitch = math.max(PITCH_MIN, math.min(PITCH_MAX, semitones_cents_to_pitch(display_semitones, drag_controls.cents.start_value + delta_cents)))
     if take then
       set_take_pitch(take, new_pitch)
       reaper.UpdateArrange()
@@ -2089,7 +2073,7 @@ local function loop()
           draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, panel_x, knob_cy, take, take_pitch)
 
           -- Hide and lock cursor while dragging any control
-          if is_dragging_gain or is_dragging_pitch or is_dragging_semitones or is_dragging_cents then
+          if is_any_control_dragging() then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
             if has_js_extension then
               local cur_screen_x, cur_screen_y = reaper.GetMousePosition()
