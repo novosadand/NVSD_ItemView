@@ -185,11 +185,31 @@ local function loop()
       state.last_zoomed_item = nil
     end
 
-    -- Skip ALL processing while mouse is down on a new/uncached item
-    -- This ensures zero lag during click-drag operations in REAPER
-    -- Waveform loads instantly when mouse is released
-    if item and mouse_is_down and item ~= state.cached_item then
-      item = nil  -- Defer until mouse release
+    -- Check if we have cached peaks for this item's source file
+    -- If cached, we can show instantly even during mouse-down
+    local item_file_path = nil
+    local has_cached_file = false
+    if item then
+      local take = reaper.GetActiveTake(item)
+      if take and not reaper.TakeIsMIDI(take) then
+        local source = reaper.GetMediaItemTake_Source(take)
+        if source then
+          -- Get root source
+          local parent = reaper.GetMediaSourceParent(source)
+          while parent do
+            source = parent
+            parent = reaper.GetMediaSourceParent(source)
+          end
+          item_file_path = reaper.GetMediaSourceFileName(source, "")
+          has_cached_file = item_file_path and state.get_cached_peaks(item_file_path) ~= nil
+        end
+      end
+    end
+
+    -- Skip processing while mouse is down on uncached item
+    -- But allow instant display if we have cached peaks for this file
+    if item and mouse_is_down and item ~= state.cached_item and not has_cached_file then
+      item = nil  -- Defer until mouse release (only for uncached files)
     end
 
     if item then
@@ -287,18 +307,36 @@ local function loop()
                                   or state.is_ruler_dragging or state.is_any_control_dragging()
           local user_dragging_in_reaper = mouse_held and not we_are_dragging
 
+          -- Get file path for caching
+          local file_path = reaper.GetMediaSourceFileName(source, "")
+
+          -- Check multi-file cache first
+          local file_cache_entry = file_path and state.get_cached_peaks(file_path)
+
           -- Deferred loading: Don't load peaks while user is dragging in REAPER
           -- This keeps REAPER responsive during edge drags, etc.
           if item_changed or source_changed or reversed_changed then
-            -- Just mark that we need to load - don't load yet
             state.cached_item = item
             state.cached_source = source
             state.cached_source_length = source_length
             state.cached_reversed = is_reversed
             state.target_samples = desired_samples
-            state.loading_stage = 0  -- Need to load
-            state.cached_peaks = nil  -- Clear old peaks
-            state.cached_lod = nil
+
+            -- Check if we have this file in cache
+            if file_cache_entry and not is_reversed then
+              -- Use cached peaks instantly!
+              state.cached_peaks = file_cache_entry.peaks
+              state.cached_lod = file_cache_entry.lod
+              state.cached_num_channels = file_cache_entry.num_channels
+              state.cached_num_samples = file_cache_entry.num_samples
+              state.peaks_error = nil
+              state.loading_stage = 2
+            else
+              -- Need to load
+              state.loading_stage = 0
+              state.cached_peaks = nil
+              state.cached_lod = nil
+            end
           end
 
           -- Only load peaks when user is NOT dragging in REAPER
@@ -312,6 +350,11 @@ local function loop()
               state.cached_lod = utils.build_lod_peaks(peaks_result, num_ch_or_error)
               state.peaks_error = nil
               state.loading_stage = 2
+
+              -- Store in file cache for future instant access (skip reversed)
+              if file_path and not is_reversed then
+                state.set_cached_peaks(file_path, peaks_result, state.cached_lod, num_ch_or_error, source_length, desired_samples)
+              end
             else
               state.peaks_error = num_ch_or_error
             end

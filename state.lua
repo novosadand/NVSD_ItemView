@@ -3,7 +3,7 @@
 
 local state = {}
 
--- Peak caching
+-- Peak caching (current item)
 state.cached_peaks = nil
 state.cached_source = nil
 state.cached_item = nil
@@ -17,6 +17,11 @@ state.pending_cache_invalidation = 0
 -- Progressive loading state
 state.loading_stage = 0  -- 0=idle, 1=preview loaded, 2=full loaded
 state.target_samples = 0  -- Final resolution we want
+
+-- Multi-item peaks cache (keyed by source file path)
+state.peaks_cache = {}  -- { [filepath] = { peaks, lod, num_channels, source_length, num_samples } }
+state.peaks_cache_order = {}  -- LRU order tracking
+state.PEAKS_CACHE_MAX = 20  -- Max items to cache
 
 -- Marker dragging
 state.dragging_start = false
@@ -131,7 +136,7 @@ function state.get_drag_delta(ctx, name, mouse_y, current_value, fine_sensitivit
   return delta_y * sensitivity
 end
 
--- Invalidate all caches (e.g., after reverse)
+-- Invalidate current item cache (e.g., after reverse)
 function state.invalidate_cache()
   state.cached_peaks = nil
   state.cached_source = nil
@@ -140,6 +145,64 @@ function state.invalidate_cache()
   state.cached_num_samples = 0
   state.loading_stage = 0
   state.target_samples = 0
+end
+
+-- Get cached peaks for a file path (returns nil if not cached)
+function state.get_cached_peaks(filepath)
+  local entry = state.peaks_cache[filepath]
+  if entry then
+    -- Move to front of LRU order
+    for i, path in ipairs(state.peaks_cache_order) do
+      if path == filepath then
+        table.remove(state.peaks_cache_order, i)
+        break
+      end
+    end
+    table.insert(state.peaks_cache_order, 1, filepath)
+  end
+  return entry
+end
+
+-- Store peaks in cache with LRU eviction
+function state.set_cached_peaks(filepath, peaks, lod, num_channels, source_length, num_samples)
+  -- Remove if already exists (will re-add at front)
+  if state.peaks_cache[filepath] then
+    for i, path in ipairs(state.peaks_cache_order) do
+      if path == filepath then
+        table.remove(state.peaks_cache_order, i)
+        break
+      end
+    end
+  end
+
+  -- Evict oldest if at capacity
+  while #state.peaks_cache_order >= state.PEAKS_CACHE_MAX do
+    local oldest = table.remove(state.peaks_cache_order)
+    state.peaks_cache[oldest] = nil
+  end
+
+  -- Add new entry
+  state.peaks_cache[filepath] = {
+    peaks = peaks,
+    lod = lod,
+    num_channels = num_channels,
+    source_length = source_length,
+    num_samples = num_samples
+  }
+  table.insert(state.peaks_cache_order, 1, filepath)
+end
+
+-- Invalidate a specific file from cache (e.g., after reverse)
+function state.invalidate_file_cache(filepath)
+  if state.peaks_cache[filepath] then
+    state.peaks_cache[filepath] = nil
+    for i, path in ipairs(state.peaks_cache_order) do
+      if path == filepath then
+        table.remove(state.peaks_cache_order, i)
+        break
+      end
+    end
+  end
 end
 
 return state
