@@ -474,70 +474,129 @@ local function loop()
           local COLOR_UNUSED_SOURCE = 0x00000038
           local COLOR_OUTSIDE_SOURCE = 0x00000058
 
-          local start_marker_px = wave_x + start_px
-          local end_marker_px = wave_x + end_px
-
           local function time_to_overlay_px(t)
             return wave_x + ((t - view_start) / view_length) * waveform_width
           end
 
           local source_start_px = time_to_overlay_px(0)
           local source_end_px = time_to_overlay_px(source_length)
-
           local view_left = wave_x
           local view_right = wave_x + waveform_width
 
-          -- Zone A: before source start
+          -- Calculate active regions considering loops
+          -- Item plays from start_offset to start_offset + source_item_length
+          local item_start = start_offset
+          local item_end = start_offset + source_item_length
+
+          -- Check if item loops (extends past source_length)
+          local is_looping = item_end > source_length
+          local loop_end = 0  -- How far into source the loop extends from beginning
+
+          if is_looping then
+            -- Calculate how much of the beginning is covered by the loop
+            local overflow = item_end - source_length
+            if overflow >= source_length then
+              -- Multiple full loops - entire source is active
+              loop_end = source_length
+            else
+              loop_end = overflow
+            end
+          end
+
+          -- Also check for negative start (looping from before source start)
+          local loop_from_end = 0
+          if item_start < 0 then
+            local underflow = -item_start
+            if underflow >= source_length then
+              loop_from_end = source_length
+            else
+              loop_from_end = underflow
+            end
+          end
+
+          -- Determine which parts of source are active
+          local function is_source_time_active(t)
+            if t < 0 or t > source_length then return false end
+
+            -- Main item region (clamped to source)
+            local main_start = math.max(0, item_start)
+            local main_end = math.min(source_length, item_end)
+            if t >= main_start and t <= main_end then return true end
+
+            -- Looped region from beginning (when item extends past source end)
+            if loop_end > 0 and t >= 0 and t <= loop_end then return true end
+
+            -- Looped region from end (when item starts before source start)
+            if loop_from_end > 0 and t >= (source_length - loop_from_end) and t <= source_length then return true end
+
+            return false
+          end
+
+          -- Draw outside source overlay (before source start)
           if source_start_px > view_left then
             local left = view_left
-            local right = math.min(source_start_px, math.min(start_marker_px, view_right))
+            local right = math.min(source_start_px, view_right)
             if right > left then
               reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_OUTSIDE_SOURCE)
             end
           end
 
-          -- Zone B: source start to left marker
-          if start_marker_px > source_start_px then
-            local left = math.max(source_start_px, view_left)
-            local right = math.min(start_marker_px, view_right)
-            if right > left then
-              reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_UNUSED_SOURCE)
-            end
-          end
-
-          -- Zone B2: if left marker is before source start
-          if start_marker_px < source_start_px and start_marker_px > view_left then
-            local left = view_left
-            local right = math.min(start_marker_px, view_right)
-            if right > left then
-              reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_OUTSIDE_SOURCE)
-            end
-          end
-
-          -- Zone D: right marker to source end
-          if end_marker_px < source_end_px then
-            local left = math.max(end_marker_px, view_left)
-            local right = math.min(source_end_px, view_right)
-            if right > left then
-              reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_UNUSED_SOURCE)
-            end
-          end
-
-          -- Zone E: after source end
+          -- Draw outside source overlay (after source end)
           if source_end_px < view_right then
-            local left = math.max(source_end_px, math.max(end_marker_px, view_left))
+            local left = math.max(source_end_px, view_left)
             local right = view_right
             if right > left then
               reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_OUTSIDE_SOURCE)
             end
           end
 
-          -- Zone E2: if right marker is after source end
-          if end_marker_px > source_end_px and end_marker_px < view_right then
-            local left = math.max(end_marker_px, view_left)
-            local right = view_right
-            if right > left then
-              reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_OUTSIDE_SOURCE)
+          -- Draw inactive regions within source bounds
+          -- Check beginning of source (0 to main_start or loop_end)
+          local main_start_clamped = math.max(0, item_start)
+          if loop_end > 0 then
+            -- Source loops - check if there's a gap between loop_end and main_start
+            if loop_end < main_start_clamped then
+              local gap_start_px = time_to_overlay_px(loop_end)
+              local gap_end_px = time_to_overlay_px(main_start_clamped)
+              local left = math.max(gap_start_px, view_left)
+              local right = math.min(gap_end_px, view_right)
+              if right > left then
+                reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_UNUSED_SOURCE)
+              end
+            end
+          else
+            -- No loop from end - unused from source start to item start
+            if main_start_clamped > 0 then
+              local left = math.max(source_start_px, view_left)
+              local right = math.min(time_to_overlay_px(main_start_clamped), view_right)
+              if right > left then
+                reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_UNUSED_SOURCE)
+              end
+            end
+          end
+
+          -- Check end of source (main_end to source_length or loop_from_end start)
+          local main_end_clamped = math.min(source_length, item_end)
+          if loop_from_end > 0 then
+            -- Source loops from beginning - check if there's a gap
+            local loop_start_time = source_length - loop_from_end
+            if main_end_clamped < loop_start_time then
+              local gap_start_px = time_to_overlay_px(main_end_clamped)
+              local gap_end_px = time_to_overlay_px(loop_start_time)
+              local left = math.max(gap_start_px, view_left)
+              local right = math.min(gap_end_px, view_right)
+              if right > left then
+                reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_UNUSED_SOURCE)
+              end
+            end
+          else
+            -- No loop from start - unused from item end to source end
+            if main_end_clamped < source_length then
+              local left = math.max(time_to_overlay_px(main_end_clamped), view_left)
+              local right = math.min(source_end_px, view_right)
+              if right > left then
+                reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_UNUSED_SOURCE)
+              end
             end
           end
 
