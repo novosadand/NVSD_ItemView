@@ -185,18 +185,11 @@ local function loop()
       state.last_zoomed_item = nil
     end
 
-    -- Track how long mouse has been held (to distinguish click vs drag)
-    if mouse_is_down then
-      state.mouse_held_frames = (state.mouse_held_frames or 0) + 1
-    else
-      state.mouse_held_frames = 0
-    end
-
-    -- Skip expensive processing while DRAGGING (not clicking) on a new item
-    -- Only defer after mouse held for 10+ frames (~150ms) to allow normal clicks
-    local is_dragging = mouse_is_down and (state.mouse_held_frames or 0) > 10
-    if item and is_dragging and item ~= state.cached_item then
-      item = nil  -- Defer to "No item selected" state during drag
+    -- Skip ALL processing while mouse is down on a new/uncached item
+    -- This ensures zero lag during click-drag operations in REAPER
+    -- Waveform loads instantly when mouse is released
+    if item and mouse_is_down and item ~= state.cached_item then
+      item = nil  -- Defer until mouse release
     end
 
     if item then
