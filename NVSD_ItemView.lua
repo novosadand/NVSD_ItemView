@@ -734,14 +734,14 @@ local function loop()
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
             if state.has_js_extension then
               local cur_screen_x, cur_screen_y = reaper.GetMousePosition()
-              state.ruler_drag_cumulative_y = state.ruler_drag_cumulative_y + (state.ruler_drag_screen_y - cur_screen_y)
+              state.ruler_drag_cumulative_y = state.ruler_drag_cumulative_y + (cur_screen_y - state.ruler_drag_screen_y)
               reaper.JS_Mouse_SetPosition(cur_screen_x, state.ruler_drag_screen_y)
               local zoom_sensitivity = 0.03
               local zoom_multiplier = 1.0 + (state.ruler_drag_cumulative_y * zoom_sensitivity)
               local new_zoom = state.ruler_drag_start_zoom * zoom_multiplier
               zoom_to_cursor(new_zoom, mouse_x)
             else
-              local delta_y = state.ruler_drag_start_y - mouse_y
+              local delta_y = mouse_y - state.ruler_drag_start_y
               local zoom_sensitivity = 0.03
               local zoom_multiplier = 1.0 + (delta_y * zoom_sensitivity)
               local new_zoom = state.ruler_drag_start_zoom * zoom_multiplier
