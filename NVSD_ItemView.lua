@@ -83,6 +83,13 @@ local function loop()
   local visible, open = reaper.ImGui_Begin(ctx, "NVSD_ItemView", true, window_flags)
 
   if visible then
+    -- Auto-focus window when hovered with Ctrl held (enables scroll-to-zoom without clicking first)
+    local is_hovered = reaper.ImGui_IsWindowHovered(ctx, reaper.ImGui_HoveredFlags_ChildWindows())
+    local ctrl_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
+    if is_hovered and ctrl_held and not reaper.ImGui_IsWindowFocused(ctx) then
+      reaper.ImGui_SetWindowFocus(ctx)
+    end
+
     -- Handle undo/redo shortcuts (from settings)
     if settings.check_shortcut(ctx, "undo") then
       reaper.Main_OnCommand(40029, 0)
