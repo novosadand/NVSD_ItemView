@@ -63,6 +63,9 @@ state.has_js_extension = reaper.JS_Mouse_SetPosition ~= nil
 state.warp_mode = false
 state.warp_dropdown_open = false
 
+-- Mouse tracking for click vs drag detection
+state.mouse_held_frames = 0
+
 -- Unified drag control state
 state.drag_controls = {
   gain = { active = false, start_y = 0, start_value = 0, shift_held = false },
