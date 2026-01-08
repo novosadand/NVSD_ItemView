@@ -16,16 +16,17 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   local COLOR_BTN_HOVER = 0x5AA0E9FF
   local COLOR_BTN_TEXT = 0xFFFFFFFF
 
-  -- Detect warp mode from D_PITCH
-  -- Warp mode (blue): D_PITCH is non-zero (pitch via time-stretch)
-  -- Non-warp mode (gray): D_PITCH is 0 (pitch via playrate, or neutral)
-  -- A tiny marker value (0.0001) is used to indicate "warp mode with 0 pitch"
+  -- Detect warp mode from B_PPITCH (preserve pitch when changing rate)
+  -- Warp mode (blue): B_PPITCH=1 (matches REAPER's item properties checkbox)
+  -- Non-warp mode (gray): B_PPITCH=0
   local current_playrate = 1.0
   local current_pitch = 0
+
   if take then
     current_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
     current_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH")
-    state.warp_mode = math.abs(current_pitch) > 0.00001
+    local preserve_pitch = reaper.GetMediaItemTakeInfo_Value(take, "B_PPITCH")
+    state.warp_mode = preserve_pitch == 1
   end
 
   -- WARP button
@@ -51,28 +52,10 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_warp then
     state.warp_dropdown_open = false
     if take then
-      local current_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
-
       reaper.Undo_BeginBlock()
-      if state.warp_mode then
-        -- WARP ON -> OFF: convert D_PITCH to playrate
-        local rate_from_pitch = utils.semitones_to_playrate(current_pitch)
-        reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", rate_from_pitch)
-        local new_length = current_length / rate_from_pitch
-        reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_length)
-        reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", 0)
-      else
-        -- WARP OFF -> ON: convert playrate to D_PITCH
-        local pitch_from_rate = utils.playrate_to_semitones(current_playrate)
-        -- Use tiny marker value if pitch would be 0 (neutral item)
-        if math.abs(pitch_from_rate) < 0.0001 then
-          pitch_from_rate = 0.0001
-        end
-        reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", pitch_from_rate)
-        local original_length = current_length * current_playrate
-        reaper.SetMediaItemInfo_Value(item, "D_LENGTH", original_length)
-        reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", 1.0)
-      end
+      -- Toggle B_PPITCH (preserve pitch when changing rate)
+      local new_value = state.warp_mode and 0 or 1
+      reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", new_value)
       reaper.UpdateArrange()
       reaper.Undo_EndBlock("NVSD_ItemView: Toggle WARP", -1)
     end
@@ -207,6 +190,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       -- Reset to default state
       reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", 0)
       reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", 1.0)
+      reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 0)  -- Disable warp
       reaper.SetMediaItemInfo_Value(item, "D_LENGTH", original_length)
 
       reaper.UpdateArrange()

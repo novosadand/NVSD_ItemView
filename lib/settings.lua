@@ -71,8 +71,8 @@ settings.THEMES = {
     }
   },
   {
-    id = "nvk_modern",
-    name = "NVK Modern",
+    id = "modern",
+    name = "Modern",
     description = "Clean, muted teal tones",
     colors = {
       waveform = 0x6B8E9BFF,

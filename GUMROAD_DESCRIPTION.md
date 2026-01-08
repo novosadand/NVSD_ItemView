@@ -41,13 +41,13 @@ Adjust item volume from +24dB to silence. Transpose up to ±48 semitones. Choose
 Drag markers past the source edges to create loops. Visual indicators show exactly where loops occur.
 
 **WARP Mode**
-Toggle between time-stretch (preserves length) and playrate mode—just like Ableton's Warp.
+Toggle "preserve pitch when changing rate"—mirrors REAPER's item properties checkbox. When on, stretching keeps pitch stable.
 
 **Quick Actions**
 Mouse buttons 4/5 instantly position markers. One-click mute. Reverse button. Clear button to reset pitch/speed. Open in external editor. Everything you need, where you need it.
 
 **8 Color Themes**
-Choose from Default, NVK Modern, Ableton Dark, Pro Tools, High Contrast, Warm, Cool, or Monochrome. Live preview as you browse. Settings persist across sessions.
+Choose from Default, Modern, Ableton Dark, Pro Tools, High Contrast, Warm, Cool, or Monochrome. Live preview as you browse. Settings persist across sessions.
 
 **Multi-Channel Support**
 Stereo and surround files display as stacked waveform channels.
@@ -111,7 +111,7 @@ If this script saves you time, consider supporting development. If you're broke,
 
 ## Updates
 
-You'll receive updates as they're released. Current version includes 68 unit tests ensuring reliability across REAPER versions.
+You'll receive updates as they're released. Current version includes 86 unit tests ensuring reliability across REAPER versions.
 
 ---
 

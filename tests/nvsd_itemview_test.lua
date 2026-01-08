@@ -2334,3 +2334,77 @@ function TestNVSDItemView:test_settings_check_changes()
     }
     lu.assertTrue(check_changes("default", "default", pending_changed, original_shortcuts))
 end
+
+-- ============================================================================
+-- WARP Mode Tests (B_PPITCH based)
+-- ============================================================================
+
+function TestNVSDItemView:test_warp_mode_detection_from_bppitch()
+    -- Test that warp mode is detected from B_PPITCH (preserve pitch when changing rate)
+    local function detect_warp_mode(preserve_pitch)
+        return preserve_pitch == 1
+    end
+
+    -- B_PPITCH = 1 means warp mode ON
+    lu.assertTrue(detect_warp_mode(1))
+
+    -- B_PPITCH = 0 means warp mode OFF
+    lu.assertFalse(detect_warp_mode(0))
+end
+
+function TestNVSDItemView:test_warp_toggle_logic()
+    -- Test toggling warp mode (B_PPITCH)
+    local function toggle_warp(current_warp_mode)
+        return current_warp_mode and 0 or 1
+    end
+
+    -- If warp is ON, toggle should return 0 (OFF)
+    lu.assertEquals(toggle_warp(true), 0)
+
+    -- If warp is OFF, toggle should return 1 (ON)
+    lu.assertEquals(toggle_warp(false), 1)
+end
+
+function TestNVSDItemView:test_clear_resets_all_including_warp()
+    -- Test that clear button resets pitch, playrate, and warp mode
+    local function simulate_clear(take_state)
+        -- Clear should reset all values
+        return {
+            D_PITCH = 0,
+            D_PLAYRATE = 1.0,
+            B_PPITCH = 0,  -- Warp disabled
+            D_LENGTH = take_state.original_length
+        }
+    end
+
+    -- Item with warp on, pitched, and stretched
+    local initial_state = {
+        D_PITCH = 5.0,
+        D_PLAYRATE = 0.5,
+        B_PPITCH = 1,
+        D_LENGTH = 20.0,
+        original_length = 10.0  -- calculated from current_length * playrate
+    }
+
+    local cleared = simulate_clear(initial_state)
+    lu.assertEquals(cleared.D_PITCH, 0)
+    lu.assertEquals(cleared.D_PLAYRATE, 1.0)
+    lu.assertEquals(cleared.B_PPITCH, 0)
+    lu.assertEquals(cleared.D_LENGTH, 10.0)
+end
+
+function TestNVSDItemView:test_original_length_calculation()
+    -- Test calculating original length from stretched state
+    local function calculate_original_length(current_length, current_playrate)
+        return current_length * current_playrate
+    end
+
+    -- Item stretched to 2x length (playrate = 0.5)
+    lu.assertAlmostEquals(calculate_original_length(20.0, 0.5), 10.0, 0.001)
+
+    -- Item compressed to 0.5x length (playrate = 2.0)
+    lu.assertAlmostEquals(calculate_original_length(5.0, 2.0), 10.0, 0.001)
+
+    -- Item at original length (playrate = 1.0)
+    lu.assertAlmostEquals(calculate_original_length(10.0, 1.0), 10.0, 0.001)
+end

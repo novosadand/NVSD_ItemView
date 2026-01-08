@@ -18,9 +18,9 @@ Ableton-style clip view for REAPER audio items. See the full source waveform, dr
 - `Mouse 4/5` - Quick set start/end to cursor
 
 **Left Panel:**
-- `WARP` - Toggle time-stretch pitch (length stays constant) vs playrate pitch (length changes)
+- `WARP` - Toggle "preserve pitch when changing rate" (mirrors REAPER's item properties checkbox)
 - `Algorithm dropdown` - Select pitch algorithm (when WARP is on)
-- `Clear` - Reset item to default state (pitch=0, rate=1.0, original length)
+- `Clear` - Reset item to default state (pitch=0, rate=1.0, warp off, original length)
 - `Reverse` - Reverse the audio
 - `Edit` - Open in external editor
 - `Gain slider` - Volume control (+24dB to -inf)
@@ -58,7 +58,7 @@ Open settings via:
 - Right-click anywhere → Settings...
 - Run `NVSD_ItemView_Settings.lua` directly
 
-**Color Themes:** Choose from 8 preset themes (Default, NVK Modern, Ableton Dark, Pro Tools, High Contrast, Warm, Cool, Monochrome)
+**Color Themes:** Choose from 8 preset themes (Default, Modern, Ableton Dark, Pro Tools, High Contrast, Warm, Cool, Monochrome)
 
 **Keyboard Shortcuts:** Customize Undo/Redo shortcuts
 
