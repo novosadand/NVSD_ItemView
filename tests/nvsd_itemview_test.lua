@@ -704,29 +704,35 @@ function TestNVSDItemView:test_source_project_time_roundtrip()
     lu.assertAlmostEquals(back_to_source, source_time, 0.0001)
 end
 
-function TestNVSDItemView:test_zoom_min_calculation()
-    -- Test calculating minimum zoom to show both markers
-    local function calc_min_zoom(start_offset, source_item_length, source_length)
-        local left_marker = start_offset
-        local right_marker = start_offset + source_item_length
-        local marker_span = right_marker - left_marker
-        local padded_span = marker_span * 1.4  -- 20% padding each side
-        local base_view_length = math.max(source_length, source_item_length)
-        local min_zoom = base_view_length / padded_span
-        return math.max(0.1, min_zoom)
+function TestNVSDItemView:test_fixed_view_bounds()
+    -- Test that view is always fixed to original source bounds (0 to source_length)
+    local function calc_view_bounds(source_length)
+        local view_start = 0
+        local view_end = source_length
+        local view_length = source_length
+        return view_start, view_end, view_length
     end
 
-    -- Item same size as source: min_zoom should be around 0.71 (1/1.4)
-    local min_zoom = calc_min_zoom(0, 10, 10)
-    lu.assertAlmostEquals(min_zoom, 10 / 14, 0.01)
+    -- Short source
+    local view_start, view_end, view_length = calc_view_bounds(2)
+    lu.assertEquals(view_start, 0)
+    lu.assertEquals(view_end, 2)
+    lu.assertEquals(view_length, 2)
 
-    -- Item smaller than source: min_zoom should be lower
-    min_zoom = calc_min_zoom(2, 5, 10)
-    lu.assertAlmostEquals(min_zoom, 10 / 7, 0.01)  -- base=10, padded_span=7
+    -- Long source
+    view_start, view_end, view_length = calc_view_bounds(120)
+    lu.assertEquals(view_start, 0)
+    lu.assertEquals(view_end, 120)
+    lu.assertEquals(view_length, 120)
 
-    -- Item larger than source (looping): base uses item length
-    min_zoom = calc_min_zoom(0, 20, 10)
-    lu.assertAlmostEquals(min_zoom, 20 / 28, 0.01)  -- base=20, padded_span=28
+    -- View bounds don't change with item length (looping)
+    -- Even if item is looped 10x, view still shows original source
+    local source_length = 10
+    local source_item_length = 100  -- 10x loops
+    view_start, view_end, view_length = calc_view_bounds(source_length)
+    lu.assertEquals(view_start, 0)
+    lu.assertEquals(view_end, 10)  -- Still just source_length
+    lu.assertEquals(view_length, 10)
 end
 
 function TestNVSDItemView:test_pan_offset_adjustment_at_drag_end()
@@ -831,29 +837,29 @@ function TestNVSDItemView:test_overlay_zone_detection()
     lu.assertEquals(get_overlay_zone(11, start_offset, source_item_length, source_length), "outside_source")
 end
 
-function TestNVSDItemView:test_view_start_calculation()
-    -- Test view_start calculation (centering view on item)
-    local function calc_view_start(start_offset, source_item_length, source_length, zoom_level, pan_offset)
-        local base_view_length = math.max(source_length, source_item_length)
-        local view_length = base_view_length / zoom_level
-        local item_center = start_offset + source_item_length / 2
-        local view_start = item_center - view_length / 2 + pan_offset
+function TestNVSDItemView:test_view_always_shows_full_source()
+    -- Test that view always shows 0 to source_length (no zoom/pan effect)
+    local function calc_view(source_length)
+        local view_start = 0
+        local view_length = source_length
         return view_start, view_length
     end
 
-    -- Item fits in source, zoom 1, no pan
-    local view_start, view_length = calc_view_start(2, 5, 10, 1, 0)
-    lu.assertAlmostEquals(view_length, 10, 0.001)
-    lu.assertAlmostEquals(view_start, 4.5 - 5, 0.001)  -- center=4.5, half_view=5
+    -- Short source
+    local view_start, view_length = calc_view(5)
+    lu.assertEquals(view_start, 0)
+    lu.assertEquals(view_length, 5)
 
-    -- Zoom 2x
-    view_start, view_length = calc_view_start(2, 5, 10, 2, 0)
-    lu.assertAlmostEquals(view_length, 5, 0.001)
-    lu.assertAlmostEquals(view_start, 4.5 - 2.5, 0.001)
+    -- Long source
+    view_start, view_length = calc_view(120)
+    lu.assertEquals(view_start, 0)
+    lu.assertEquals(view_length, 120)
 
-    -- With pan offset
-    view_start, view_length = calc_view_start(2, 5, 10, 1, 2)
-    lu.assertAlmostEquals(view_start, -0.5 + 2, 0.001)  -- shifted by pan
+    -- Source length is all that matters - item length doesn't affect view
+    view_start, view_length = calc_view(10)
+    lu.assertEquals(view_start, 0)
+    lu.assertEquals(view_length, 10)
+    -- Even if source_item_length is 100 (10x loops), view still shows just source
 end
 
 function TestNVSDItemView:test_adaptive_sample_count()
@@ -903,30 +909,32 @@ function TestNVSDItemView:test_file_size_change_detection()
     lu.assertFalse(has_file_changed(1000, nil))
 end
 
-function TestNVSDItemView:test_zoom_to_cursor_pan_calculation()
-    -- Test that zooming to cursor keeps the time under cursor fixed
-    local function calc_new_pan_offset(
-        cursor_x, wave_x, waveform_width,
-        view_start, view_length,
-        old_zoom, new_zoom,
-        base_view_length, item_center
-    )
-        local cursor_fraction = math.max(0, math.min(1, (cursor_x - wave_x) / waveform_width))
-        local time_under_cursor = view_start + cursor_fraction * view_length
-        local new_view_length = base_view_length / new_zoom
-        return time_under_cursor - item_center + new_view_length * (0.5 - cursor_fraction)
+function TestNVSDItemView:test_pixel_to_time_with_fixed_view()
+    -- Test pixel to time conversion with fixed view (0 to source_length)
+    local function px_to_time(px, wave_x, waveform_width, source_length)
+        local view_start = 0
+        local view_length = source_length
+        return view_start + ((px - wave_x) / waveform_width) * view_length
     end
 
-    -- Cursor at center, zoom in: pan should stay 0
-    local new_pan = calc_new_pan_offset(
-        350, 100, 500,  -- cursor at center of waveform
-        -0.5, 10,       -- view_start, view_length
-        1, 2,           -- old_zoom, new_zoom
-        10, 4.5         -- base_view_length, item_center
-    )
-    -- At center, cursor_fraction=0.5, time_under_cursor=4.5
-    -- new_view_length=5, pan = 4.5 - 4.5 + 5*(0.5-0.5) = 0
-    lu.assertAlmostEquals(new_pan, 0, 0.01)
+    local wave_x = 100
+    local waveform_width = 500
+    local source_length = 10
+
+    -- px at wave_x should be t=0
+    lu.assertEquals(px_to_time(100, wave_x, waveform_width, source_length), 0)
+
+    -- px at wave_x + waveform_width should be t=source_length
+    lu.assertEquals(px_to_time(600, wave_x, waveform_width, source_length), 10)
+
+    -- px at center should be t=source_length/2
+    lu.assertEquals(px_to_time(350, wave_x, waveform_width, source_length), 5)
+
+    -- px before wave_x gives negative time
+    lu.assertEquals(px_to_time(50, wave_x, waveform_width, source_length), -1)
+
+    -- px after waveform gives time > source_length
+    lu.assertEquals(px_to_time(700, wave_x, waveform_width, source_length), 12)
 end
 
 function TestNVSDItemView:test_dashed_line_segments()
@@ -1251,93 +1259,60 @@ function TestNVSDItemView:test_mouse_in_full_view_area()
     lu.assertFalse(is_mouse_in_view(610, 150, wave_x, ruler_y, waveform_width, time_ruler_y, time_ruler_height))
 end
 
-function TestNVSDItemView:test_adaptive_peak_samples_for_zoom()
-    -- Test that peak samples scale properly with zoom for resolution
-    local function calc_desired_samples_for_zoom(waveform_width, zoom_level, source_length, base_view_length, max_samples)
-        -- Formula: pixels_per_source = (waveform_width * zoom_level) / base_view * source_length
-        local pixels_per_source = (waveform_width * zoom_level) / base_view_length * source_length
+function TestNVSDItemView:test_fixed_peak_samples()
+    -- Test that peak samples are fixed to waveform width (view always shows full source)
+    local function calc_desired_samples(waveform_width, max_samples)
+        local pixels_per_source = waveform_width
         return math.max(200, math.min(max_samples, math.floor(pixels_per_source)))
     end
 
-    local waveform_width = 800
-    local source_length = 10
-    local base_view_length = 10
     local max_samples = 50000
 
-    -- At zoom 1: ~800 samples (matches width)
-    lu.assertEquals(calc_desired_samples_for_zoom(waveform_width, 1, source_length, base_view_length, max_samples), 800)
+    -- Width 800: 800 samples
+    lu.assertEquals(calc_desired_samples(800, max_samples), 800)
 
-    -- At zoom 10: ~8000 samples
-    lu.assertEquals(calc_desired_samples_for_zoom(waveform_width, 10, source_length, base_view_length, max_samples), 8000)
+    -- Width 400: 400 samples
+    lu.assertEquals(calc_desired_samples(400, max_samples), 400)
 
-    -- At zoom 50: ~40000 samples
-    lu.assertEquals(calc_desired_samples_for_zoom(waveform_width, 50, source_length, base_view_length, max_samples), 40000)
+    -- Width 100: clamped to min 200
+    lu.assertEquals(calc_desired_samples(100, max_samples), 200)
 
-    -- At zoom 100: capped at max
-    lu.assertEquals(calc_desired_samples_for_zoom(waveform_width, 100, source_length, base_view_length, max_samples), 50000)
+    -- Width 60000: capped at max
+    lu.assertEquals(calc_desired_samples(60000, max_samples), 50000)
 
-    -- With different source/base ratio
-    lu.assertEquals(calc_desired_samples_for_zoom(waveform_width, 1, 5, 10, max_samples), 400)  -- half source
+    -- Samples don't change with item length (looping doesn't affect resolution)
+    local waveform_width = 800
+    lu.assertEquals(calc_desired_samples(waveform_width, max_samples), 800)
+    -- Same result regardless of how many loops
 end
 
-function TestNVSDItemView:test_zoom_to_cursor_view_consistency()
-    -- Test that zoom calculations use consistent values with draw function
-    local function simulate_zoom_to_cursor(
-        cursor_x, wave_x, waveform_width,
-        view_offset, view_item_length, source_length,
-        old_zoom, new_zoom, current_pan_offset
-    )
-        -- These should match what draw_waveform uses
-        local zoom_base_view_length = math.max(source_length, view_item_length)
-        local zoom_item_center = view_offset + view_item_length / 2
-
-        -- Current view (before zoom)
-        local view_length = zoom_base_view_length / old_zoom
-        local view_start = zoom_item_center - view_length / 2 + current_pan_offset
-
-        -- Calculate cursor position
-        local cursor_fraction = math.max(0, math.min(1, (cursor_x - wave_x) / waveform_width))
-        local time_under_cursor = view_start + cursor_fraction * view_length
-
-        -- Apply new zoom
-        local new_view_length = zoom_base_view_length / new_zoom
-
-        -- Calculate new pan to keep time_under_cursor at same fraction
-        local new_pan = time_under_cursor - zoom_item_center + new_view_length * (0.5 - cursor_fraction)
-
-        -- Calculate new view_start
-        local new_view_start = zoom_item_center - new_view_length / 2 + new_pan
-        local time_at_cursor_after = new_view_start + cursor_fraction * new_view_length
-
-        return time_under_cursor, time_at_cursor_after
+function TestNVSDItemView:test_time_to_pixel_with_fixed_view()
+    -- Test time to pixel conversion with fixed view (0 to source_length)
+    local function time_to_px(t, wave_x, waveform_width, source_length)
+        local view_start = 0
+        local view_length = source_length
+        return wave_x + ((t - view_start) / view_length) * waveform_width
     end
 
-    -- Test that time under cursor stays the same after zoom
-    local time_before, time_after = simulate_zoom_to_cursor(
-        350, 100, 500,  -- cursor at center
-        2, 5, 10,       -- view_offset, view_item_length, source_length
-        1, 2,           -- zoom from 1 to 2
-        0               -- no pan
-    )
-    lu.assertAlmostEquals(time_before, time_after, 0.001)
+    local wave_x = 100
+    local waveform_width = 500
+    local source_length = 10
 
-    -- Test with offset cursor
-    time_before, time_after = simulate_zoom_to_cursor(
-        200, 100, 500,  -- cursor at 20% from left
-        2, 5, 10,
-        1, 4,           -- zoom from 1 to 4
-        0
-    )
-    lu.assertAlmostEquals(time_before, time_after, 0.001)
+    -- t=0 should be at wave_x
+    lu.assertEquals(time_to_px(0, wave_x, waveform_width, source_length), 100)
 
-    -- Test with pan offset
-    time_before, time_after = simulate_zoom_to_cursor(
-        400, 100, 500,  -- cursor at 60%
-        2, 5, 10,
-        2, 3,           -- zoom from 2 to 3
-        1.5             -- with pan
-    )
-    lu.assertAlmostEquals(time_before, time_after, 0.001)
+    -- t=source_length should be at wave_x + waveform_width
+    lu.assertEquals(time_to_px(10, wave_x, waveform_width, source_length), 600)
+
+    -- t=5 (middle) should be at wave_x + waveform_width/2
+    lu.assertEquals(time_to_px(5, wave_x, waveform_width, source_length), 350)
+
+    -- Markers beyond source still convert correctly (for looped items)
+    -- t=15 (1.5x source) would be at 850 (off screen but calculable)
+    lu.assertEquals(time_to_px(15, wave_x, waveform_width, source_length), 850)
+
+    -- Negative offsets also work
+    lu.assertEquals(time_to_px(-2, wave_x, waveform_width, source_length), 0)
 end
 
 function TestNVSDItemView:test_format_db()
@@ -1906,4 +1881,291 @@ function TestNVSDItemView:test_mouse_in_mute_button()
 
     -- Outside bottom
     lu.assertFalse(is_mouse_in_mute(109, 65, mute_x, mute_y, mute_size))
+end
+
+-- =============================================================================
+-- State Module Tests
+-- =============================================================================
+
+function TestNVSDItemView:test_state_start_drag()
+    -- Test that start_drag initializes drag state correctly
+    local state = {
+        drag_controls = {
+            gain = { active = false, start_y = 0, start_value = 0, shift_held = false },
+            pitch = { active = false, start_y = 0, start_value = 0, shift_held = false },
+        },
+        has_js_extension = false,
+        undo_block_open = nil,
+    }
+
+    local function start_drag(name, mouse_y, value, track_shift)
+        local ctrl = state.drag_controls[name]
+        ctrl.active = true
+        ctrl.start_y = mouse_y
+        ctrl.start_value = value
+        if track_shift then
+            ctrl.shift_held = false
+        end
+        if not state.undo_block_open then
+            state.undo_block_open = name
+        end
+    end
+
+    -- Start gain drag
+    start_drag("gain", 150, 0.5, true)
+
+    lu.assertTrue(state.drag_controls.gain.active)
+    lu.assertEquals(state.drag_controls.gain.start_y, 150)
+    lu.assertEquals(state.drag_controls.gain.start_value, 0.5)
+    lu.assertFalse(state.drag_controls.gain.shift_held)
+    lu.assertEquals(state.undo_block_open, "gain")
+
+    -- Pitch should still be inactive
+    lu.assertFalse(state.drag_controls.pitch.active)
+end
+
+function TestNVSDItemView:test_state_end_drag()
+    -- Test that end_drag clears the active state
+    local state = {
+        drag_controls = {
+            gain = { active = true, start_y = 150, start_value = 0.5, shift_held = false },
+        },
+    }
+
+    local function end_drag(name)
+        state.drag_controls[name].active = false
+    end
+
+    lu.assertTrue(state.drag_controls.gain.active)
+    end_drag("gain")
+    lu.assertFalse(state.drag_controls.gain.active)
+    -- Other values should remain
+    lu.assertEquals(state.drag_controls.gain.start_y, 150)
+    lu.assertEquals(state.drag_controls.gain.start_value, 0.5)
+end
+
+function TestNVSDItemView:test_state_is_dragging()
+    -- Test is_dragging returns correct boolean
+    local state = {
+        drag_controls = {
+            gain = { active = true },
+            pitch = { active = false },
+            semitones = { active = false },
+            cents = { active = false },
+        },
+    }
+
+    local function is_dragging(name)
+        return state.drag_controls[name].active
+    end
+
+    lu.assertTrue(is_dragging("gain"))
+    lu.assertFalse(is_dragging("pitch"))
+    lu.assertFalse(is_dragging("semitones"))
+    lu.assertFalse(is_dragging("cents"))
+end
+
+function TestNVSDItemView:test_state_is_any_control_dragging()
+    -- Test is_any_control_dragging checks all controls
+    local function is_any_control_dragging(state)
+        return state.drag_controls.gain.active or state.drag_controls.pitch.active
+            or state.drag_controls.semitones.active or state.drag_controls.cents.active
+    end
+
+    -- None active
+    local state1 = {
+        drag_controls = {
+            gain = { active = false },
+            pitch = { active = false },
+            semitones = { active = false },
+            cents = { active = false },
+        },
+    }
+    lu.assertFalse(is_any_control_dragging(state1))
+
+    -- Gain active
+    local state2 = {
+        drag_controls = {
+            gain = { active = true },
+            pitch = { active = false },
+            semitones = { active = false },
+            cents = { active = false },
+        },
+    }
+    lu.assertTrue(is_any_control_dragging(state2))
+
+    -- Cents active
+    local state3 = {
+        drag_controls = {
+            gain = { active = false },
+            pitch = { active = false },
+            semitones = { active = false },
+            cents = { active = true },
+        },
+    }
+    lu.assertTrue(is_any_control_dragging(state3))
+
+    -- Multiple active
+    local state4 = {
+        drag_controls = {
+            gain = { active = true },
+            pitch = { active = true },
+            semitones = { active = false },
+            cents = { active = false },
+        },
+    }
+    lu.assertTrue(is_any_control_dragging(state4))
+end
+
+function TestNVSDItemView:test_state_get_drag_delta_basic()
+    -- Test get_drag_delta without JS extension (simple case)
+    local state = {
+        drag_controls = {
+            gain = { active = true, start_y = 200, start_value = 0.5, shift_held = false },
+        },
+        has_js_extension = false,
+        drag_cumulative_delta_y = 0,
+    }
+
+    local function get_drag_delta_basic(name, mouse_y)
+        local ctrl = state.drag_controls[name]
+        if not ctrl.active then return 0 end
+        return ctrl.start_y - mouse_y
+    end
+
+    -- Mouse moved up (decrease Y) = positive delta
+    lu.assertEquals(get_drag_delta_basic("gain", 180), 20)
+
+    -- Mouse moved down (increase Y) = negative delta
+    lu.assertEquals(get_drag_delta_basic("gain", 220), -20)
+
+    -- No movement
+    lu.assertEquals(get_drag_delta_basic("gain", 200), 0)
+end
+
+function TestNVSDItemView:test_state_get_drag_delta_inactive()
+    -- Test get_drag_delta returns 0 when not active
+    local state = {
+        drag_controls = {
+            gain = { active = false, start_y = 200, start_value = 0.5 },
+        },
+        has_js_extension = false,
+    }
+
+    local function get_drag_delta_basic(name, mouse_y)
+        local ctrl = state.drag_controls[name]
+        if not ctrl.active then return 0 end
+        return ctrl.start_y - mouse_y
+    end
+
+    lu.assertEquals(get_drag_delta_basic("gain", 100), 0)
+end
+
+function TestNVSDItemView:test_state_invalidate_cache()
+    -- Test invalidate_cache clears all cache variables
+    local state = {
+        cached_peaks = { 1, 2, 3 },
+        cached_source = "some_source",
+        cached_source_length = 10.5,
+        cached_item = "some_item",
+        cached_num_samples = 500,
+    }
+
+    local function invalidate_cache()
+        state.cached_peaks = nil
+        state.cached_source = nil
+        state.cached_source_length = 0
+        state.cached_item = nil
+        state.cached_num_samples = 0
+    end
+
+    -- Verify cache has values
+    lu.assertNotNil(state.cached_peaks)
+    lu.assertNotNil(state.cached_source)
+    lu.assertEquals(state.cached_source_length, 10.5)
+
+    -- Invalidate
+    invalidate_cache()
+
+    -- Verify all cleared
+    lu.assertNil(state.cached_peaks)
+    lu.assertNil(state.cached_source)
+    lu.assertEquals(state.cached_source_length, 0)
+    lu.assertNil(state.cached_item)
+    lu.assertEquals(state.cached_num_samples, 0)
+end
+
+function TestNVSDItemView:test_state_undo_block_not_overwritten()
+    -- Test that undo_block_open is not overwritten if already set
+    local state = {
+        drag_controls = {
+            gain = { active = false, start_y = 0, start_value = 0, shift_held = false },
+            pitch = { active = false, start_y = 0, start_value = 0, shift_held = false },
+        },
+        has_js_extension = false,
+        undo_block_open = nil,
+    }
+
+    local function start_drag(name, mouse_y, value, track_shift)
+        local ctrl = state.drag_controls[name]
+        ctrl.active = true
+        ctrl.start_y = mouse_y
+        ctrl.start_value = value
+        if track_shift then
+            ctrl.shift_held = false
+        end
+        if not state.undo_block_open then
+            state.undo_block_open = name
+        end
+    end
+
+    -- Start gain drag first
+    start_drag("gain", 150, 0.5, true)
+    lu.assertEquals(state.undo_block_open, "gain")
+
+    -- Start pitch drag - undo block should stay "gain"
+    start_drag("pitch", 200, 1.0, true)
+    lu.assertEquals(state.undo_block_open, "gain")
+end
+
+function TestNVSDItemView:test_state_pending_cache_invalidation()
+    -- Test deferred cache invalidation countdown
+    local state = {
+        pending_cache_invalidation = 3,
+        cached_peaks = { 1, 2, 3 },
+        cached_source = "src",
+        cached_source_length = 5.0,
+        cached_item = "item",
+        cached_num_samples = 100,
+    }
+
+    local function process_pending_invalidation()
+        if state.pending_cache_invalidation > 0 then
+            state.pending_cache_invalidation = state.pending_cache_invalidation - 1
+            if state.pending_cache_invalidation == 0 then
+                state.cached_peaks = nil
+                state.cached_source = nil
+                state.cached_source_length = 0
+                state.cached_item = nil
+                state.cached_num_samples = 0
+            end
+        end
+    end
+
+    -- Frame 1: count down to 2
+    process_pending_invalidation()
+    lu.assertEquals(state.pending_cache_invalidation, 2)
+    lu.assertNotNil(state.cached_peaks)
+
+    -- Frame 2: count down to 1
+    process_pending_invalidation()
+    lu.assertEquals(state.pending_cache_invalidation, 1)
+    lu.assertNotNil(state.cached_peaks)
+
+    -- Frame 3: count down to 0, invalidate cache
+    process_pending_invalidation()
+    lu.assertEquals(state.pending_cache_invalidation, 0)
+    lu.assertNil(state.cached_peaks)
+    lu.assertNil(state.cached_source)
+    lu.assertEquals(state.cached_source_length, 0)
 end

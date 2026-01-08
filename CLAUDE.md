@@ -1,42 +1,23 @@
-# NVSD_ItemView - REAPER Script
+# NVSD_ItemView - Development Documentation
 
 ## Project Overview
+
 NVSD_ItemView is a REAPER script that provides an Ableton-style clip view for audio items. It displays a waveform visualization of the source audio with draggable markers to control which portion of the audio the item plays.
+
+**For user documentation, see [README.md](README.md)**
+**For Gumroad listing, see [GUMROAD_DESCRIPTION.md](GUMROAD_DESCRIPTION.md)**
+
+---
 
 ## Task Management
 
 **IMPORTANT: The todo list is ALWAYS in this file (CLAUDE.md). When user says "add to todo", add it here.**
 
-**WORKFLOW: When given multiple tasks, add them to the todo list below FIRST, then work through them and update status.**
-- Skip this for single/simple tasks
-- Mark items as done when completed
-- Remove completed items periodically to keep list clean
-
 ### Current Todo List
 (empty)
 
-### Recently Completed
-- [x] Add REVERSE button under WARP button (uses SWS extension for state detection)
-- [x] Add EDIT button under REVERSE button (opens in external editor)
-- [x] Volume fader tick marks and labels (24 at top, -∞ at bottom)
-- [x] Add left side panel with vertical gain slider (+24dB to -inf)
-  - Logarithmic curve below 0dB for finer control
-  - Waveform visually scales with gain
-  - Double-click to reset to 0dB
-- [x] Always allow zoom out to see both markers (min zoom floor lowered to 0.01)
-- [x] Show REAPER timeline selection as transparent overlay with grey arrows on ruler
-- [x] Add bottom ruler bar showing source time (mins:secs:fractions)
-- [x] Alt+drag marker to slide both markers together (change source position)
-- [x] Always allow zoom out enough so both left and right markers are visible in view
-- [x] Source boundary dashed lines extend through ruler bar to top edge
-- [x] Source boundary dashed lines are now 2px wide (bolder)
-- [x] Playhead (edit cursor) visible in waveform view with triangle in ruler
-- [x] Ctrl+mouse wheel up/down to zoom in/out the waveform view
-- [x] Click and drag up/down on ruler bar to zoom (cursor changes to hand on hover)
-- [x] Show waveform only after clicking item edge (not just hovering) - requires SWS/JS extension
-- [x] Sticky item: waveform stays displayed after releasing mouse
-- [x] Sticky item overrides selection when dragging different item's edge
-- [x] Sticky clears when user clicks to select a different item
+### Completed Features
+All planned features implemented. See README.md for full feature list.
 
 ---
 
@@ -52,122 +33,212 @@ NVSD_ItemView is a REAPER script that provides an Ableton-style clip view for au
 cd ~/dev/NVSD_ItemView && lua5.4 tests/run_tests.lua && ./sync.sh
 ```
 
-## Test-Driven Development (TDD)
+---
 
-**MANDATORY: Always follow TDD for every feature. Always run tests automatically.**
+## Architecture Overview
 
-1. **Write tests first** - Before implementing any feature, write unit tests that define expected behavior
-2. **Run tests (they should fail)** - `lua5.4 tests/run_tests.lua`
-3. **Implement the feature** - Write minimal code to make tests pass
-4. **Run tests (they should pass)** - `lua5.4 tests/run_tests.lua`
-5. **Refactor** - Clean up code while keeping tests green
-6. **Sync and test in REAPER** - `./sync.sh` then test in actual REAPER
+### File Structure
+```
+NVSD_ItemView/
+├── NVSD_ItemView.lua          # Main script (≈2560 lines)
+├── README.md                   # User documentation
+├── GUMROAD_DESCRIPTION.md      # Sales copy for Gumroad
+├── CLAUDE.md                   # Development documentation (this file)
+├── sync.sh                     # Sync script (WSL → Windows)
+├── docs/
+│   ├── REAPER_WAVEFORM_RENDERING.md   # PCM_Source_GetPeaks reference
+│   └── REAPER_TIMELINE_GRID.md        # Timeline/tempo API reference
+└── tests/
+    ├── luaunit.lua             # LuaUnit testing framework
+    ├── run_tests.lua           # Test runner
+    └── nvsd_itemview_test.lua  # 68 unit tests
+```
 
-### Testing Framework
-Using LuaUnit (single-file, no dependencies) for unit tests:
-- Test files: `tests/*_test.lua`
-- **Run tests**: `lua5.4 tests/run_tests.lua` (run automatically before every sync!)
+### Code Organization (NVSD_ItemView.lua)
 
-### What to Test
-- Pure logic functions (calculations, transformations)
-- State management
-- Edge cases (no selection, MIDI items, invalid inputs)
-- Mock REAPER API calls when testing outside REAPER
+| Section | Lines | Description |
+|---------|-------|-------------|
+| Header & Config | 1-60 | Constants, colors, dimensions |
+| State Variables | 61-185 | Drag states, zoom, pan, caching |
+| Utility Functions | 186-470 | Math helpers, conversions, formatting |
+| Drawing Functions | 471-1000 | Ruler, waveform, markers, overlays |
+| Control Panels | 1001-1600 | Buttons, gain slider, pitch knob |
+| Main Loop | 1601-2560 | Input handling, item detection, rendering |
 
-## Lua/REAPER Best Practices
+### Key Abstractions
 
-### Variable Scope
-- **Always use `local`** unless variable must be global
-- Local variables are faster and prevent naming collisions
-- Limit scope to where variables are needed
+**Unified Drag Control System** (lines 117-181)
+```lua
+drag_controls = {
+  gain = { active, start_y, start_value, shift_held },
+  pitch = { ... },
+  semitones = { ... },
+  cents = { ... },
+}
+start_drag(name, mouse_y, value, track_shift)
+end_drag(name)
+is_dragging(name)
+get_drag_delta(ctx, name, mouse_y, current_value, fine_sensitivity)
+```
 
-### Naming Conventions
-- Use explicit names starting with verbs for functions: `get_peaks()`, `draw_waveform()`
-- Use descriptive variable names without abbreviations
-- Optional type suffix: `item_count_int`, `source_name_str`
+**Peak Caching System**
+- `cached_peaks` - Waveform data for current source
+- `cached_source` - Source pointer for cache invalidation
+- `cached_num_samples` - Resolution for zoom-dependent refresh
 
-### REAPER-Specific
-- **Indices start at 0** in REAPER API (unlike Lua's 1-based)
-- Always call `reaper.UpdateArrange()` after modifying items
-- Use `reaper.defer()` for continuous GUI updates
-- Wrap undo points: `reaper.Undo_BeginBlock()` / `reaper.Undo_EndBlock()`
+**View Coordinate System**
+- `view_start` - Left edge of view in source time
+- `view_length` - Duration visible in view
+- `zoom_level` - 1.0 = fit all, >1 = zoomed in
+- `pan_offset` - Horizontal scroll in source time units
 
-### Code Organization
-- **DRY** - Don't repeat yourself; extract reusable functions
-- One function per file for shared utilities (use `require`)
-- Include descriptive header comments in each script
-- Use comments to explain "why", not "what"
+---
 
-### Performance
-- Cache expensive operations (e.g., peak data)
-- Avoid recalculating in every frame unless necessary
-- Use local references for frequently accessed globals
-
-## Technology Stack
-- **Language**: Lua
-- **GUI Framework**: ReaImGui extension for REAPER
-- **Target**: REAPER 6.0+
-
-## Research Documentation
-
-**IMPORTANT: After researching any REAPER API or technical topic, document findings in `docs/`.**
-
-- Create/update markdown files in `docs/` folder
-- Include API function signatures, parameters, and return values
-- Document buffer formats, gotchas, and working code examples
-- Reference official docs and forum discussions
-
-Current documentation:
-- `docs/REAPER_WAVEFORM_RENDERING.md` - PCM_Source_GetPeaks buffer format
-- `docs/REAPER_TIMELINE_GRID.md` - Timeline, tempo, and bar/beat conversion
-
-## File Structure
-- `NVSD_ItemView.lua` - Main script file
-- `CLAUDE.md` - Project documentation
-- `sync.sh` - Sync script (WSL dev folder only)
-- `docs/` - Research documentation
-  - `REAPER_WAVEFORM_RENDERING.md` - Waveform API reference
-  - `REAPER_TIMELINE_GRID.md` - Timeline/grid API reference
-- `tests/` - Unit tests (not synced to Windows)
-  - `luaunit.lua` - LuaUnit testing framework
-  - `run_tests.lua` - Test runner
-  - `nvsd_itemview_test.lua` - Tests for main script
+## Testing
 
 ### Running Tests
 ```bash
-# Requires Lua 5.4 installed: sudo apt install lua5.4
 cd ~/dev/NVSD_ItemView && lua5.4 tests/run_tests.lua
 ```
 
-## Key Concepts
+### Test Coverage (68 tests)
+- Gain/dB conversions
+- Pitch/semitones/cents conversions
+- Slider position calculations
+- Time format functions
+- Peak buffer parsing
+- View calculations
+- UI element bounds
+- Edge cases
 
-### REAPER Terminology
-- **Item**: A region on a track that plays audio/MIDI
-- **Take**: The actual media content within an item (an item can have multiple takes)
-- **Source**: The underlying audio file referenced by a take
-- **Offset**: Where within the source audio the take starts playing from
+### Adding Tests
+1. Add test functions to `tests/nvsd_itemview_test.lua`
+2. Prefix with `test_` for auto-discovery
+3. Use LuaUnit assertions: `lu.assertEquals()`, `lu.assertAlmostEquals()`
 
-### Core REAPER API Functions Used
-- `reaper.GetSelectedMediaItem(0, i)` - Get selected item by index
-- `reaper.GetActiveTake(item)` - Get active take from item
-- `reaper.GetMediaItemTake_Source(take)` - Get PCM source from take
-- `reaper.PCM_Source_GetPeaks(source, ...)` - Get waveform peak data
-- `reaper.GetMediaItemTakeInfo_Value(take, "D_STARTOFFS")` - Get take offset
-- `reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", value)` - Set take offset
-- `reaper.GetMediaItemInfo_Value(item, "D_LENGTH")` - Get item length
+---
 
-### ReaImGui Patterns
-- Context created once, reused across frames
-- Main loop via `reaper.defer()` for continuous updates
-- Drawing done through draw lists for custom graphics
+## Key REAPER APIs Used
 
-## Development Notes
-- Script requires ReaImGui extension (install via ReaPack)
-- Test with various audio file lengths and sample rates
-- Handle edge cases: no selection, MIDI items, empty items
+### Item & Take
+```lua
+reaper.GetSelectedMediaItem(0, index)
+reaper.GetActiveTake(item)
+reaper.GetMediaItemTake_Source(take)
+reaper.GetMediaItemInfo_Value(item, "D_LENGTH" | "D_POSITION" | "D_VOL" | "B_MUTE")
+reaper.GetMediaItemTakeInfo_Value(take, "D_STARTOFFS" | "D_PLAYRATE" | "D_PITCH")
+reaper.SetMediaItemInfo_Value(item, param, value)
+reaper.SetMediaItemTakeInfo_Value(take, param, value)
+```
 
-## Future Features
-- Pitch control slider
-- Volume control slider
-- Pitch algorithm selector dropdown
-- Zoom controls for waveform view
+### Waveform
+```lua
+reaper.PCM_Source_GetPeaks(source, peakrate, starttime, numchannels, numsamples, want_extra, buf)
+reaper.GetMediaSourceLength(source)
+reaper.GetMediaSourceSampleRate(source)
+reaper.GetMediaSourceNumChannels(source)
+```
+
+### Timeline
+```lua
+reaper.TimeMap2_timeToBeats(proj, time) → beats, measures, ...
+reaper.TimeMap2_beatsToTime(proj, beats, measures)
+reaper.GetProjectTimeSignature2(proj, time) → bpm, bpi
+```
+
+### ReaImGui
+```lua
+reaper.ImGui_CreateContext(name)
+reaper.ImGui_Begin(ctx, title, open, flags)
+reaper.ImGui_GetWindowDrawList(ctx)
+reaper.ImGui_DrawList_AddRectFilled(...)
+reaper.ImGui_DrawList_AddLine(...)
+reaper.ImGui_IsMouseClicked(ctx, button)
+reaper.ImGui_GetMousePos(ctx)
+```
+
+### SWS/JS Extensions (Optional)
+```lua
+reaper.BR_GetMediaSourceProperties(take) → retval, section, start, length, fade, reverse
+reaper.JS_Mouse_GetState(flags) → bitmask
+reaper.JS_Mouse_SetPosition(x, y)
+```
+
+---
+
+## Common Patterns
+
+### Undo Points
+```lua
+-- For instant actions:
+reaper.Undo_BeginBlock()
+-- ... make changes ...
+reaper.Undo_EndBlock("Description", -1)
+
+-- For drag operations (deferred scripts):
+undo_block_open = "operation_name"
+-- ... on mouse release ...
+reaper.Undo_OnStateChangeEx(message, -1, -1)
+undo_block_open = nil
+```
+
+### Coordinate Conversion
+```lua
+-- Source time ↔ Project time
+local function source_to_project_time(source_t, item_position, start_offset, playrate)
+  return item_position + (source_t - start_offset) / playrate
+end
+
+-- Source time ↔ Pixel position
+local function time_to_px(t)
+  return wave_x + ((t - view_start) / view_length) * waveform_width
+end
+```
+
+### Mouse State Detection
+```lua
+-- Use bitwise AND for bitmask (includes modifier keys)
+local mouse_state = reaper.JS_Mouse_GetState(1)
+if (mouse_state & 1) ~= 0 then  -- Left button pressed
+  ...
+end
+```
+
+---
+
+## Performance Considerations
+
+1. **Peak Caching** - Only refetch when source/zoom changes
+2. **Lazy Validation** - Check sticky_item validity by iterating project items
+3. **Draw Culling** - Skip markers/elements outside visible view
+4. **Buffer Reuse** - Single reaper.array for peak fetching
+
+---
+
+## Debugging Tips
+
+1. **Auto-reload** - Save script to trigger reload without restarting REAPER
+2. **Console output** - Use `reaper.ShowConsoleMsg()` for debugging
+3. **Test isolation** - Tests run outside REAPER with mocked API
+
+---
+
+## Technology Stack
+
+| Component | Technology |
+|-----------|------------|
+| Language | Lua 5.4 |
+| GUI | ReaImGui |
+| Target | REAPER 6.0+ |
+| Testing | LuaUnit |
+| Optional | SWS Extension, js_ReaScriptAPI |
+
+---
+
+## Contributing Guidelines
+
+1. Write tests before implementing features
+2. Run full test suite before committing
+3. Keep functions small and focused
+4. Document complex algorithms in comments
+5. Update README.md for user-facing changes

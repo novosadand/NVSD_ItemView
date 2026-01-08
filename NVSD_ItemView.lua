@@ -2,9 +2,18 @@
 -- Ableton-style clip view for REAPER audio items
 -- Requires: ReaImGui extension
 
--- Auto-reload: Detect file changes and restart script
+-- Get script directory for loading modules
 local script_path = debug.getinfo(1, "S").source:match("@(.+)")
+local script_dir = script_path:match("(.+)[/\\]")
 
+-- Load modules
+local config = dofile(script_dir .. "/lib/config.lua")
+local state = dofile(script_dir .. "/lib/state.lua")
+local utils = dofile(script_dir .. "/lib/utils.lua")
+local drawing = dofile(script_dir .. "/lib/drawing.lua")
+local controls = dofile(script_dir .. "/lib/controls.lua")
+
+-- Auto-reload: Detect file changes and restart script
 local function get_file_size(path)
   if not path then return 0 end
   local f = io.open(path, "rb")
@@ -26,1066 +35,12 @@ if not reaper.ImGui_CreateContext then
   return
 end
 
--- Configuration
-local MARKER_WIDTH = 12
-local WINDOW_PADDING = 8  -- Padding inside window
-local WAVEFORM_MARGIN_H = 20  -- Horizontal margin for easier marker access
-local WAVEFORM_MARGIN_V = 8  -- Vertical margin (smaller for docked windows)
-local INFO_BAR_HEIGHT = 18  -- Height of the file info bar (top)
-local RULER_HEIGHT = 20  -- Height of the bar number ruler (top)
-local TIME_RULER_HEIGHT = 18  -- Height of the source time ruler (bottom)
-local SNAP_THRESHOLD_PX = 25  -- Pixels within which markers snap to source boundaries
-local LEFT_PANEL_WIDTH = 70  -- Width of the left control panel (volume/pitch)
-local LEFT_COLUMN_WIDTH = 130  -- Width of the far-left column (warp button etc)
-local GAIN_SLIDER_WIDTH = 16  -- Width of the gain slider track
-
--- Colors (0xRRGGBBAA format)
-local COLOR_WAVEFORM = 0x5A9F5AFF        -- Green waveform
-local COLOR_WAVEFORM_INACTIVE = 0x3A6A3AFF  -- Muted green for inactive parts
-local COLOR_WAVEFORM_BG = 0x1A1A1AFF     -- Dark background
-local COLOR_CENTERLINE = 0x2A2A2AFF      -- Center line
-local COLOR_MARKER = 0x4A90D9FF          -- Blue markers
-local COLOR_MARKER_HOVER = 0x6AB0F9FF    -- Lighter blue on hover
-local COLOR_BORDER = 0x4A7A4AFF          -- Border around active region
-local COLOR_RULER_BG = 0x252525FF        -- Ruler background
-local COLOR_RULER_TEXT = 0x888888FF      -- Ruler text (middle ground)
-local COLOR_RULER_TICK = 0x666666FF      -- Ruler tick marks
-local COLOR_GRID_BAR = 0x383838FF        -- Bar lines (subtle)
-local COLOR_GRID_BEAT = 0x282828FF       -- Beat lines (very subtle)
-local COLOR_PLAYHEAD = 0x00CC00FF        -- Playhead (green, like REAPER default)
-local COLOR_INFO_BAR_BG = 0x1E1E1EFF     -- Info bar background
-local COLOR_INFO_BAR_TEXT = 0xBBBBBBFF   -- Info bar text
-local COLOR_INFO_BAR_ICON = 0x5A9F5AFF   -- Info bar waveform icon (green)
-
--- State
+-- Create ImGui context
 local ctx = reaper.ImGui_CreateContext("NVSD_ItemView")
-
-local cached_peaks = nil
-local cached_source = nil
-local cached_item = nil
-local cached_num_samples = 0
-local cached_source_length = 0
-local cached_reversed = false
-local cached_num_channels = 1
-local peaks_error = nil
-
-
-local dragging_start = false
-local dragging_end = false
-local undo_block_open = nil  -- Track open undo block type: "marker", "pitch", "gain", "semitones", "cents", "mouse4", "mouse5"
-local drag_start_offset = 0  -- Store original offset when drag starts
-local drag_start_length = 0  -- Store original length when drag starts
-local drag_start_mouse_x = 0  -- Store mouse X when drag starts
-local drag_start_view_length = 0  -- Store view length for 1:1 mouse movement
-local drag_start_playrate = 1  -- Store playrate when drag starts
-local drag_current_start = 0  -- Current start position during drag (for stable rendering)
-local drag_current_end = 0    -- Current end position during drag (for stable rendering)
-local drag_start_view_start = 0  -- Store view_start when drag starts (for stable grid)
-
--- Panning state
-local is_panning = false
-local pan_start_mouse_x = 0
-local pan_offset = 0  -- Current pan offset in source time units
-local pan_start_offset = 0  -- Pan offset when pan started
-local last_panned_item = nil  -- Reset pan when item changes
-
--- Zoom state
-local zoom_level = 1.0  -- 1.0 = fit to view, >1 = zoomed in
-local is_ruler_dragging = false
-local ruler_drag_start_y = 0
-local ruler_drag_start_zoom = 1.0
-local ruler_drag_screen_y = 0  -- Screen Y position to lock cursor vertically
-local ruler_drag_cumulative_y = 0  -- Accumulated Y movement for zoom
-local last_zoomed_item = nil  -- Reset zoom when item changes
-
--- Sticky item state (persists after edge-drag until another item is selected)
-local sticky_item = nil
-local last_selected_item = nil  -- Track selection changes to clear sticky
-
--- Pitch constants
-local PITCH_KNOB_RADIUS = 16  -- Knob radius in pixels
-local PITCH_MIN = -48  -- Minimum semitones
-local PITCH_MAX = 48   -- Maximum semitones
-
--- Cursor lock state (for hiding and locking cursor during drag)
-local drag_lock_screen_x = 0
-local drag_lock_screen_y = 0
-local drag_cumulative_delta_y = 0  -- Accumulated Y delta for locked cursor dragging
-local drag_window_to_screen_y = 0  -- Offset to convert window Y to screen Y
-local has_js_extension = reaper.JS_Mouse_SetPosition ~= nil
-
--- Unified drag control state (replaces individual is_dragging_*, *_drag_start_*, etc.)
-local drag_controls = {
-  gain = { active = false, start_y = 0, start_value = 0, shift_held = false },
-  pitch = { active = false, start_y = 0, start_value = 0, shift_held = false },
-  semitones = { active = false, start_y = 0, start_value = 0 },
-  cents = { active = false, start_y = 0, start_value = 0 },
-}
-
--- Start a drag operation
-local function start_drag(name, mouse_y, value, track_shift)
-  local ctrl = drag_controls[name]
-  ctrl.active = true
-  ctrl.start_y = mouse_y
-  ctrl.start_value = value
-  if track_shift then
-    ctrl.shift_held = false
-  end
-  if has_js_extension then
-    local screen_x, screen_y = reaper.GetMousePosition()
-    drag_lock_screen_x, drag_lock_screen_y = screen_x, screen_y
-    drag_cumulative_delta_y = 0
-  end
-  if not undo_block_open then
-    undo_block_open = name
-  end
-end
-
--- End a drag operation
-local function end_drag(name)
-  drag_controls[name].active = false
-end
-
--- Check if a drag is active
-local function is_dragging(name)
-  return drag_controls[name].active
-end
-
--- Check if any control drag is active (for cursor hiding)
-local function is_any_control_dragging()
-  return drag_controls.gain.active or drag_controls.pitch.active
-      or drag_controls.semitones.active or drag_controls.cents.active
-end
-
--- Get drag delta (in pixels), handling shift modifier for fine control
--- Returns: delta_y (adjusted for sensitivity), and updates shift state
-local function get_drag_delta(ctx, name, mouse_y, current_value, fine_sensitivity)
-  local ctrl = drag_controls[name]
-  if not ctrl.active then return 0 end
-
-  local sensitivity = 1.0
-  if fine_sensitivity then
-    local shift_now = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
-    if shift_now ~= ctrl.shift_held then
-      -- Shift state changed - reset baseline for smooth transition
-      ctrl.start_y = mouse_y
-      ctrl.start_value = current_value
-      ctrl.shift_held = shift_now
-      if has_js_extension then drag_cumulative_delta_y = 0 end
-    end
-    sensitivity = ctrl.shift_held and fine_sensitivity or 1.0
-  end
-
-  local delta_y = has_js_extension and drag_cumulative_delta_y or (ctrl.start_y - mouse_y)
-  return delta_y * sensitivity
-end
-
--- Warp mode state (true = pitch shift preserves length, false = playrate changes length)
-local warp_mode = false
-local warp_dropdown_open = false
-
--- Pitch shift mode values (I_PITCHMODE)
--- Format: high word = shifter algorithm, low word = parameter
-local PITCH_MODES = {
-  {name = "Project Default", value = -1},
-  {name = "SoundTouch", value = 0},
-  {name = "Simple Windowed", value = 131072},
-  {name = "Elastique 3 Pro", value = 589824},
-  {name = "Elastique 3 Efficient", value = 655360},
-  {name = "Elastique 3 Soloist", value = 720896},
-  {name = "Elastique 2 Pro", value = 393216},
-  {name = "Elastique 2 Efficient", value = 458752},
-  {name = "Elastique 2 Soloist", value = 524288},
-  {name = "Rubber Band", value = 851968},
-}
-
--- Convert semitones to playrate (for non-warp mode)
-local function semitones_to_playrate(semitones)
-  return 2 ^ (semitones / 12)
-end
-
--- Convert playrate to semitones (for non-warp mode)
-local function playrate_to_semitones(playrate)
-  if playrate <= 0 then return 0 end
-  return 12 * math.log(playrate) / math.log(2)
-end
-
--- Set pitch on take based on warp mode
-local function set_take_pitch(take, semitones)
-  if not take then return end
-  if warp_mode then
-    reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", semitones)
-  else
-    -- Get current playrate and item length before changing
-    local item = reaper.GetMediaItemTake_Item(take)
-    local old_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
-    local old_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
-
-    -- Calculate new playrate
-    local new_playrate = semitones_to_playrate(semitones)
-    reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", new_playrate)
-
-    -- Adjust item length to keep same source content playing
-    -- new_length = old_length * (old_playrate / new_playrate)
-    if new_playrate > 0 then
-      local new_length = old_length * (old_playrate / new_playrate)
-      reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_length)
-    end
-  end
-end
-
--- Get peaks data from audio source for a specific time range
--- This allows fetching high-resolution peaks for just the visible portion
--- Returns peaks as array where each element contains per-channel data:
--- peaks[i] = { {min = ch1_min, max = ch1_max}, {min = ch2_min, max = ch2_max}, ... }
--- Also returns num_channels as second return value
-local function get_peaks_for_range(source, start_time, duration, num_samples)
-  if not source then return nil, "no source" end
-
-  local source_length = reaper.GetMediaSourceLength(source)
-  local sample_rate = reaper.GetMediaSourceSampleRate(source)
-  local num_channels = reaper.GetMediaSourceNumChannels(source)
-
-  if source_length <= 0 then return nil, "source_length <= 0" end
-  if sample_rate <= 0 then return nil, "sample_rate <= 0" end
-  if num_channels <= 0 then return nil, "num_channels <= 0" end
-  if duration <= 0 then return nil, "duration <= 0" end
-
-  -- Calculate peakrate: peaks per second for the requested duration
-  local peakrate = num_samples / duration
-
-  -- Buffer: need 2 values (min/max) per channel per sample
-  local buf_size = num_samples * num_channels * 2
-  local buf = reaper.new_array(buf_size)
-
-  -- Clamp start_time to valid range for the API call
-  local api_start = math.max(0, start_time)
-
-  local ret = reaper.PCM_Source_GetPeaks(source, peakrate, api_start, num_channels, num_samples, 0, buf)
-
-  if ret == 0 then return nil, "GetPeaks returned 0" end
-
-  local peaks = {}
-  -- Extract actual sample count from return value (lower 20 bits)
-  local actual_samples = math.min(ret & 0xFFFFF, num_samples)
-
-  -- REAPER buffer format: channel-interleaved within two blocks
-  local min_block_offset = actual_samples * num_channels
-
-  for i = 1, actual_samples do
-    local channels = {}
-
-    if num_channels == 1 then
-      channels[1] = {
-        min = buf[min_block_offset + i] or 0,
-        max = buf[i] or 0
-      }
-    else
-      local base_idx = (i - 1) * num_channels + 1
-      for ch = 1, num_channels do
-        channels[ch] = {
-          max = buf[base_idx + ch - 1] or 0,
-          min = buf[min_block_offset + base_idx + ch - 1] or 0
-        }
-      end
-    end
-
-    peaks[i] = channels
-  end
-
-  return peaks, num_channels
-end
-
--- Legacy function for compatibility - fetches peaks for entire source
-local function get_peaks(source, num_samples)
-  if not source then return nil, "no source" end
-  local source_length = reaper.GetMediaSourceLength(source)
-  return get_peaks_for_range(source, 0, source_length, num_samples)
-end
-
--- Draw dashed vertical line
-local function draw_dashed_line(draw_list, x, y1, y2, color, dash_length, gap_length, line_width)
-  dash_length = dash_length or 5
-  gap_length = gap_length or 3
-  line_width = line_width or 1
-  local y = y1
-  while y < y2 do
-    local dash_end = math.min(y + dash_length, y2)
-    reaper.ImGui_DrawList_AddLine(draw_list, x, y, x, dash_end, color, line_width)
-    y = y + dash_length + gap_length
-  end
-end
-
--- Convert source time to project time
-local function source_to_project_time(source_t, item_position, start_offset, playrate)
-  return item_position + (source_t - start_offset) / playrate
-end
-
--- Convert project time to source time
-local function project_to_source_time(project_t, item_position, start_offset, playrate)
-  return start_offset + (project_t - item_position) * playrate
-end
-
--- Convert linear gain to dB (with -infinity handling)
-local function gain_to_db(gain)
-  if gain <= 0 then return -math.huge end
-  return 20 * math.log(gain) / math.log(10)
-end
-
--- Convert dB to linear gain
-local function db_to_gain(db)
-  if db <= -150 then return 0 end  -- Treat very low dB as silence
-  return 10 ^ (db / 20)
-end
-
--- Convert slider position (0-1) to dB
--- Position 0.5 = 0dB, 1.0 = +24dB, 0.0 = -infinity
--- Uses exponential curve below 0dB for finer control near unity
-local function slider_to_db(pos)
-  if pos >= 0.5 then
-    -- Upper half: linear 0dB to +24dB
-    return (pos - 0.5) * 2 * 24
-  else
-    -- Lower half: exponential curve to -infinity
-    -- At pos=0.5: dB=0, at pos=0: dB=-infinity
-    if pos <= 0 then return -math.huge end
-    -- Map 0-0.5 to a logarithmic curve
-    -- Using: dB = 40 * log10(pos * 2) gives good feel
-    -- At 0.5: 40*log10(1) = 0dB
-    -- At 0.25: 40*log10(0.5) ≈ -12dB
-    -- At 0.1: 40*log10(0.2) ≈ -28dB
-    -- At 0.01: 40*log10(0.02) ≈ -68dB
-    return 40 * math.log(pos * 2) / math.log(10)
-  end
-end
-
--- Convert dB to slider position (0-1)
-local function db_to_slider(db)
-  if db >= 0 then
-    -- Upper half: +0dB to +24dB maps to 0.5-1.0
-    return 0.5 + (db / 24) * 0.5
-  else
-    -- Lower half: -infinity to 0dB maps to 0-0.5
-    if db <= -150 then return 0 end
-    -- Inverse of: dB = 40 * log10(pos * 2)
-    -- pos = 10^(dB/40) / 2
-    return (10 ^ (db / 40)) / 2
-  end
-end
-
--- Format dB value for display
-local function format_db(db)
-  if db <= -60 then return "-∞ dB" end
-  return string.format("%.1f dB", db)
-end
-
--- Format pitch value for display (semitones)
-local function format_pitch(semitones)
-  if semitones >= 0 then
-    return string.format("+%d", math.floor(semitones + 0.5))
-  else
-    return string.format("%d", math.floor(semitones + 0.5))
-  end
-end
-
--- Convert pitch (-48 to +48) to knob angle (radians)
--- 12 o'clock (up) = -π/2 in screen coords
--- 7 o'clock (min) = 120° = 2π/3
--- 5 o'clock (max) = 60° = π/3
--- Range is 300 degrees through 12 o'clock
-local function pitch_to_angle(pitch)
-  -- Normalize pitch to -1 to +1
-  local normalized = pitch / PITCH_MAX
-  -- Map to "clock angle" where 0 = 12 o'clock, positive = clockwise
-  -- 7 o'clock = -150° from 12, 5 o'clock = +150° from 12
-  local clock_angle = normalized * (5 * math.pi / 6)  -- -150° to +150°
-  -- Convert to screen coordinates (subtract 90° = π/2)
-  return clock_angle - math.pi / 2
-end
-
--- Draw a knob
-local function draw_knob(draw_list, cx, cy, radius, angle, is_hovered, is_active)
-  local COLOR_KNOB_BG = 0x303030FF
-  local COLOR_KNOB_BORDER = is_active and 0x6AB0F9FF or (is_hovered and 0x888888FF or 0x555555FF)
-  local COLOR_KNOB_POINTER = 0xFFFFFFFF
-  local COLOR_KNOB_ARC_BG = 0x404040FF
-  local COLOR_KNOB_ARC = 0x4A90D9FF
-
-  -- Draw background circle
-  local num_segments = 32
-  reaper.ImGui_DrawList_AddCircleFilled(draw_list, cx, cy, radius, COLOR_KNOB_BG, num_segments)
-  reaper.ImGui_DrawList_AddCircle(draw_list, cx, cy, radius, COLOR_KNOB_BORDER, num_segments, 2)
-
-  -- Arc angles: 7 o'clock to 5 o'clock through 12
-  -- In screen coords: 7 o'clock = 2π/3 (120°), 5 o'clock = π/3 (60°)
-  -- Going counter-clockwise from 7 to 5 through 12
-  local arc_radius = radius + 4
-  local min_angle = 2 * math.pi / 3  -- 7 o'clock (120°)
-  local max_angle = math.pi / 3      -- 5 o'clock (60°)
-  local center_angle = -math.pi / 2  -- 12 o'clock (-90°)
-
-  -- Draw arc background as series of lines (from 7 o'clock clockwise to 5 o'clock through 12)
-  local arc_segments = 30
-  for i = 0, arc_segments - 1 do
-    -- Go from min_angle (7 o'clock) clockwise through 9, 12, 3 to max_angle (5 o'clock)
-    -- Total sweep: 300 degrees clockwise = 5π/3 radians
-    local sweep = 5 * math.pi / 3
-    local a1 = min_angle + sweep * (i / arc_segments)
-    local a2 = min_angle + sweep * ((i + 1) / arc_segments)
-    local x1 = cx + math.cos(a1) * arc_radius
-    local y1 = cy + math.sin(a1) * arc_radius
-    local x2 = cx + math.cos(a2) * arc_radius
-    local y2 = cy + math.sin(a2) * arc_radius
-    reaper.ImGui_DrawList_AddLine(draw_list, x1, y1, x2, y2, COLOR_KNOB_ARC_BG, 3)
-  end
-
-  -- Draw active arc (from center/12 o'clock to current position)
-  -- Determine direction and range
-  if math.abs(angle - center_angle) > 0.01 then
-    local arc_start, arc_end
-    if angle > center_angle then
-      -- Positive pitch: arc goes from center clockwise to angle
-      arc_start = center_angle
-      arc_end = angle
-      for i = 0, arc_segments - 1 do
-        local a1 = arc_start + (arc_end - arc_start) * (i / arc_segments)
-        local a2 = arc_start + (arc_end - arc_start) * ((i + 1) / arc_segments)
-        local x1 = cx + math.cos(a1) * arc_radius
-        local y1 = cy + math.sin(a1) * arc_radius
-        local x2 = cx + math.cos(a2) * arc_radius
-        local y2 = cy + math.sin(a2) * arc_radius
-        reaper.ImGui_DrawList_AddLine(draw_list, x1, y1, x2, y2, COLOR_KNOB_ARC, 3)
-      end
-    else
-      -- Negative pitch: arc goes from angle to center (counter-clockwise from center)
-      arc_start = angle
-      arc_end = center_angle
-      for i = 0, arc_segments - 1 do
-        local a1 = arc_start + (arc_end - arc_start) * (i / arc_segments)
-        local a2 = arc_start + (arc_end - arc_start) * ((i + 1) / arc_segments)
-        local x1 = cx + math.cos(a1) * arc_radius
-        local y1 = cy + math.sin(a1) * arc_radius
-        local x2 = cx + math.cos(a2) * arc_radius
-        local y2 = cy + math.sin(a2) * arc_radius
-        reaper.ImGui_DrawList_AddLine(draw_list, x1, y1, x2, y2, COLOR_KNOB_ARC, 3)
-      end
-    end
-  end
-
-  -- Draw pointer line
-  local pointer_inner = radius * 0.3
-  local pointer_outer = radius * 0.85
-  local px1 = cx + math.cos(angle) * pointer_inner
-  local py1 = cy + math.sin(angle) * pointer_inner
-  local px2 = cx + math.cos(angle) * pointer_outer
-  local py2 = cy + math.sin(angle) * pointer_outer
-  reaper.ImGui_DrawList_AddLine(draw_list, px1, py1, px2, py2, COLOR_KNOB_POINTER, 2)
-
-  -- Draw "Pitch" label above knob
-  local label_color = 0xAAAAAAFF
-  reaper.ImGui_DrawList_AddText(draw_list, cx - 12, cy - radius - 18, label_color, "Pitch")
-
-  -- Draw "st" label at bottom (in the arc gap)
-  local st_color = 0x888888FF
-  reaper.ImGui_DrawList_AddText(draw_list, cx - 5, cy + radius + 2, st_color, "st")
-end
-
--- Convert pitch float to semitones and cents display values
-local function pitch_to_semitones_cents(pitch)
-  -- Use truncation toward zero for semitones
-  local semitones
-  if pitch >= 0 then
-    semitones = math.floor(pitch)
-  else
-    semitones = math.ceil(pitch)
-  end
-  local cents = math.floor((pitch - semitones) * 100 + 0.5)
-  -- Handle rounding edge case
-  if cents >= 100 then
-    cents = 0
-    semitones = semitones + 1
-  elseif cents <= -100 then
-    cents = 0
-    semitones = semitones - 1
-  end
-  return semitones, cents
-end
-
--- Convert semitones and cents back to pitch float
-local function semitones_cents_to_pitch(semitones, cents)
-  return semitones + cents / 100
-end
-
--- Draw ruler bar with bar numbers and grid lines
-local function draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler_height, wave_height,
-                                    view_start, view_length, item_position, start_offset, playrate)
-  -- Draw ruler background
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, x, ruler_y, x + width, ruler_y + ruler_height, COLOR_RULER_BG)
-
-  -- Helper: convert source time to pixel
-  local function time_to_px(t)
-    return x + ((t - view_start) / view_length) * width
-  end
-
-  -- Get project time range visible in the view
-  local view_end = view_start + view_length
-  local project_start = source_to_project_time(view_start, item_position, start_offset, playrate)
-  local project_end = source_to_project_time(view_end, item_position, start_offset, playrate)
-
-  -- Get time signature info at project start
-  local bpm, bpi = reaper.GetProjectTimeSignature2(0, project_start)
-  local beats_per_bar = math.floor(bpi)
-  if beats_per_bar < 1 then beats_per_bar = 4 end
-
-  -- Find first bar before or at project_start
-  local _, start_measures = reaper.TimeMap2_timeToBeats(0, project_start)
-  local first_bar = math.floor(start_measures)
-
-  -- Calculate minimum pixel spacing to avoid cluttering
-  local min_bar_spacing = 30
-  local min_beat_spacing = 10
-
-  -- Draw bars and beats
-  local bar = first_bar
-  local max_iterations = 1000  -- Safety limit
-  local iterations = 0
-
-  while iterations < max_iterations do
-    iterations = iterations + 1
-
-    -- Get time at start of this bar (bar is 0-based measure index)
-    local bar_project_time = reaper.TimeMap2_beatsToTime(0, 0, bar)
-
-    if bar_project_time > project_end then break end
-
-    -- Convert to source time
-    local bar_source_time = project_to_source_time(bar_project_time, item_position, start_offset, playrate)
-
-    -- Only draw if within view
-    if bar_source_time >= view_start and bar_source_time <= view_end then
-      local bar_px = time_to_px(bar_source_time)
-
-      -- Draw bar line on ruler only (not in waveform area)
-      reaper.ImGui_DrawList_AddLine(draw_list, bar_px, ruler_y, bar_px, ruler_y + ruler_height, COLOR_RULER_TICK, 1)
-
-      -- Draw bar number (1-based display)
-      local bar_num = bar + 1
-      reaper.ImGui_DrawList_AddText(draw_list, bar_px + 3, ruler_y + 3, COLOR_RULER_TEXT, tostring(bar_num))
-    end
-
-    bar = bar + 1
-  end
-
-  -- Draw ruler bottom border
-  reaper.ImGui_DrawList_AddLine(draw_list, x, ruler_y + ruler_height, x + width, ruler_y + ruler_height, COLOR_GRID_BAR, 1)
-end
-
--- Get bit depth from WAV file header (returns nil for non-WAV or on error)
-local function get_wav_bit_depth(file_path)
-  if not file_path or file_path == "" then return nil end
-  local f = io.open(file_path, "rb")
-  if not f then return nil end
-
-  -- Read RIFF header (first 12 bytes)
-  local riff = f:read(4)
-  if riff ~= "RIFF" then f:close() return nil end
-
-  f:read(4)  -- Skip file size
-  local wave = f:read(4)
-  if wave ~= "WAVE" then f:close() return nil end
-
-  -- Find fmt chunk
-  while true do
-    local chunk_id = f:read(4)
-    if not chunk_id then f:close() return nil end
-
-    local chunk_size_bytes = f:read(4)
-    if not chunk_size_bytes then f:close() return nil end
-
-    local chunk_size = string.byte(chunk_size_bytes, 1) +
-                       string.byte(chunk_size_bytes, 2) * 256 +
-                       string.byte(chunk_size_bytes, 3) * 65536 +
-                       string.byte(chunk_size_bytes, 4) * 16777216
-
-    if chunk_id == "fmt " then
-      -- Read fmt chunk: format(2), channels(2), sample_rate(4), byte_rate(4), block_align(2), bits_per_sample(2)
-      local fmt_data = f:read(math.min(chunk_size, 16))
-      if fmt_data and #fmt_data >= 16 then
-        local bits_per_sample = string.byte(fmt_data, 15) + string.byte(fmt_data, 16) * 256
-        f:close()
-        return bits_per_sample
-      end
-      f:close()
-      return nil
-    else
-      -- Skip this chunk
-      f:seek("cur", chunk_size)
-    end
-  end
-end
-
--- Get file name from full path
-local function get_file_name(path)
-  if not path then return "" end
-  -- Match the last component after / or \
-  return path:match("([^/\\]+)$") or path
-end
-
--- Draw file info bar at the top
--- Returns true if file name was clicked
-local function draw_info_bar(draw_list, ctx, x, y, width, height, source, file_path, mouse_x, mouse_y, item)
-  -- Draw background
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, COLOR_INFO_BAR_BG)
-
-  -- Draw bottom border
-  reaper.ImGui_DrawList_AddLine(draw_list, x, y + height, x + width, y + height, 0x333333FF, 1)
-
-  -- Mute toggle (small square with green fill) - first element
-  local mute_size = 10
-  local mute_x = x + 4
-  local mute_y = y + (height - mute_size) / 2
-
-  local is_muted = item and reaper.GetMediaItemInfo_Value(item, "B_MUTE") == 1
-
-  local mouse_in_mute = mouse_x >= mute_x and mouse_x <= mute_x + mute_size
-                        and mouse_y >= mute_y and mouse_y <= mute_y + mute_size
-
-  -- Draw border (1px)
-  local border_color = mouse_in_mute and 0x8AD98AFF or COLOR_WAVEFORM
-  reaper.ImGui_DrawList_AddRect(draw_list, mute_x, mute_y, mute_x + mute_size, mute_y + mute_size, border_color, 0, 0, 1)
-
-  -- Draw fill (green when not muted, transparent when muted)
-  if not is_muted then
-    local fill_color = mouse_in_mute and 0x6ABF6AFF or COLOR_WAVEFORM
-    reaper.ImGui_DrawList_AddRectFilled(draw_list, mute_x + 1, mute_y + 1, mute_x + mute_size - 1, mute_y + mute_size - 1, fill_color)
-  end
-
-  -- Handle mute click
-  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_mute then
-    if item then
-      reaper.Undo_BeginBlock()
-      local new_mute = is_muted and 0 or 1
-      reaper.SetMediaItemInfo_Value(item, "B_MUTE", new_mute)
-      reaper.UpdateArrange()
-      reaper.Undo_EndBlock("NVSD_ItemView: Toggle mute", -1)
-    end
-  end
-
-  -- Draw waveform icon (simple representation: 3 vertical lines of varying height)
-  local icon_x = mute_x + mute_size + 6
-  local icon_center_y = y + height / 2
-  local icon_max_h = height * 0.6
-
-  -- Icon: stylized waveform (5 bars)
-  local bar_widths = {2, 2, 2, 2, 2}
-  local bar_heights = {0.3, 0.7, 1.0, 0.6, 0.4}
-  local bar_gap = 1
-  local current_x = icon_x
-
-  for i = 1, #bar_heights do
-    local bar_h = icon_max_h * bar_heights[i]
-    local bar_y1 = icon_center_y - bar_h / 2
-    local bar_y2 = icon_center_y + bar_h / 2
-    reaper.ImGui_DrawList_AddRectFilled(draw_list, current_x, bar_y1, current_x + bar_widths[i], bar_y2, COLOR_INFO_BAR_ICON)
-    current_x = current_x + bar_widths[i] + bar_gap
-  end
-
-  local text_x = current_x + 4
-  local text_y = y + 3
-
-  -- Build info string parts
-  local file_name = get_file_name(file_path)
-  local sample_rate = source and reaper.GetMediaSourceSampleRate(source) or 0
-  local num_channels = source and reaper.GetMediaSourceNumChannels(source) or 0
-  local bit_depth = get_wav_bit_depth(file_path)
-
-  -- Build metadata string (everything after file name)
-  local meta_parts = {}
-
-  if sample_rate > 0 then
-    local sr_khz = sample_rate / 1000
-    if sr_khz == math.floor(sr_khz) then
-      table.insert(meta_parts, string.format("%d kHz", sr_khz))
-    else
-      table.insert(meta_parts, string.format("%.1f kHz", sr_khz))
-    end
-  end
-
-  if bit_depth then
-    table.insert(meta_parts, string.format("%d-bit", bit_depth))
-  end
-
-  if num_channels > 0 then
-    if num_channels == 1 then
-      table.insert(meta_parts, "Mono")
-    elseif num_channels == 2 then
-      table.insert(meta_parts, "Stereo")
-    else
-      table.insert(meta_parts, string.format("%d Ch", num_channels))
-    end
-  end
-
-  local meta_text = table.concat(meta_parts, " · ")
-
-  -- Calculate file name width using ImGui if available, otherwise estimate
-  local file_name_width
-  if reaper.ImGui_CalcTextSize then
-    file_name_width = reaper.ImGui_CalcTextSize(ctx, file_name)
-  else
-    -- Fallback: approximate ~6 pixels per character for default font
-    file_name_width = #file_name * 6
-  end
-  local file_name_end_x = text_x + file_name_width
-
-  -- Check if mouse is over file name
-  local mouse_over_filename = file_name ~= "" and
-    mouse_x >= text_x and mouse_x <= file_name_end_x and
-    mouse_y >= y and mouse_y <= y + height
-
-  -- Draw file name (with underline if hovered)
-  if file_name ~= "" then
-    local name_color = mouse_over_filename and 0xDDDDFFFF or COLOR_INFO_BAR_TEXT
-    reaper.ImGui_DrawList_AddText(draw_list, text_x, text_y, name_color, file_name)
-
-    -- Draw underline on hover (2 pixels below text baseline)
-    if mouse_over_filename then
-      local underline_y = text_y + 14
-      reaper.ImGui_DrawList_AddLine(draw_list, text_x, underline_y, file_name_end_x, underline_y, name_color, 1)
-    end
-  end
-
-  -- Draw separator and metadata
-  if file_name ~= "" and meta_text ~= "" then
-    local separator = " · "
-    reaper.ImGui_DrawList_AddText(draw_list, file_name_end_x, text_y, COLOR_INFO_BAR_TEXT, separator .. meta_text)
-  elseif meta_text ~= "" then
-    reaper.ImGui_DrawList_AddText(draw_list, text_x, text_y, COLOR_INFO_BAR_TEXT, meta_text)
-  end
-
-  -- Handle click on file name - open source in REAPER's Media Explorer
-  if mouse_over_filename and reaper.ImGui_IsMouseClicked(ctx, 0) then
-    -- Open selected item source media in media explorer (action 41623)
-    reaper.Main_OnCommand(41623, 0)
-    return true
-  end
-
-  return mouse_over_filename
-end
-
--- Format source time as mins:secs or mins:secs:ms depending on show_ms flag
-local function format_source_time(seconds, show_ms)
-  local negative = seconds < 0
-  local abs_secs = math.abs(seconds)
-  local mins = math.floor(abs_secs / 60)
-  local secs = abs_secs - mins * 60
-
-  local sign = negative and "-" or ""
-
-  if show_ms then
-    local whole_secs = math.floor(secs)
-    local ms = math.floor((secs - whole_secs) * 1000)
-    return string.format("%s%d:%02d:%03d", sign, mins, whole_secs, ms)
-  else
-    return string.format("%s%d:%02d", sign, mins, math.floor(secs))
-  end
-end
-
--- Draw bottom time ruler showing source time (0 = start of original sample)
-local function draw_time_ruler(draw_list, x, y, width, height, view_start, view_length)
-  -- Draw ruler background
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, COLOR_RULER_BG)
-
-  -- Draw top border
-  reaper.ImGui_DrawList_AddLine(draw_list, x, y, x + width, y, COLOR_GRID_BAR, 1)
-
-  -- Helper: convert source time to pixel
-  local function time_to_px(t)
-    return x + ((t - view_start) / view_length) * width
-  end
-
-  -- Calculate view range
-  local view_end = view_start + view_length
-
-  -- Determine appropriate time interval based on visible time per pixel
-  -- We want labels roughly every 60-100 pixels
-  local target_label_spacing_px = 80
-  local seconds_per_pixel = view_length / width
-  local target_interval = seconds_per_pixel * target_label_spacing_px
-
-  -- Snap to nice intervals: 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600...
-  local nice_intervals = {0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600}
-  local interval = nice_intervals[#nice_intervals]
-  for _, ni in ipairs(nice_intervals) do
-    if ni >= target_interval then
-      interval = ni
-      break
-    end
-  end
-
-  -- Determine if we should show milliseconds (when interval is less than 1 second)
-  local show_ms = interval < 1
-
-  -- Find first tick before or at view_start
-  local first_tick = math.floor(view_start / interval) * interval
-
-  -- Draw ticks and labels
-  local tick = first_tick
-  local max_iterations = 200  -- Safety limit
-  local iterations = 0
-
-  while tick <= view_end and iterations < max_iterations do
-    iterations = iterations + 1
-
-    local tick_px = time_to_px(tick)
-
-    -- Only draw if within view
-    if tick_px >= x and tick_px <= x + width then
-      -- Draw tick mark
-      local tick_height = 6
-      reaper.ImGui_DrawList_AddLine(draw_list, tick_px, y, tick_px, y + tick_height, COLOR_RULER_TICK, 1)
-
-      -- Draw time label
-      local label = format_source_time(tick, show_ms)
-      reaper.ImGui_DrawList_AddText(draw_list, tick_px + 3, y + 3, COLOR_RULER_TEXT, label)
-    end
-
-    tick = tick + interval
-  end
-end
-
--- Draw waveform with looping support
--- source_item_length is the amount of source audio covered by the item (accounts for playrate)
--- pan_offset shifts the view left/right (positive = view shifted right, seeing earlier content)
--- zoom_lvl: 1.0 = fit to view, >1 = zoomed in
--- ruler_y: top of ruler bar (for extending source boundary lines through ruler)
--- visual_gain: multiplier for waveform height (1.0 = normal, matches item volume)
--- is_reversed: if true, flip the waveform horizontally to match reversed take
--- num_channels: number of audio channels (for multi-channel display)
-local function draw_waveform(draw_list, x, y, width, height, peaks, start_offset, source_item_length, source_length, pan_offset_time, zoom_lvl, ruler_y, visual_gain, is_reversed, num_channels)
-  if not peaks or #peaks == 0 or source_length <= 0 then return 0, 0, 0, source_length end
-
-  pan_offset_time = pan_offset_time or 0
-  zoom_lvl = zoom_lvl or 1.0
-  visual_gain = visual_gain or 1.0
-  is_reversed = is_reversed or false
-  num_channels = num_channels or 1
-
-  -- Item bounds in source time
-  local item_end = start_offset + source_item_length
-
-  -- Base view shows BOTH source boundaries (orange) AND item boundaries (blue)
-  -- This ensures user sees everything at zoom 1.0
-  local view_left_bound = math.min(0, start_offset)
-  local view_right_bound = math.max(source_length, item_end)
-  local base_view_length = view_right_bound - view_left_bound
-
-  -- Apply zoom: higher zoom = smaller view_length = more zoomed in
-  local view_length = base_view_length / zoom_lvl
-
-  -- Center on the full visible range (source + any extensions)
-  local range_center = (view_left_bound + view_right_bound) / 2
-  local view_start = range_center - view_length / 2 + pan_offset_time
-  local view_end = view_start + view_length
-
-  -- Background
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, COLOR_WAVEFORM_BG)
-
-  -- Calculate per-channel height
-  local channel_height = height / num_channels
-
-  -- Draw center line for each channel
-  for ch = 1, num_channels do
-    local ch_y = y + (ch - 1) * channel_height
-    local center_y = ch_y + channel_height / 2
-    reaper.ImGui_DrawList_AddLine(draw_list, x, center_y, x + width, center_y, COLOR_CENTERLINE, 1)
-    -- Draw separator line between channels (except after last)
-    if ch < num_channels then
-      local sep_y = ch_y + channel_height
-      reaper.ImGui_DrawList_AddLine(draw_list, x, sep_y, x + width, sep_y, 0x333333FF, 1)
-    end
-  end
-
-  -- Helper: convert time position to pixel
-  local function time_to_px(t)
-    return x + ((t - view_start) / view_length) * width
-  end
-
-  local half_height = channel_height / 2 * 0.85
-
-  -- Helper: get peak at a time position (with looping)
-  -- Peaks cover full source (0 to source_length), so we map time directly
-  local function get_peak_at_time(t)
-    -- Wrap time to source range (0 to source_length) for looping
-    local wrapped = t % source_length
-    if wrapped < 0 then wrapped = wrapped + source_length end
-
-    -- If reversed, flip the lookup position
-    if is_reversed then
-      wrapped = source_length - wrapped
-    end
-
-    -- Map wrapped time to peak index (peaks cover 0 to source_length)
-    local peak_idx = math.floor((wrapped / source_length) * #peaks) + 1
-    peak_idx = math.max(1, math.min(peak_idx, #peaks))
-    return peaks[peak_idx]
-  end
-
-  -- Draw waveform using filled quads for smoother appearance
-  local num_samples = math.floor(width)
-
-  -- Track previous values per channel for smooth quad drawing
-  local prev_data = {}
-  for ch = 1, num_channels do
-    prev_data[ch] = {px = nil, top = nil, bot = nil}
-  end
-
-  for i = 0, num_samples - 1 do
-    local px = x + i
-    local t = view_start + (i / num_samples) * view_length
-    local peak = get_peak_at_time(t)
-
-    -- Check if in active region (item bounds)
-    local in_active = t >= start_offset and t <= item_end
-    -- Check if in looped region (outside source bounds)
-    local is_looped = t < 0 or t >= source_length
-
-    local fill_color, outline_color
-    if in_active then
-      if is_looped then
-        fill_color = 0x3A7A3ACC    -- Dimmer green for looped, semi-transparent
-        outline_color = 0x4A8F4AFF
-      else
-        fill_color = 0x4A9F4ACC    -- Main green, semi-transparent
-        outline_color = 0x5ABF5AFF
-      end
-    else
-      fill_color = 0x2A4A2ACC      -- Muted green for inactive, semi-transparent
-      outline_color = 0x3A6A3AFF   -- Muted green outline
-    end
-
-    -- Draw each channel
-    for ch = 1, num_channels do
-      local ch_y = y + (ch - 1) * channel_height
-      local center_y = ch_y + channel_height / 2
-
-      -- Get channel-specific peak data
-      local ch_peak = peak[ch] or peak[1]  -- Fallback to first channel if missing
-
-      -- Apply visual gain to peak values (clamped to prevent overflow)
-      local scaled_max = math.max(-1, math.min(1, ch_peak.max * visual_gain))
-      local scaled_min = math.max(-1, math.min(1, ch_peak.min * visual_gain))
-
-      local top_y = center_y - (scaled_max * half_height)
-      local bot_y = center_y - (scaled_min * half_height)
-
-      -- Ensure minimum height for visibility (thin line for silence)
-      if bot_y - top_y < 1 then
-        top_y = center_y - 0.5
-        bot_y = center_y + 0.5
-      end
-
-      -- Draw filled quad connecting to previous sample for smooth fill
-      local prev = prev_data[ch]
-      if prev.px then
-        reaper.ImGui_DrawList_AddQuadFilled(draw_list,
-          prev.px, prev.top,
-          px, top_y,
-          px, bot_y,
-          prev.px, prev.bot,
-          fill_color)
-        -- Draw outline on top and bottom edges
-        reaper.ImGui_DrawList_AddLine(draw_list, prev.px, prev.top, px, top_y, outline_color, 1)
-        reaper.ImGui_DrawList_AddLine(draw_list, prev.px, prev.bot, px, bot_y, outline_color, 1)
-      end
-
-      prev_data[ch] = {px = px, top = top_y, bot = bot_y}
-    end
-  end
-
-  -- Draw loop boundary markers (dashed lines at every source_length interval)
-  local COLOR_BOUNDS = 0x888888FF  -- Gray dashed lines for all boundaries
-  local bounds_top = ruler_y or y  -- Extend through ruler if ruler_y provided
-  local bounds_line_width = 2  -- Width for loop boundaries
-  local original_line_width = 3  -- Wider for original source edges
-
-  -- Draw original source boundaries (at 0 and source_length) with dashed lines
-  local orig_start_px = time_to_px(0)
-  local orig_end_px = time_to_px(source_length)
-
-  if orig_start_px >= x and orig_start_px <= x + width then
-    draw_dashed_line(draw_list, orig_start_px, bounds_top, y + height, COLOR_BOUNDS, nil, nil, original_line_width)
-  end
-  if orig_end_px >= x and orig_end_px <= x + width then
-    draw_dashed_line(draw_list, orig_end_px, bounds_top, y + height, COLOR_BOUNDS, nil, nil, original_line_width)
-  end
-
-  -- Draw loop boundaries going left (negative direction, skip 0 as it's already drawn)
-  local boundary = -source_length
-  while boundary >= view_start do
-    local boundary_px = time_to_px(boundary)
-    if boundary_px >= x and boundary_px <= x + width then
-      draw_dashed_line(draw_list, boundary_px, bounds_top, y + height, COLOR_BOUNDS, nil, nil, bounds_line_width)
-    end
-    boundary = boundary - source_length
-  end
-
-  -- Draw loop boundaries going right (positive direction, skip source_length as it's already drawn)
-  boundary = source_length * 2
-  while boundary <= view_end do
-    local boundary_px = time_to_px(boundary)
-    if boundary_px >= x and boundary_px <= x + width then
-      draw_dashed_line(draw_list, boundary_px, bounds_top, y + height, COLOR_BOUNDS, nil, nil, bounds_line_width)
-    end
-    boundary = boundary + source_length
-  end
-
-  -- Draw border around active region
-  local start_px = time_to_px(start_offset) - x
-  local end_px = time_to_px(item_end) - x
-
-  if end_px > start_px then
-    reaper.ImGui_DrawList_AddRect(draw_list,
-      x + math.max(0, start_px), y + 2,
-      x + math.min(width, end_px), y + height - 2,
-      COLOR_BORDER, 0, 0, 2)
-  end
-
-  return start_px, end_px, view_start, view_length
-end
-
--- Draw draggable marker
-local function draw_marker(draw_list, x, y, height, is_start, is_hovered, is_dragging)
-  local color = (is_hovered or is_dragging) and COLOR_MARKER_HOVER or COLOR_MARKER
-
-  -- Vertical line
-  reaper.ImGui_DrawList_AddLine(draw_list, x, y, x, y + height, color, 3)
-
-  -- Handle triangles at top and bottom
-  local handle_size = 10
-
-  if is_start then
-    reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-      x, y, x + handle_size, y + handle_size / 2, x, y + handle_size, color)
-    reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-      x, y + height - handle_size, x + handle_size, y + height - handle_size / 2, x, y + height, color)
-  else
-    reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-      x, y, x - handle_size, y + handle_size / 2, x, y + handle_size, color)
-    reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-      x, y + height - handle_size, x - handle_size, y + height - handle_size / 2, x, y + height, color)
-  end
-end
-
--- Check if mouse is near marker
-local function is_near_marker(mouse_x, marker_x, threshold)
-  return math.abs(mouse_x - marker_x) < threshold
-end
 
 -- Check for file changes (call periodically)
 local function check_for_changes()
   if not script_path then return false end
-
-  -- Only check every 60 frames to reduce overhead
   reload_check_counter = reload_check_counter + 1
   if reload_check_counter < 60 then return false end
   reload_check_counter = 0
@@ -1097,493 +52,6 @@ local function check_for_changes()
   return false
 end
 
--- ========== HELPER FUNCTIONS FOR LEFT PANEL CONTROLS ==========
--- These are extracted from loop() to reduce local variable count (Lua limit: 200)
-
--- Draw WARP/Reverse/Edit buttons in the left column
-local function draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take)
-  local btn_height = 18
-  local btn_margin = 4
-  local row_y = left_col_y + 4
-  local text_height = 13  -- Approximate text height for vertical centering
-
-  local COLOR_BTN_ON = 0x4A90D9FF
-  local COLOR_BTN_OFF = 0x404040FF
-  local COLOR_BTN_HOVER = 0x5AA0E9FF
-  local COLOR_BTN_TEXT = 0xFFFFFFFF
-
-  -- WARP button (full width, top row) - toggle state button
-  local warp_btn_width = LEFT_COLUMN_WIDTH - 8
-  local warp_btn_x = left_col_x + 4
-  local warp_btn_y = row_y
-
-  local mouse_in_warp = mouse_x >= warp_btn_x and mouse_x <= warp_btn_x + warp_btn_width
-                        and mouse_y >= warp_btn_y and mouse_y <= warp_btn_y + btn_height
-
-  local warp_bg_color
-  if warp_mode then
-    warp_bg_color = mouse_in_warp and COLOR_BTN_HOVER or COLOR_BTN_ON
-  else
-    warp_bg_color = mouse_in_warp and 0x505050FF or COLOR_BTN_OFF
-  end
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, warp_btn_x, warp_btn_y, warp_btn_x + warp_btn_width, warp_btn_y + btn_height, warp_bg_color, 3)
-  -- Center "WARP" text
-  local warp_text_w = 28
-  local warp_text_x = warp_btn_x + (warp_btn_width - warp_text_w) / 2
-  local warp_text_y = warp_btn_y + (btn_height - text_height) / 2
-  reaper.ImGui_DrawList_AddText(draw_list, warp_text_x, warp_text_y, COLOR_BTN_TEXT, "WARP")
-
-  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_warp then
-    warp_mode = not warp_mode
-    warp_dropdown_open = false  -- Close dropdown when toggling warp
-    if take then
-      reaper.Undo_BeginBlock()
-      local current_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
-      local current_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
-      if warp_mode then
-        local pitch_from_rate = playrate_to_semitones(current_playrate)
-        reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", pitch_from_rate)
-        local original_length = current_length * current_playrate
-        reaper.SetMediaItemInfo_Value(item, "D_LENGTH", original_length)
-        reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", 1.0)
-      else
-        local current_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH")
-        local rate_from_pitch = semitones_to_playrate(current_pitch)
-        reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", rate_from_pitch)
-        local new_length = current_length / rate_from_pitch
-        reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_length)
-        reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", 0)
-      end
-      reaper.UpdateArrange()
-      reaper.Undo_EndBlock("NVSD_ItemView: Toggle WARP mode", -1)
-    end
-  end
-
-  -- Warp mode dropdown (always visible, disabled when warp is off)
-  local dropdown_y = warp_btn_y + btn_height + 2
-  local dropdown_btn_height = 14
-  local dropdown_height = dropdown_btn_height + 4
-  local dropdown_x = left_col_x + 4
-  local dropdown_width = warp_btn_width
-
-  -- Get current pitch mode from take
-  local current_mode = -1
-  local current_mode_name = "Default"
-  if take then
-    current_mode = reaper.GetMediaItemTakeInfo_Value(take, "I_PITCHMODE")
-    -- Find matching mode name
-    for _, mode in ipairs(PITCH_MODES) do
-      if mode.value == current_mode then
-        current_mode_name = mode.name
-        break
-      elseif current_mode >= 0 then
-        -- Check if it's a variant of this mode (same high word)
-        local mode_shifter = mode.value >= 0 and (mode.value >> 16) or -1
-        local current_shifter = current_mode >= 0 and (current_mode >> 16) or -1
-        if mode_shifter == current_shifter and mode_shifter >= 0 then
-          current_mode_name = mode.name
-          break
-        end
-      end
-    end
-  end
-
-  -- Dropdown colors depend on warp_mode state
-  local dropdown_enabled = warp_mode
-  local mouse_in_dropdown = mouse_x >= dropdown_x and mouse_x <= dropdown_x + dropdown_width
-                            and mouse_y >= dropdown_y and mouse_y <= dropdown_y + dropdown_btn_height
-
-  local dropdown_bg, text_color, arrow_color
-  if dropdown_enabled then
-    dropdown_bg = mouse_in_dropdown and 0x505050FF or 0x353535FF
-    text_color = 0xCCCCCCFF
-    arrow_color = 0xAAAAAAFF
-  else
-    dropdown_bg = 0x252525FF  -- Darker, disabled look
-    text_color = 0x666666FF   -- Grayed out text
-    arrow_color = 0x555555FF  -- Grayed out arrow
-    warp_dropdown_open = false  -- Close if warp gets disabled
-  end
-
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, dropdown_x, dropdown_y, dropdown_x + dropdown_width, dropdown_y + dropdown_btn_height, dropdown_bg, 2)
-
-  -- Draw dropdown text and arrow
-  reaper.ImGui_DrawList_AddText(draw_list, dropdown_x + 3, dropdown_y + 1, text_color, current_mode_name)
-  -- Down arrow
-  reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-    dropdown_x + dropdown_width - 10, dropdown_y + 4,
-    dropdown_x + dropdown_width - 4, dropdown_y + 4,
-    dropdown_x + dropdown_width - 7, dropdown_y + dropdown_btn_height - 4,
-    arrow_color)
-
-  -- Toggle dropdown on click (only if enabled)
-  if dropdown_enabled and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_dropdown then
-    warp_dropdown_open = not warp_dropdown_open
-  end
-
-  -- Draw dropdown menu if open
-  if warp_dropdown_open then
-    local menu_y = dropdown_y + dropdown_btn_height + 1
-    local menu_item_height = 16
-    local menu_height = #PITCH_MODES * menu_item_height + 4
-
-    -- Menu background
-    reaper.ImGui_DrawList_AddRectFilled(draw_list, dropdown_x, menu_y, dropdown_x + dropdown_width, menu_y + menu_height, 0x2A2A2AFF, 2)
-    reaper.ImGui_DrawList_AddRect(draw_list, dropdown_x, menu_y, dropdown_x + dropdown_width, menu_y + menu_height, 0x555555FF, 2)
-
-    -- Menu items
-    for i, mode in ipairs(PITCH_MODES) do
-      local item_y = menu_y + 2 + (i - 1) * menu_item_height
-      local mouse_in_item = mouse_x >= dropdown_x and mouse_x <= dropdown_x + dropdown_width
-                            and mouse_y >= item_y and mouse_y <= item_y + menu_item_height
-
-      if mouse_in_item then
-        reaper.ImGui_DrawList_AddRectFilled(draw_list, dropdown_x + 1, item_y, dropdown_x + dropdown_width - 1, item_y + menu_item_height, 0x4A4A4AFF)
-      end
-
-      local item_text_color = (mode.value == current_mode or
-        (current_mode >= 0 and mode.value >= 0 and (mode.value >> 16) == (current_mode >> 16)))
-        and 0x4A90D9FF or 0xCCCCCCFF
-      reaper.ImGui_DrawList_AddText(draw_list, dropdown_x + 4, item_y + 2, item_text_color, mode.name)
-
-      -- Select mode on click
-      if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_item then
-        if take then
-          reaper.Undo_BeginBlock()
-          reaper.SetMediaItemTakeInfo_Value(take, "I_PITCHMODE", mode.value)
-          reaper.UpdateArrange()
-          reaper.Undo_EndBlock("NVSD_ItemView: Set pitch mode", -1)
-        end
-        warp_dropdown_open = false
-      end
-    end
-
-    -- Close dropdown if clicking outside
-    if reaper.ImGui_IsMouseClicked(ctx, 0) and not mouse_in_dropdown then
-      local menu_bottom = menu_y + menu_height
-      local mouse_in_menu = mouse_x >= dropdown_x and mouse_x <= dropdown_x + dropdown_width
-                            and mouse_y >= menu_y and mouse_y <= menu_bottom
-      if not mouse_in_menu then
-        warp_dropdown_open = false
-      end
-    end
-
-    dropdown_height = dropdown_height + menu_height
-  end
-
-  -- Second row: Reverse and Edit side by side (action buttons, not toggles)
-  local row2_y = warp_btn_y + btn_height + btn_margin + dropdown_height
-  local gap = 2
-  local rev_btn_width = 52
-  local edit_btn_width = LEFT_COLUMN_WIDTH - 8 - rev_btn_width - gap
-
-  -- REVERSE button (left side of row 2) - action button, not toggle
-  local rev_btn_x = left_col_x + 4
-
-  local mouse_in_rev = mouse_x >= rev_btn_x and mouse_x <= rev_btn_x + rev_btn_width
-                       and mouse_y >= row2_y and mouse_y <= row2_y + btn_height
-
-  local rev_bg_color = mouse_in_rev and 0x505050FF or COLOR_BTN_OFF
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, rev_btn_x, row2_y, rev_btn_x + rev_btn_width, row2_y + btn_height, rev_bg_color, 3)
-  -- Center "Reverse" text
-  local rev_text_w = 49
-  local rev_text_x = rev_btn_x + (rev_btn_width - rev_text_w) / 2
-  local rev_text_y = row2_y + (btn_height - text_height) / 2
-  reaper.ImGui_DrawList_AddText(draw_list, rev_text_x, rev_text_y, COLOR_BTN_TEXT, "Reverse")
-
-  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_rev then
-    if item then
-      reaper.Undo_BeginBlock()
-      reaper.SelectAllMediaItems(0, false)
-      reaper.SetMediaItemSelected(item, true)
-      reaper.Main_OnCommand(41051, 0)
-      reaper.UpdateArrange()
-      reaper.Undo_EndBlock("NVSD_ItemView: Reverse", -1)
-      cached_peaks = nil
-    end
-  end
-
-  -- EDIT button (right side of row 2) - action button
-  local edit_btn_x = rev_btn_x + rev_btn_width + gap
-
-  local mouse_in_edit = mouse_x >= edit_btn_x and mouse_x <= edit_btn_x + edit_btn_width
-                        and mouse_y >= row2_y and mouse_y <= row2_y + btn_height
-
-  local edit_bg_color = mouse_in_edit and 0x505050FF or COLOR_BTN_OFF
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, edit_btn_x, row2_y, edit_btn_x + edit_btn_width, row2_y + btn_height, edit_bg_color, 3)
-  -- Center "Edit" text
-  local edit_text_w = 28
-  local edit_text_x = edit_btn_x + (edit_btn_width - edit_text_w) / 2
-  local edit_text_y = row2_y + (btn_height - text_height) / 2
-  reaper.ImGui_DrawList_AddText(draw_list, edit_text_x, edit_text_y, COLOR_BTN_TEXT, "Edit")
-
-  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_edit then
-    if item then
-      reaper.Undo_BeginBlock()
-      reaper.SelectAllMediaItems(0, false)
-      reaper.SetMediaItemSelected(item, true)
-      reaper.Main_OnCommand(40109, 0)
-      reaper.Undo_EndBlock("NVSD_ItemView: Open in External Editor", -1)
-    end
-  end
-end
-
--- Draw gain slider with tick marks
-local function draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_y, panel_split, item, item_vol)
-  local item_db = gain_to_db(item_vol)
-  local slider_pos = db_to_slider(item_db)
-
-  local slider_x = panel_x + (LEFT_PANEL_WIDTH - GAIN_SLIDER_WIDTH) / 2 - 2
-  local slider_top = panel_y + 20
-  local slider_bottom = panel_split - 20
-  local slider_height = slider_bottom - slider_top
-
-  local COLOR_SLIDER_TRACK = 0x404040FF
-  local COLOR_SLIDER_FILL = 0x4A90D9FF
-  local COLOR_SLIDER_HANDLE = 0xAAAAAAFF
-  local COLOR_SLIDER_HANDLE_HOVER = 0xFFFFFFFF
-  local COLOR_ZERO_LINE = 0x666666FF
-  local COLOR_TICK = 0x555555FF
-  local COLOR_TICK_MAJOR = 0x666666FF
-  local COLOR_LABEL = 0x888888FF
-
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, slider_x, slider_top, slider_x + GAIN_SLIDER_WIDTH, slider_bottom, COLOR_SLIDER_TRACK, 3)
-
-  -- Tick marks
-  local tick_left = slider_x - 3
-  local tick_right = slider_x + GAIN_SLIDER_WIDTH + 3
-  local tick_marks = {
-    {db = 24, major = true}, {db = 18, major = false}, {db = 12, major = true},
-    {db = 6, major = false}, {db = 0, major = true}, {db = -6, major = false},
-    {db = -12, major = true}, {db = -18, major = false}, {db = -24, major = true},
-    {db = -36, major = false}, {db = -48, major = true},
-  }
-
-  for _, tick in ipairs(tick_marks) do
-    local tick_pos = db_to_slider(tick.db)
-    local tick_y = slider_bottom - tick_pos * slider_height
-    if tick_y >= slider_top and tick_y <= slider_bottom then
-      local color = tick.major and COLOR_TICK_MAJOR or COLOR_TICK
-      local left = tick.major and tick_left or (slider_x - 1)
-      local right = tick.major and tick_right or (slider_x + GAIN_SLIDER_WIDTH + 1)
-      reaper.ImGui_DrawList_AddLine(draw_list, left, tick_y, right, tick_y, color, 1)
-    end
-  end
-
-  -- 0dB line
-  local zero_y = slider_bottom - 0.5 * slider_height
-  reaper.ImGui_DrawList_AddLine(draw_list, tick_left, zero_y, tick_right, zero_y, COLOR_ZERO_LINE, 1)
-
-  -- Labels on right side of fader
-  reaper.ImGui_DrawList_AddText(draw_list, slider_x + GAIN_SLIDER_WIDTH + 5, slider_top - 4, COLOR_LABEL, "24")
-  reaper.ImGui_DrawList_AddText(draw_list, slider_x + GAIN_SLIDER_WIDTH + 5, slider_bottom - 10, COLOR_LABEL, "-\226\136\158")
-
-  -- Fill from 0dB to current
-  local handle_y = slider_bottom - slider_pos * slider_height
-  if slider_pos > 0.5 then
-    reaper.ImGui_DrawList_AddRectFilled(draw_list, slider_x + 2, handle_y, slider_x + GAIN_SLIDER_WIDTH - 2, zero_y, COLOR_SLIDER_FILL, 2)
-  elseif slider_pos < 0.5 then
-    reaper.ImGui_DrawList_AddRectFilled(draw_list, slider_x + 2, zero_y, slider_x + GAIN_SLIDER_WIDTH - 2, handle_y, COLOR_SLIDER_FILL, 2)
-  end
-
-  -- Handle
-  local handle_height = 8
-  local mouse_in_slider = mouse_x >= slider_x - 5 and mouse_x <= slider_x + GAIN_SLIDER_WIDTH + 5
-                          and mouse_y >= slider_top - handle_height and mouse_y <= slider_bottom + handle_height
-  local handle_color = (mouse_in_slider or is_dragging("gain")) and COLOR_SLIDER_HANDLE_HOVER or COLOR_SLIDER_HANDLE
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, slider_x - 2, handle_y - handle_height/2, slider_x + GAIN_SLIDER_WIDTH + 2, handle_y + handle_height/2, handle_color, 3)
-
-  -- Interaction
-  local double_clicked = reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_slider
-  if double_clicked then
-    reaper.Undo_BeginBlock()
-    reaper.SetMediaItemInfo_Value(item, "D_VOL", 1.0)
-    reaper.UpdateArrange()
-    reaper.Undo_EndBlock("NVSD_ItemView: Reset item volume to 0dB", -1)
-    end_drag("gain")
-  elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_slider then
-    start_drag("gain", mouse_y, slider_pos, true)
-    if has_js_extension then
-      local _, screen_y = reaper.GetMousePosition()
-      drag_window_to_screen_y = screen_y - mouse_y
-    end
-  end
-
-  if reaper.ImGui_IsMouseReleased(ctx, 0) and is_dragging("gain") then
-    end_drag("gain")
-  end
-
-  if is_dragging("gain") and reaper.ImGui_IsMouseDown(ctx, 0) then
-    local delta_y = get_drag_delta(ctx, "gain", mouse_y, slider_pos, 0.15)
-    local delta_pos = delta_y / slider_height
-    local new_pos = math.max(0, math.min(1, drag_controls.gain.start_value + delta_pos))
-    local new_db = slider_to_db(new_pos)
-    local new_gain = db_to_gain(new_db)
-    reaper.SetMediaItemInfo_Value(item, "D_VOL", new_gain)
-    reaper.UpdateArrange()
-  end
-
-  -- Labels - centered on slider axis
-  local slider_center_x = slider_x + GAIN_SLIDER_WIDTH / 2
-  -- "Gain" label (4 chars * 7px = 28px, centered)
-  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - 14, panel_y + 2, 0xAAAAAAFF, "Gain")
-  -- dB value centered below slider
-  local db_text = format_db(item_db)
-  local db_text_w = #db_text * 7
-  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - db_text_w / 2, slider_bottom + 6, 0xAAAAAAFF, db_text)
-
-  return slider_pos, slider_height, slider_bottom
-end
-
--- Draw pitch knob
-local function draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_split, panel_bottom, take)
-  local take_pitch = 0
-  if take then
-    if warp_mode then
-      take_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH")
-    else
-      local take_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
-      take_pitch = playrate_to_semitones(take_playrate)
-    end
-  end
-
-  local knob_cx = panel_x + LEFT_PANEL_WIDTH / 2 - 2
-  local knob_cy = panel_split + (panel_bottom - panel_split) / 2
-  local knob_angle = pitch_to_angle(take_pitch)
-
-  local knob_dx = mouse_x - knob_cx
-  local knob_dy = mouse_y - knob_cy
-  local knob_dist = math.sqrt(knob_dx * knob_dx + knob_dy * knob_dy)
-  local mouse_in_knob = knob_dist <= PITCH_KNOB_RADIUS + 8
-
-  draw_knob(draw_list, knob_cx, knob_cy, PITCH_KNOB_RADIUS, knob_angle, mouse_in_knob, is_dragging("pitch"))
-
-  local pitch_double_clicked = reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_knob
-  if pitch_double_clicked then
-    if take then
-      reaper.Undo_BeginBlock()
-      set_take_pitch(take, 0)
-      reaper.UpdateArrange()
-      reaper.Undo_EndBlock("NVSD_ItemView: Reset pitch to 0", -1)
-    end
-    end_drag("pitch")
-  elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_knob then
-    start_drag("pitch", mouse_y, take_pitch, true)
-  end
-
-  if reaper.ImGui_IsMouseReleased(ctx, 0) and is_dragging("pitch") then
-    end_drag("pitch")
-  end
-
-  if is_dragging("pitch") and reaper.ImGui_IsMouseDown(ctx, 0) then
-    local delta_y = get_drag_delta(ctx, "pitch", mouse_y, take_pitch, 0.2)
-    local delta_semitones = math.floor(delta_y / 10 + 0.5)
-    local start_semitones = math.floor(drag_controls.pitch.start_value + 0.5)
-    local new_pitch = math.max(PITCH_MIN, math.min(PITCH_MAX, start_semitones + delta_semitones))
-    if take then
-      set_take_pitch(take, new_pitch)
-      reaper.UpdateArrange()
-    end
-  end
-
-  return take_pitch, knob_cx, knob_cy
-end
-
--- Draw semitones/cents boxes
-local function draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, panel_x, knob_cy, take, take_pitch)
-  local display_semitones, display_cents = pitch_to_semitones_cents(take_pitch)
-
-  local box_width = 22
-  local box_height = 16
-  local box_y = knob_cy + PITCH_KNOB_RADIUS + 18
-  local box_gap = 1
-  local boxes_total_width = box_width * 2 + box_gap
-  local box_left_x = panel_x + (LEFT_PANEL_WIDTH - boxes_total_width) / 2 - 2
-  local box_right_x = box_left_x + box_width + box_gap
-
-  local COLOR_BOX_BG = 0x252525FF
-  local COLOR_BOX_BORDER = 0x444444FF
-  local COLOR_BOX_HOVER = 0x555555FF
-  local COLOR_BOX_TEXT = 0xCCCCCCFF
-
-  local mouse_in_semitones_box = mouse_x >= box_left_x and mouse_x <= box_left_x + box_width
-                                 and mouse_y >= box_y and mouse_y <= box_y + box_height
-  local mouse_in_cents_box = mouse_x >= box_right_x and mouse_x <= box_right_x + box_width
-                             and mouse_y >= box_y and mouse_y <= box_y + box_height
-
-  -- Semitones box
-  local semitones_border = (mouse_in_semitones_box or is_dragging("semitones")) and COLOR_BOX_HOVER or COLOR_BOX_BORDER
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, box_left_x, box_y, box_left_x + box_width, box_y + box_height, COLOR_BOX_BG)
-  reaper.ImGui_DrawList_AddRect(draw_list, box_left_x, box_y, box_left_x + box_width, box_y + box_height, semitones_border)
-  local semitones_text = tostring(display_semitones)
-  reaper.ImGui_DrawList_AddText(draw_list, box_left_x + box_width / 2 - (#semitones_text * 3), box_y + 2, COLOR_BOX_TEXT, semitones_text)
-
-  -- Cents box
-  local cents_border = (mouse_in_cents_box or is_dragging("cents")) and COLOR_BOX_HOVER or COLOR_BOX_BORDER
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, box_right_x, box_y, box_right_x + box_width, box_y + box_height, COLOR_BOX_BG)
-  reaper.ImGui_DrawList_AddRect(draw_list, box_right_x, box_y, box_right_x + box_width, box_y + box_height, cents_border)
-  local cents_text = tostring(display_cents)
-  reaper.ImGui_DrawList_AddText(draw_list, box_right_x + box_width / 2 - (#cents_text * 3), box_y + 2, COLOR_BOX_TEXT, cents_text)
-
-  -- Semitones interaction
-  local semitones_double_clicked = reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_semitones_box
-  if semitones_double_clicked then
-    if take then
-      reaper.Undo_BeginBlock()
-      local new_pitch = math.max(PITCH_MIN, math.min(PITCH_MAX, semitones_cents_to_pitch(0, display_cents)))
-      set_take_pitch(take, new_pitch)
-      reaper.UpdateArrange()
-      reaper.Undo_EndBlock("NVSD_ItemView: Reset semitones to 0", -1)
-    end
-    end_drag("semitones")
-  elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_semitones_box then
-    start_drag("semitones", mouse_y, display_semitones, false)
-  end
-
-  if reaper.ImGui_IsMouseReleased(ctx, 0) and is_dragging("semitones") then
-    end_drag("semitones")
-  end
-
-  if is_dragging("semitones") and reaper.ImGui_IsMouseDown(ctx, 0) then
-    local delta_y = get_drag_delta(ctx, "semitones", mouse_y, display_semitones, nil)
-    local delta_semitones = math.floor(delta_y / 10 + 0.5)
-    local new_pitch = math.max(PITCH_MIN, math.min(PITCH_MAX, semitones_cents_to_pitch(drag_controls.semitones.start_value + delta_semitones, display_cents)))
-    if take then
-      set_take_pitch(take, new_pitch)
-      reaper.UpdateArrange()
-    end
-  end
-
-  -- Cents interaction
-  local cents_double_clicked = reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_cents_box
-  if cents_double_clicked then
-    if take then
-      reaper.Undo_BeginBlock()
-      local new_pitch = math.max(PITCH_MIN, math.min(PITCH_MAX, semitones_cents_to_pitch(display_semitones, 0)))
-      set_take_pitch(take, new_pitch)
-      reaper.UpdateArrange()
-      reaper.Undo_EndBlock("NVSD_ItemView: Reset cents to 0", -1)
-    end
-    end_drag("cents")
-  elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_cents_box then
-    start_drag("cents", mouse_y, display_cents, false)
-  end
-
-  if reaper.ImGui_IsMouseReleased(ctx, 0) and is_dragging("cents") then
-    end_drag("cents")
-  end
-
-  if is_dragging("cents") and reaper.ImGui_IsMouseDown(ctx, 0) then
-    local delta_y = get_drag_delta(ctx, "cents", mouse_y, display_cents, nil)
-    local delta_cents = math.floor(delta_y / 2 + 0.5)
-    local new_pitch = math.max(PITCH_MIN, math.min(PITCH_MAX, semitones_cents_to_pitch(display_semitones, drag_controls.cents.start_value + delta_cents)))
-    if take then
-      set_take_pitch(take, new_pitch)
-      reaper.UpdateArrange()
-    end
-  end
-end
-
 -- Main GUI function
 local function loop()
   -- Auto-reload check
@@ -1593,36 +61,35 @@ local function loop()
 
   -- If reload pending, clean up and restart script
   if should_reload then
-    -- Context will be garbage collected; just stop using it
     ctx = nil
     dofile(script_path)
-    return  -- Don't continue old loop
+    return
   end
 
   -- Window flags
   local window_flags = reaper.ImGui_WindowFlags_NoCollapse()
-                     + reaper.ImGui_WindowFlags_NoScrollWithMouse()  -- Don't consume wheel events
+                     + reaper.ImGui_WindowFlags_NoScrollWithMouse()
 
   -- Add window padding
-  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowPadding(), WINDOW_PADDING, WINDOW_PADDING)
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowPadding(), config.WINDOW_PADDING, config.WINDOW_PADDING)
 
   local visible, open = reaper.ImGui_Begin(ctx, "NVSD_ItemView", true, window_flags)
 
   if visible then
-    -- Handle undo/redo shortcuts (Ctrl+Z, Ctrl+Y/Ctrl+Shift+Z)
+    -- Handle undo/redo shortcuts
     local ctrl = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
     local shift = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
     local z_key = reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Z())
     local y_key = reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Y())
 
     if ctrl and z_key and not shift then
-      reaper.Main_OnCommand(40029, 0)  -- Edit: Undo
+      reaper.Main_OnCommand(40029, 0)
     elseif ctrl and (y_key or (z_key and shift)) then
-      reaper.Main_OnCommand(40030, 0)  -- Edit: Redo
+      reaper.Main_OnCommand(40030, 0)
     end
 
-    -- Create undo point on mouse release if we were dragging (using OnStateChangeEx for deferred scripts)
-    if reaper.ImGui_IsMouseReleased(ctx, 0) and undo_block_open then
+    -- Create undo point on mouse release if we were dragging
+    if reaper.ImGui_IsMouseReleased(ctx, 0) and state.undo_block_open then
       local undo_messages = {
         marker_start = "NVSD_ItemView: Adjust item start",
         marker_end = "NVSD_ItemView: Adjust item end",
@@ -1631,60 +98,62 @@ local function loop()
         semitones = "NVSD_ItemView: Adjust semitones",
         cents = "NVSD_ItemView: Adjust cents",
       }
-      local msg = undo_messages[undo_block_open] or "NVSD_ItemView: Edit"
-      -- Use OnStateChangeEx instead of Begin/End blocks for reliable undo in deferred scripts
+      local msg = undo_messages[state.undo_block_open] or "NVSD_ItemView: Edit"
       reaper.Undo_OnStateChangeEx(msg, -1, -1)
-      undo_block_open = nil
+      state.undo_block_open = nil
     end
 
     -- Get selected item
     local selected_item = reaper.GetSelectedMediaItem(0, 0)
 
-    -- Clear sticky when selection changes (including deselect)
-    if selected_item ~= last_selected_item then
-      sticky_item = nil
+    -- Clear sticky when selection changes
+    if selected_item ~= state.last_selected_item then
+      state.sticky_item = nil
     end
-    last_selected_item = selected_item
+    state.last_selected_item = selected_item
 
     local item = nil
 
     -- Priority 1: If mouse button is held over an item, use that and make it sticky
-    -- Requires SWS/JS extension for JS_Mouse_GetState
     if reaper.JS_Mouse_GetState then
-      local mouse_state = reaper.JS_Mouse_GetState(1)  -- 1 = left mouse button
-      -- Use bitwise check since mouse_state is a bitmask (includes modifier keys)
+      local mouse_state = reaper.JS_Mouse_GetState(1)
       if (mouse_state & 1) ~= 0 then
         local mouse_screen_x, mouse_screen_y = reaper.GetMousePosition()
         local item_under_mouse, take_under_mouse = reaper.GetItemFromPoint(mouse_screen_x, mouse_screen_y, false)
         if item_under_mouse then
           item = item_under_mouse
-          sticky_item = item  -- Remember this item
+          state.sticky_item = item
         end
       end
     end
 
-    -- Priority 2: Use sticky item if valid (overrides selection)
-    if not item and sticky_item then
-      -- Validate sticky item still exists in project
+    -- Priority 2: Use sticky item if valid
+    if not item and state.sticky_item then
       local still_valid = false
       local num_items = reaper.CountMediaItems(0)
       for i = 0, num_items - 1 do
-        if reaper.GetMediaItem(0, i) == sticky_item then
+        if reaper.GetMediaItem(0, i) == state.sticky_item then
           still_valid = true
           break
         end
       end
 
       if still_valid then
-        item = sticky_item
+        item = state.sticky_item
       else
-        sticky_item = nil  -- Item was deleted
+        state.sticky_item = nil
       end
     end
 
     -- Priority 3: Use selected item
     if not item then
       item = selected_item
+    end
+
+    -- Clear zoom/pan state when no item is shown (so next item shows full view)
+    if not item then
+      state.last_panned_item = nil
+      state.last_zoomed_item = nil
     end
 
     if item then
@@ -1698,10 +167,8 @@ local function loop()
         local section_offset = 0
 
         if source then
-          -- Traverse up to root source, accumulating section offsets
           local parent = reaper.GetMediaSourceParent(source)
           while parent do
-            -- Get this section's offset within its parent
             local retval, sect_offs, sect_len, is_reversed = reaper.PCM_Source_GetSectionInfo(source)
             if retval then
               section_offset = section_offset + (sect_offs or 0)
@@ -1717,180 +184,162 @@ local function loop()
           local take_offset = reaper.GetMediaItemTakeInfo_Value(take, "D_STARTOFFS")
           local source_length = reaper.GetMediaSourceLength(source)
 
-          -- Total offset = section offset + take offset
           local start_offset = section_offset + take_offset
 
           if source_length <= 0 then
             source_length = item_length
           end
 
-          -- Get playrate
           local playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
-
-          -- Get item volume (for visual waveform scaling)
+          if playrate == 0 then playrate = 1 end  -- Guard against division by zero
           local item_vol = reaper.GetMediaItemInfo_Value(item, "D_VOL")
 
           -- Get available space for waveform
           local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
-          -- Account for both left columns in waveform width
-          local total_left_width = LEFT_COLUMN_WIDTH + LEFT_PANEL_WIDTH
-          local waveform_width = math.max(100, avail_w - (WAVEFORM_MARGIN_H * 2) - total_left_width)
-          -- Reserve space for info bar, top ruler and bottom time ruler, ensure minimum height
-          local waveform_height = math.max(50, avail_h - (WAVEFORM_MARGIN_V * 2) - INFO_BAR_HEIGHT - RULER_HEIGHT - TIME_RULER_HEIGHT)
+          local total_left_width = config.LEFT_COLUMN_WIDTH + config.LEFT_PANEL_WIDTH
+          local waveform_width = math.max(100, avail_w - (config.WAVEFORM_MARGIN_H * 2) - total_left_width)
+          local waveform_height = math.max(50, avail_h - (config.WAVEFORM_MARGIN_V * 2) - config.INFO_BAR_HEIGHT - config.RULER_HEIGHT - config.TIME_RULER_HEIGHT)
 
           local cursor_x, cursor_y = reaper.ImGui_GetCursorScreenPos(ctx)
-          -- Far-left column position (WARP button etc)
-          local left_col_x = cursor_x + WINDOW_PADDING
-          local left_col_y = cursor_y + WAVEFORM_MARGIN_V
-          -- Left panel position (volume/pitch)
-          local panel_x = left_col_x + LEFT_COLUMN_WIDTH
-          local panel_y = cursor_y + WAVEFORM_MARGIN_V
-          local panel_height = INFO_BAR_HEIGHT + RULER_HEIGHT + waveform_height + TIME_RULER_HEIGHT
-          -- Waveform starts after both left panels
-          local wave_x = cursor_x + total_left_width + WAVEFORM_MARGIN_H
-          local info_bar_y = cursor_y + WAVEFORM_MARGIN_V
-          local ruler_y = info_bar_y + INFO_BAR_HEIGHT
-          local wave_y = ruler_y + RULER_HEIGHT
-          local time_ruler_y = wave_y + waveform_height  -- Bottom time ruler
+          local left_col_x = cursor_x + config.WINDOW_PADDING
+          local left_col_y = cursor_y + config.WAVEFORM_MARGIN_V
+          local panel_x = left_col_x + config.LEFT_COLUMN_WIDTH
+          local panel_y = cursor_y + config.WAVEFORM_MARGIN_V
+          local panel_height = config.INFO_BAR_HEIGHT + config.RULER_HEIGHT + waveform_height + config.TIME_RULER_HEIGHT
+          local wave_x = cursor_x + total_left_width + config.WAVEFORM_MARGIN_H
+          local info_bar_y = cursor_y + config.WAVEFORM_MARGIN_V
+          local ruler_y = info_bar_y + config.INFO_BAR_HEIGHT
+          local wave_y = ruler_y + config.RULER_HEIGHT
+          local time_ruler_y = wave_y + waveform_height
 
-          -- Reserve the full area with InvisibleButton to prevent window dragging
-          local total_height = WAVEFORM_MARGIN_V + INFO_BAR_HEIGHT + RULER_HEIGHT + waveform_height + TIME_RULER_HEIGHT + WAVEFORM_MARGIN_V
+          -- Reserve the full area
+          local total_height = config.WAVEFORM_MARGIN_V + config.INFO_BAR_HEIGHT + config.RULER_HEIGHT + waveform_height + config.TIME_RULER_HEIGHT + config.WAVEFORM_MARGIN_V
           reaper.ImGui_InvisibleButton(ctx, "waveform_area", avail_w, math.max(avail_h, total_height))
 
-          -- Get mouse position early (needed by multiple sections)
           local mouse_x, mouse_y = reaper.ImGui_GetMousePos(ctx)
-
-          -- Calculate source_item_length early (needed below)
           local source_item_length = item_length * playrate
 
-          -- Check if take is reversed (using SWS extension)
+          -- Check if take is reversed
           local is_reversed = false
           if reaper.BR_GetMediaSourceProperties and take then
             local retval, section, start_pos, length, fade, reverse = reaper.BR_GetMediaSourceProperties(take)
             if retval then is_reversed = reverse end
           end
 
-          -- Peaks caching: fetch for full source, scale with zoom for better resolution
-          -- Formula: at zoom Z, we view (source_length/Z) seconds in waveform_width pixels
-          -- To get 1 peak per pixel: num_peaks = waveform_width * zoom_level
-          -- But peaks cover full source, so scale by source ratio
-          local base_view = math.max(source_length, source_item_length)
-          local pixels_per_source = (waveform_width * zoom_level) / base_view * source_length
-          local desired_samples = math.max(200, math.min(50000, math.floor(pixels_per_source)))
+          -- Peaks caching - very high resolution for deep zoom, LOD handles zoomed-out
+          -- Need ~5000 peaks/sec for crisp display at max zoom (500x)
+          local min_for_transients = math.floor(source_length * 5000)  -- 5000 peaks/sec
+          local min_for_display = math.floor(waveform_width * 50)
+          local desired_samples = math.max(20000, math.min(800000, math.max(min_for_transients, min_for_display)))
+
+          -- Handle deferred cache invalidation
+          if state.pending_cache_invalidation > 0 then
+            state.pending_cache_invalidation = state.pending_cache_invalidation - 1
+            if state.pending_cache_invalidation == 0 then
+              state.invalidate_cache()
+            end
+          end
 
           -- Check if we need to refresh the cache
-          local source_changed = source ~= cached_source or source_length ~= cached_source_length
-          local item_changed = item ~= cached_item
-          local samples_changed = desired_samples ~= cached_num_samples
-          local reversed_changed = is_reversed ~= cached_reversed
+          local source_changed = source ~= state.cached_source or source_length ~= state.cached_source_length
+          local item_changed = item ~= state.cached_item
+          local samples_changed = desired_samples ~= state.cached_num_samples
+          local reversed_changed = is_reversed ~= state.cached_reversed
 
           if item_changed or source_changed or samples_changed or reversed_changed then
-            cached_item = item
-            cached_source = source
-            cached_source_length = source_length
-            cached_num_samples = desired_samples
-            cached_reversed = is_reversed
-            -- Fetch peaks for FULL source (0 to source_length) - required for looping to work
-            -- get_peaks returns peaks and num_channels
-            local peaks_result, num_ch_or_error = get_peaks(source, desired_samples)
+            state.cached_item = item
+            state.cached_source = source
+            state.cached_source_length = source_length
+            state.cached_num_samples = desired_samples
+            state.cached_reversed = is_reversed
+            local peaks_result, num_ch_or_error = utils.get_peaks(source, desired_samples)
             if peaks_result then
-              cached_peaks = peaks_result
-              cached_num_channels = num_ch_or_error
-              peaks_error = nil
+              state.cached_peaks = peaks_result
+              state.cached_num_channels = num_ch_or_error
+              state.cached_lod = utils.build_lod_peaks(peaks_result, num_ch_or_error)
+              state.peaks_error = nil
             else
-              cached_peaks = nil
-              peaks_error = num_ch_or_error
+              state.cached_peaks = nil
+              state.cached_lod = nil
+              state.peaks_error = num_ch_or_error
             end
           end
 
           -- Reset pan and zoom when item changes
-          if item ~= last_panned_item then
-            pan_offset = 0
-            last_panned_item = item
+          if item ~= state.last_panned_item then
+            state.pan_offset = 0
+            state.last_panned_item = item
           end
-          if item ~= last_zoomed_item then
-            zoom_level = 1.0
-            last_zoomed_item = item
+          if item ~= state.last_zoomed_item then
+            state.zoom_level = 1.0
+            state.last_zoomed_item = item
           end
 
           -- Draw waveform
           local draw_list = reaper.ImGui_GetWindowDrawList(ctx)
 
-          -- During drag, use original values for VIEW centering to keep view stable
-          -- but we'll calculate actual marker positions separately
           local view_offset, view_item_length
-          if dragging_start or dragging_end then
-            view_offset = drag_start_offset
-            view_item_length = drag_start_length * drag_start_playrate
+          if state.dragging_start or state.dragging_end then
+            view_offset = state.drag_start_offset
+            view_item_length = state.drag_start_length * state.drag_start_playrate
           else
             view_offset = start_offset
             view_item_length = source_item_length
           end
 
-          local start_px, end_px, view_start, view_length = draw_waveform(draw_list, wave_x, wave_y,
+          local start_px, end_px, view_start, view_length = drawing.draw_waveform(draw_list, wave_x, wave_y,
             waveform_width, waveform_height,
-            cached_peaks, view_offset, view_item_length, source_length, pan_offset, zoom_level, ruler_y, item_vol, is_reversed, cached_num_channels)
+            state.cached_peaks, view_offset, view_item_length, source_length, state.pan_offset, state.zoom_level, ruler_y, item_vol, is_reversed, state.cached_num_channels, config, state.cached_lod)
 
           -- Draw file info bar at the top
           local file_path = reaper.GetMediaSourceFileName(source, "")
-          draw_info_bar(draw_list, ctx, wave_x, info_bar_y, waveform_width, INFO_BAR_HEIGHT, source, file_path, mouse_x, mouse_y, item)
+          drawing.draw_info_bar(draw_list, ctx, wave_x, info_bar_y, waveform_width, config.INFO_BAR_HEIGHT, source, file_path, mouse_x, mouse_y, item, config, utils)
 
           -- Calculate ACTUAL current marker positions
-          -- During drag, use tracked drag positions for stable rendering (no REAPER round-trip jitter)
           local function time_to_px_actual(t)
             return wave_x + ((t - view_start) / view_length) * waveform_width
           end
           local render_start, render_end
-          if dragging_start or dragging_end then
-            render_start = drag_current_start
-            render_end = drag_current_end
+          if state.dragging_start or state.dragging_end then
+            render_start = state.drag_current_start
+            render_end = state.drag_current_end
           else
             render_start = start_offset
             render_end = start_offset + source_item_length
           end
+          -- Clamp markers to source bounds (for looped items, show full source)
+          render_start = math.max(0, math.min(source_length, render_start))
+          render_end = math.max(0, math.min(source_length, render_end))
           local actual_start_px = time_to_px_actual(render_start) - wave_x
           local actual_end_px = time_to_px_actual(render_end) - wave_x
-          -- Use actual positions for overlays and marker drawing
           start_px = actual_start_px
           end_px = actual_end_px
 
           -- Draw ruler and grid lines
-          -- Use original values during drag to keep grid stable
-          local grid_offset = (dragging_start or dragging_end) and drag_start_offset or start_offset
-          local grid_playrate = (dragging_start or dragging_end) and drag_start_playrate or playrate
-          local grid_view_start = (dragging_start or dragging_end) and drag_start_view_start or view_start
-          draw_ruler_and_grid(draw_list, wave_x, ruler_y, wave_y, waveform_width, RULER_HEIGHT, waveform_height,
-            grid_view_start, view_length, item_position, grid_offset, grid_playrate)
+          local grid_offset = (state.dragging_start or state.dragging_end) and state.drag_start_offset or start_offset
+          local grid_playrate = (state.dragging_start or state.dragging_end) and state.drag_start_playrate or playrate
+          local grid_view_start = (state.dragging_start or state.dragging_end) and state.drag_start_view_start or view_start
+          drawing.draw_ruler_and_grid(draw_list, wave_x, ruler_y, wave_y, waveform_width, config.RULER_HEIGHT, waveform_height,
+            grid_view_start, view_length, item_position, grid_offset, grid_playrate, config, utils)
 
-          -- Draw overlays on inactive regions (outside item markers)
-          -- Two levels: light for unused source, dark for looped/outside source
-          local COLOR_UNUSED_SOURCE = 0x00000038    -- Light overlay (within source but outside markers)
-          local COLOR_OUTSIDE_SOURCE = 0x00000058   -- Dark overlay (outside original source bounds)
+          -- Draw overlays on inactive regions
+          local COLOR_UNUSED_SOURCE = 0x00000038
+          local COLOR_OUTSIDE_SOURCE = 0x00000058
 
           local start_marker_px = wave_x + start_px
           local end_marker_px = wave_x + end_px
 
-          -- Helper to convert source time to pixel
           local function time_to_overlay_px(t)
             return wave_x + ((t - view_start) / view_length) * waveform_width
           end
 
-          -- Source boundary positions in pixels
           local source_start_px = time_to_overlay_px(0)
           local source_end_px = time_to_overlay_px(source_length)
 
-          -- Clamp to view bounds
           local view_left = wave_x
           local view_right = wave_x + waveform_width
 
-          -- Draw overlays from left to right, handling each zone:
-          -- Zone A: before source start (dark) - looped content
-          -- Zone B: source start to left marker (light) - unused source
-          -- Zone C: left marker to right marker (no overlay) - active
-          -- Zone D: right marker to source end (light) - unused source
-          -- Zone E: after source end (dark) - looped content
-
-          -- Zone A: before source start (dark overlay)
+          -- Zone A: before source start
           if source_start_px > view_left then
             local left = view_left
             local right = math.min(source_start_px, math.min(start_marker_px, view_right))
@@ -1899,7 +348,7 @@ local function loop()
             end
           end
 
-          -- Zone B: source start to left marker (light overlay) - only if marker is after source start
+          -- Zone B: source start to left marker
           if start_marker_px > source_start_px then
             local left = math.max(source_start_px, view_left)
             local right = math.min(start_marker_px, view_right)
@@ -1908,7 +357,7 @@ local function loop()
             end
           end
 
-          -- Zone B2: if left marker is before source start, dark overlay from view_left to marker
+          -- Zone B2: if left marker is before source start
           if start_marker_px < source_start_px and start_marker_px > view_left then
             local left = view_left
             local right = math.min(start_marker_px, view_right)
@@ -1917,7 +366,7 @@ local function loop()
             end
           end
 
-          -- Zone D: right marker to source end (light overlay) - only if marker is before source end
+          -- Zone D: right marker to source end
           if end_marker_px < source_end_px then
             local left = math.max(end_marker_px, view_left)
             local right = math.min(source_end_px, view_right)
@@ -1926,7 +375,7 @@ local function loop()
             end
           end
 
-          -- Zone E: after source end (dark overlay)
+          -- Zone E: after source end
           if source_end_px < view_right then
             local left = math.max(source_end_px, math.max(end_marker_px, view_left))
             local right = view_right
@@ -1935,7 +384,7 @@ local function loop()
             end
           end
 
-          -- Zone E2: if right marker is after source end, dark overlay from marker to view_right
+          -- Zone E2: if right marker is after source end
           if end_marker_px > source_end_px and end_marker_px < view_right then
             local left = math.max(end_marker_px, view_left)
             local right = view_right
@@ -1944,399 +393,304 @@ local function loop()
             end
           end
 
-          -- Draw bottom time ruler (source time)
-          draw_time_ruler(draw_list, wave_x, time_ruler_y, waveform_width, TIME_RULER_HEIGHT, view_start, view_length)
+          -- Draw bottom time ruler
+          drawing.draw_time_ruler(draw_list, wave_x, time_ruler_y, waveform_width, config.TIME_RULER_HEIGHT, view_start, view_length, config, utils)
 
-          -- Draw original source boundary markers in ruler (simple lines)
-          local COLOR_SOURCE_MARKER = 0xFFAA44FF  -- Bright orange
+          -- Draw original source boundary markers in ruler
+          local COLOR_SOURCE_MARKER = 0xFFAA44FF
 
-          -- Helper to convert source time to pixel
           local function source_time_to_px(t)
             return wave_x + ((t - view_start) / view_length) * waveform_width
           end
 
-          -- Original source start (at time 0) - vertical line with "[" bracket shape
           local orig_start_px = source_time_to_px(0)
           if orig_start_px >= wave_x - 2 and orig_start_px <= wave_x + waveform_width + 2 then
-            -- Vertical line
-            reaper.ImGui_DrawList_AddLine(draw_list, orig_start_px, ruler_y, orig_start_px, ruler_y + RULER_HEIGHT, COLOR_SOURCE_MARKER, 2)
-            -- Small horizontal bracket lines extending right (subtle "[" shape)
+            reaper.ImGui_DrawList_AddLine(draw_list, orig_start_px, ruler_y, orig_start_px, ruler_y + config.RULER_HEIGHT, COLOR_SOURCE_MARKER, 2)
             local bracket_len = 4
             reaper.ImGui_DrawList_AddLine(draw_list, orig_start_px, ruler_y + 1, orig_start_px + bracket_len, ruler_y + 1, COLOR_SOURCE_MARKER, 2)
-            reaper.ImGui_DrawList_AddLine(draw_list, orig_start_px, ruler_y + RULER_HEIGHT - 1, orig_start_px + bracket_len, ruler_y + RULER_HEIGHT - 1, COLOR_SOURCE_MARKER, 2)
+            reaper.ImGui_DrawList_AddLine(draw_list, orig_start_px, ruler_y + config.RULER_HEIGHT - 1, orig_start_px + bracket_len, ruler_y + config.RULER_HEIGHT - 1, COLOR_SOURCE_MARKER, 2)
           end
 
-          -- Original source end (at source_length) - vertical line with "]" bracket shape
           local orig_end_px = source_time_to_px(source_length)
           if orig_end_px >= wave_x - 2 and orig_end_px <= wave_x + waveform_width + 2 then
-            -- Vertical line
-            reaper.ImGui_DrawList_AddLine(draw_list, orig_end_px, ruler_y, orig_end_px, ruler_y + RULER_HEIGHT, COLOR_SOURCE_MARKER, 2)
-            -- Small horizontal bracket lines extending left (subtle "]" shape)
+            reaper.ImGui_DrawList_AddLine(draw_list, orig_end_px, ruler_y, orig_end_px, ruler_y + config.RULER_HEIGHT, COLOR_SOURCE_MARKER, 2)
             local bracket_len = 4
             reaper.ImGui_DrawList_AddLine(draw_list, orig_end_px - bracket_len, ruler_y + 1, orig_end_px, ruler_y + 1, COLOR_SOURCE_MARKER, 2)
-            reaper.ImGui_DrawList_AddLine(draw_list, orig_end_px - bracket_len, ruler_y + RULER_HEIGHT - 1, orig_end_px, ruler_y + RULER_HEIGHT - 1, COLOR_SOURCE_MARKER, 2)
+            reaper.ImGui_DrawList_AddLine(draw_list, orig_end_px - bracket_len, ruler_y + config.RULER_HEIGHT - 1, orig_end_px, ruler_y + config.RULER_HEIGHT - 1, COLOR_SOURCE_MARKER, 2)
           end
 
-          -- Helper: convert pixel to time in current view
+          -- Helper functions
           local function px_to_time(px)
             return view_start + ((px - wave_x) / waveform_width) * view_length
           end
 
-          -- Helper: convert time to pixel in current view
           local function time_to_px(t)
             return wave_x + ((t - view_start) / view_length) * waveform_width
           end
 
-          -- Draw playhead (edit cursor) - DISABLED
-          -- -- Always use actual current values so playhead tracks correctly during alt+drag
-          -- local cursor_pos = reaper.GetCursorPosition()  -- Project time in seconds
-          -- local cursor_source_time = project_to_source_time(cursor_pos, item_position, start_offset, playrate)
-          -- local cursor_px = time_to_px(cursor_source_time)
-          --
-          -- -- Only draw if within visible area
-          -- if cursor_px >= wave_x and cursor_px <= wave_x + waveform_width then
-          --   -- Vertical line through waveform
-          --   reaper.ImGui_DrawList_AddLine(draw_list, cursor_px, wave_y, cursor_px, wave_y + waveform_height, COLOR_PLAYHEAD, 2)
-          --
-          --   -- Triangle at top of ruler (pointing down)
-          --   local tri_size = 8
-          --   reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-          --     cursor_px - tri_size, ruler_y,
-          --     cursor_px + tri_size, ruler_y,
-          --     cursor_px, ruler_y + tri_size,
-          --     COLOR_PLAYHEAD)
-          -- end
-
           -- Draw REAPER timeline selection overlay
           local sel_ok, sel_start, sel_end = reaper.GetSet_LoopTimeRange(false, false, 0, 0, false)
-          if sel_start and sel_end and sel_start ~= sel_end then  -- Only draw if there's a selection
-            -- Convert project time selection to source time (use actual current values)
-            local sel_source_start = project_to_source_time(sel_start, item_position, start_offset, playrate)
-            local sel_source_end = project_to_source_time(sel_end, item_position, start_offset, playrate)
+          if sel_start and sel_end and sel_start ~= sel_end then
+            local sel_source_start = utils.project_to_source_time(sel_start, item_position, start_offset, playrate)
+            local sel_source_end = utils.project_to_source_time(sel_end, item_position, start_offset, playrate)
 
-            -- Convert to pixels
             local sel_px_start = time_to_px(sel_source_start)
             local sel_px_end = time_to_px(sel_source_end)
 
-            -- Clamp to visible area
             local vis_start = math.max(wave_x, sel_px_start)
             local vis_end = math.min(wave_x + waveform_width, sel_px_end)
 
-            -- Draw overlay if visible
             if vis_end > vis_start then
-              local COLOR_SELECTION = 0x4A90D933  -- Light blue, very transparent
-              -- Draw over waveform area
+              local COLOR_SELECTION = 0x4A90D933
               reaper.ImGui_DrawList_AddRectFilled(draw_list, vis_start, wave_y, vis_end, wave_y + waveform_height, COLOR_SELECTION)
             end
 
-            -- Draw arrows on ruler at selection edges
             local arrow_size = 6
-            local COLOR_SELECTION_ARROW = 0x888888FF  -- Grey arrows
+            local COLOR_SELECTION_ARROW = 0x888888FF
 
-            -- Left edge arrow (pointing right, indicating start)
             if sel_px_start >= wave_x - arrow_size and sel_px_start <= wave_x + waveform_width + arrow_size then
               reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-                sel_px_start, ruler_y + RULER_HEIGHT - arrow_size * 2,
-                sel_px_start, ruler_y + RULER_HEIGHT,
-                sel_px_start + arrow_size, ruler_y + RULER_HEIGHT - arrow_size,
+                sel_px_start, ruler_y + config.RULER_HEIGHT - arrow_size * 2,
+                sel_px_start, ruler_y + config.RULER_HEIGHT,
+                sel_px_start + arrow_size, ruler_y + config.RULER_HEIGHT - arrow_size,
                 COLOR_SELECTION_ARROW)
             end
 
-            -- Right edge arrow (pointing left, indicating end)
             if sel_px_end >= wave_x - arrow_size and sel_px_end <= wave_x + waveform_width + arrow_size then
               reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-                sel_px_end, ruler_y + RULER_HEIGHT - arrow_size * 2,
-                sel_px_end, ruler_y + RULER_HEIGHT,
-                sel_px_end - arrow_size, ruler_y + RULER_HEIGHT - arrow_size,
+                sel_px_end, ruler_y + config.RULER_HEIGHT - arrow_size * 2,
+                sel_px_end, ruler_y + config.RULER_HEIGHT,
+                sel_px_end - arrow_size, ruler_y + config.RULER_HEIGHT - arrow_size,
                 COLOR_SELECTION_ARROW)
             end
           end
 
-          -- ========== LEFT PANEL CONTROLS (using extracted helper functions) ==========
+          -- Left panel controls
           local COLOR_LEFT_COL_BG = 0x1A1A1AFF
-          reaper.ImGui_DrawList_AddRectFilled(draw_list, left_col_x, left_col_y, left_col_x + LEFT_COLUMN_WIDTH - 2, left_col_y + panel_height, COLOR_LEFT_COL_BG)
+          reaper.ImGui_DrawList_AddRectFilled(draw_list, left_col_x, left_col_y, left_col_x + config.LEFT_COLUMN_WIDTH - 2, left_col_y + panel_height, COLOR_LEFT_COL_BG)
 
-          -- Draw buttons (WARP/REV/EDIT)
-          draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take)
+          controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take, config, state, utils, drawing)
 
-          -- Panel background and split calculation
           local COLOR_PANEL_BG = 0x202020FF
-          reaper.ImGui_DrawList_AddRectFilled(draw_list, panel_x, panel_y, panel_x + LEFT_PANEL_WIDTH - 4, panel_y + panel_height, COLOR_PANEL_BG)
+          reaper.ImGui_DrawList_AddRectFilled(draw_list, panel_x, panel_y, panel_x + config.LEFT_PANEL_WIDTH - 4, panel_y + panel_height, COLOR_PANEL_BG)
           local panel_split = panel_y + panel_height * 0.55
 
-          -- Draw gain slider
-          draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_y, panel_split, item, item_vol)
+          controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_y, panel_split, item, item_vol, config, state, utils)
 
-          -- Draw pitch knob
-          local take_pitch, knob_cx, knob_cy = draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_split, panel_y + panel_height, take)
+          local take_pitch, knob_cx, knob_cy = controls.draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_split, panel_y + panel_height, take, config, state, utils, drawing)
 
-          -- Draw semitones/cents boxes
-          draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, panel_x, knob_cy, take, take_pitch)
+          controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, panel_x, knob_cy, take, take_pitch, config, state, utils)
 
           -- Hide and lock cursor while dragging any control
-          if is_any_control_dragging() then
+          if state.is_any_control_dragging() then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
-            if has_js_extension then
+            if state.has_js_extension then
               local cur_screen_x, cur_screen_y = reaper.GetMousePosition()
-              drag_cumulative_delta_y = drag_cumulative_delta_y + (drag_lock_screen_y - cur_screen_y)
-              reaper.JS_Mouse_SetPosition(drag_lock_screen_x, drag_lock_screen_y)
+              -- Initialize last_screen_y if not set (defensive)
+              state.drag_last_screen_y = state.drag_last_screen_y or cur_screen_y
+              -- Calculate delta from last frame's position (not lock position)
+              -- This avoids issues with cursor teleport timing
+              local delta = state.drag_last_screen_y - cur_screen_y
+              if delta ~= 0 then
+                state.drag_cumulative_delta_y = state.drag_cumulative_delta_y + delta
+              end
+              -- Update last position and teleport cursor back to lock position
+              state.drag_last_screen_y = state.drag_lock_screen_y
+              reaper.JS_Mouse_SetPosition(state.drag_lock_screen_x, state.drag_lock_screen_y)
             end
           end
-
-          -- ========== END LEFT PANEL ==========
 
           -- Marker positions
           local start_marker_x = wave_x + start_px
           local end_marker_x = wave_x + end_px
 
-          -- Mouse interaction
-          -- Waveform area (for general clicks)
+          -- Mouse interaction areas
           local mouse_in_waveform = mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
                                     and mouse_y >= wave_y and mouse_y <= wave_y + waveform_height
-          -- Ruler area (for zoom drag)
           local mouse_in_ruler = mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
-                                 and mouse_y >= ruler_y and mouse_y <= ruler_y + RULER_HEIGHT
-          -- Time ruler area (bottom)
+                                 and mouse_y >= ruler_y and mouse_y <= ruler_y + config.RULER_HEIGHT
           local mouse_in_time_ruler = mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
-                                 and mouse_y >= time_ruler_y and mouse_y <= time_ruler_y + TIME_RULER_HEIGHT
-          -- Full waveform view (waveform + both rulers) - for ctrl+wheel zoom
+                                 and mouse_y >= time_ruler_y and mouse_y <= time_ruler_y + config.TIME_RULER_HEIGHT
           local mouse_in_view = mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
-                                and mouse_y >= ruler_y and mouse_y <= time_ruler_y + TIME_RULER_HEIGHT
-          -- Extended area for marker interaction (includes marker width on both sides)
-          local mouse_in_marker_area = mouse_x >= wave_x - MARKER_WIDTH and mouse_x <= wave_x + waveform_width + MARKER_WIDTH
+                                and mouse_y >= ruler_y and mouse_y <= time_ruler_y + config.TIME_RULER_HEIGHT
+          local mouse_in_marker_area = mouse_x >= wave_x - config.MARKER_WIDTH and mouse_x <= wave_x + waveform_width + config.MARKER_WIDTH
                                     and mouse_y >= wave_y and mouse_y <= wave_y + waveform_height
 
-          local near_start = is_near_marker(mouse_x, start_marker_x, MARKER_WIDTH)
-          local near_end = is_near_marker(mouse_x, end_marker_x, MARKER_WIDTH)
+          local near_start = utils.is_near_marker(mouse_x, start_marker_x, config.MARKER_WIDTH)
+          local near_end = utils.is_near_marker(mouse_x, end_marker_x, config.MARKER_WIDTH)
 
           -- Cursor feedback
-          -- Note: ImGui has limited cursors - no magnifying glass or open/closed hand variants
           local alt_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
-          if (dragging_start or dragging_end) and alt_held then
-            -- Alt+dragging: move cursor to indicate sliding both markers
+          if (state.dragging_start or state.dragging_end) and alt_held then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())
           elseif mouse_in_marker_area and (near_start or near_end) then
             if alt_held then
-              -- Alt+hover on marker: show move cursor to hint at alt+drag
               reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())
             else
-              -- Normal hover on marker: horizontal resize
               reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
             end
-          elseif mouse_in_ruler or is_ruler_dragging then
-            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())  -- Horizontal resize for zoom
-          elseif is_panning then
-            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())  -- Grabbing/move cursor
+          elseif mouse_in_ruler or state.is_ruler_dragging then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
+          elseif state.is_panning then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())
           end
 
-          -- Helper for zoom-to-cursor: use full range for consistency with view
-          local view_left_bound = math.min(0, start_offset)
-          local view_right_bound = math.max(source_length, start_offset + source_item_length)
-          local zoom_base_view_length = view_right_bound - view_left_bound
-          local range_center = (view_left_bound + view_right_bound) / 2
+          -- Zoom helpers - constrained to source bounds (0 to source_length)
+          local zoom_base_view_length = source_length
+          local range_center = source_length / 2
 
-          -- Calculate minimum zoom to show both markers AND source boundaries with padding
-          -- Markers are at start_offset and start_offset + source_item_length
-          -- Source boundaries are at 0 and source_length
-          local left_marker = start_offset
-          local right_marker = start_offset + source_item_length
-          -- Include source boundaries in the span we need to see
-          local visible_left = math.min(0, left_marker)
-          local visible_right = math.max(source_length, right_marker)
-          local visible_span = visible_right - visible_left
-          -- Add 20% padding on each side so boundaries aren't at edges
-          local padded_span = visible_span * 1.4
-          -- Minimum zoom = zoom_base_view_length / padded_span (lower zoom = see more)
-          -- No fixed floor - always allow zooming out enough to see everything
-          local min_zoom = zoom_base_view_length / padded_span
-          -- Only apply a very small floor to prevent division issues
-          min_zoom = math.max(0.01, min_zoom)
+          -- Min zoom = 1.0 (shows full source), max zoom = 500
+          local min_zoom = 1.0
 
           local function zoom_to_cursor(new_zoom, cursor_x)
-            -- Calculate cursor position as fraction of waveform width
             local cursor_fraction = (cursor_x - wave_x) / waveform_width
             cursor_fraction = math.max(0, math.min(1, cursor_fraction))
 
-            -- Calculate time under cursor before zoom
             local time_under_cursor = view_start + cursor_fraction * view_length
 
-            -- Apply new zoom (use dynamic min_zoom instead of hardcoded 1.0)
-            local old_zoom = zoom_level
-            -- Max zoom 500 - high enough for detail, fast enough for smooth operation
-            zoom_level = math.max(min_zoom, math.min(500.0, new_zoom))
+            state.zoom_level = math.max(min_zoom, math.min(500.0, new_zoom))
 
-            -- Calculate new view length
-            local new_view_length = zoom_base_view_length / zoom_level
+            local new_view_length = zoom_base_view_length / state.zoom_level
 
-            -- Calculate pan offset needed to keep time_under_cursor at cursor_fraction
-            pan_offset = time_under_cursor - range_center + new_view_length * (0.5 - cursor_fraction)
+            state.pan_offset = time_under_cursor - range_center + new_view_length * (0.5 - cursor_fraction)
 
-            -- Clamp pan to ensure markers and source boundaries are visible
-            -- view_start = range_center - half_view + pan_offset
+            -- Clamp pan to keep view within source bounds (0 to source_length)
             local half_view = new_view_length / 2
-            local padding = visible_span * 0.1
-
-            -- If view is large enough to show everything, clamp pan to keep it visible
-            if new_view_length >= visible_span then
-              -- To show visible_left - padding: pan_offset >= visible_left - padding - range_center + half_view
-              -- To show visible_right + padding: pan_offset <= visible_right + padding - range_center - half_view
-              local min_pan = visible_left - padding - range_center + half_view
-              local max_pan = visible_right + padding - range_center - half_view
-              -- Swap if needed (when view is much larger than content)
-              if min_pan > max_pan then min_pan, max_pan = max_pan, min_pan end
-              pan_offset = math.max(min_pan, math.min(max_pan, pan_offset))
-            end
+            local min_pan = -range_center + half_view  -- view_start = 0
+            local max_pan = source_length - range_center - half_view  -- view_end = source_length
+            if min_pan > max_pan then min_pan, max_pan = max_pan, min_pan end
+            state.pan_offset = math.max(min_pan, math.min(max_pan, state.pan_offset))
           end
 
-          -- Ctrl+mouse wheel zoom (zoom to cursor)
+          -- Ctrl+mouse wheel zoom
           local wheel = reaper.ImGui_GetMouseWheel(ctx)
           if wheel ~= 0 and mouse_in_view then
             local ctrl_down = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
             if ctrl_down then
-              local zoom_factor = 1.35  -- 35% per wheel notch (faster zoom)
-              local new_zoom = wheel > 0 and (zoom_level * zoom_factor) or (zoom_level / zoom_factor)
+              local zoom_factor = 1.35
+              local new_zoom = wheel > 0 and (state.zoom_level * zoom_factor) or (state.zoom_level / zoom_factor)
               zoom_to_cursor(new_zoom, mouse_x)
             end
           end
 
-          -- Ruler drag zoom (zoom to cursor x position)
+          -- Ruler drag zoom
           if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_ruler then
-            is_ruler_dragging = true
-            ruler_drag_start_y = mouse_y
-            ruler_drag_start_zoom = zoom_level
-            ruler_drag_cumulative_y = 0  -- Reset cumulative movement
-            -- Store screen Y position for cursor locking
-            if has_js_extension then
+            state.is_ruler_dragging = true
+            state.ruler_drag_start_y = mouse_y
+            state.ruler_drag_start_zoom = state.zoom_level
+            state.ruler_drag_cumulative_y = 0
+            if state.has_js_extension then
               local screen_x, screen_y = reaper.GetMousePosition()
-              ruler_drag_screen_y = screen_y
+              state.ruler_drag_screen_y = screen_y
             end
           end
 
           if reaper.ImGui_IsMouseReleased(ctx, 0) then
-            is_ruler_dragging = false
+            state.is_ruler_dragging = false
           end
 
-          if is_ruler_dragging and reaper.ImGui_IsMouseDown(ctx, 0) then
-            -- Hide cursor and lock Y position (allow X to move freely)
+          if state.is_ruler_dragging and reaper.ImGui_IsMouseDown(ctx, 0) then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
-            if has_js_extension then
+            if state.has_js_extension then
               local cur_screen_x, cur_screen_y = reaper.GetMousePosition()
-              -- Accumulate Y movement before resetting position
-              ruler_drag_cumulative_y = ruler_drag_cumulative_y + (ruler_drag_screen_y - cur_screen_y)
-              -- Keep X where user moved it, lock Y to start position
-              reaper.JS_Mouse_SetPosition(cur_screen_x, ruler_drag_screen_y)
-              -- Use accumulated delta for zoom
-              local zoom_sensitivity = 0.03  -- Zoom change per pixel (3x faster)
-              local zoom_multiplier = 1.0 + (ruler_drag_cumulative_y * zoom_sensitivity)
-              local new_zoom = ruler_drag_start_zoom * zoom_multiplier
+              state.ruler_drag_cumulative_y = state.ruler_drag_cumulative_y + (state.ruler_drag_screen_y - cur_screen_y)
+              reaper.JS_Mouse_SetPosition(cur_screen_x, state.ruler_drag_screen_y)
+              local zoom_sensitivity = 0.03
+              local zoom_multiplier = 1.0 + (state.ruler_drag_cumulative_y * zoom_sensitivity)
+              local new_zoom = state.ruler_drag_start_zoom * zoom_multiplier
               zoom_to_cursor(new_zoom, mouse_x)
             else
-              -- Fallback without JS extension
-              local delta_y = ruler_drag_start_y - mouse_y
+              local delta_y = state.ruler_drag_start_y - mouse_y
               local zoom_sensitivity = 0.03
               local zoom_multiplier = 1.0 + (delta_y * zoom_sensitivity)
-              local new_zoom = ruler_drag_start_zoom * zoom_multiplier
+              local new_zoom = state.ruler_drag_start_zoom * zoom_multiplier
               zoom_to_cursor(new_zoom, mouse_x)
             end
           end
 
           -- Middle mouse panning
-          local middle_mouse = 2  -- Middle mouse button index
+          local middle_mouse = 2
           if reaper.ImGui_IsMouseClicked(ctx, middle_mouse) and mouse_in_waveform then
-            is_panning = true
-            pan_start_mouse_x = mouse_x
-            pan_start_offset = pan_offset
+            state.is_panning = true
+            state.pan_start_mouse_x = mouse_x
+            state.pan_start_offset = state.pan_offset
           end
 
           if reaper.ImGui_IsMouseReleased(ctx, middle_mouse) then
-            is_panning = false
+            state.is_panning = false
           end
 
-          if is_panning and reaper.ImGui_IsMouseDown(ctx, middle_mouse) then
-            -- Calculate mouse movement in pixels, convert to time
-            local mouse_delta_px = mouse_x - pan_start_mouse_x
-            -- Dragging right = content moves right = view shifts left = negative offset change
+          if state.is_panning and reaper.ImGui_IsMouseDown(ctx, middle_mouse) then
+            local mouse_delta_px = mouse_x - state.pan_start_mouse_x
             local delta_time = -(mouse_delta_px / waveform_width) * view_length
-            pan_offset = pan_start_offset + delta_time
-            -- Panning limits: view shows full range at zoom 1.0, so at higher zoom allow panning within range
-            local visible_left = math.min(0, start_offset)
-            local visible_right = math.max(source_length, start_offset + source_item_length)
-            local range_center = (visible_left + visible_right) / 2
-            -- View is centered on range: view_start = range_center - view_length/2 + pan_offset
-            -- To show visible_left: pan_offset = visible_left - range_center + view_length/2
-            -- To show visible_right: pan_offset = visible_right - view_length - range_center + view_length/2
-            local min_pan = visible_left - range_center + view_length / 2
-            local max_pan = visible_right - view_length - range_center + view_length / 2
+            state.pan_offset = state.pan_start_offset + delta_time
+            -- Pan limits: keep view within source bounds (0 to source_length)
+            local half_view = view_length / 2
+            local min_pan = -range_center + half_view
+            local max_pan = source_length - range_center - half_view
             if min_pan > max_pan then min_pan, max_pan = max_pan, min_pan end
-            pan_offset = math.max(min_pan, math.min(max_pan, pan_offset))
+            state.pan_offset = math.max(min_pan, math.min(max_pan, state.pan_offset))
           end
 
-          -- Start dragging - store original values and begin undo block
+          -- Start dragging
           if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_marker_area then
             if near_start then
-              dragging_start = true
-              drag_start_offset = start_offset
-              drag_start_length = item_length
-              drag_start_mouse_x = mouse_x
-              drag_start_view_length = view_length
-              drag_start_view_start = view_start
-              drag_start_playrate = playrate
-              drag_current_start = start_offset
-              drag_current_end = start_offset + source_item_length
-              if not undo_block_open then
-                undo_block_open = "marker_start"
+              state.dragging_start = true
+              state.drag_start_offset = start_offset
+              state.drag_start_length = item_length
+              state.drag_start_mouse_x = mouse_x
+              state.drag_start_view_length = view_length
+              state.drag_start_view_start = view_start
+              state.drag_start_playrate = playrate
+              state.drag_current_start = start_offset
+              state.drag_current_end = start_offset + source_item_length
+              if not state.undo_block_open then
+                state.undo_block_open = "marker_start"
               end
             elseif near_end then
-              dragging_end = true
-              drag_start_offset = start_offset
-              drag_start_length = item_length
-              drag_start_mouse_x = mouse_x
-              drag_start_view_length = view_length
-              drag_start_view_start = view_start
-              drag_start_playrate = playrate
-              drag_current_start = start_offset
-              drag_current_end = start_offset + source_item_length
-              if not undo_block_open then
-                undo_block_open = "marker_end"
+              state.dragging_end = true
+              state.drag_start_offset = start_offset
+              state.drag_start_length = item_length
+              state.drag_start_mouse_x = mouse_x
+              state.drag_start_view_length = view_length
+              state.drag_start_view_start = view_start
+              state.drag_start_playrate = playrate
+              state.drag_current_start = start_offset
+              state.drag_current_end = start_offset + source_item_length
+              if not state.undo_block_open then
+                state.undo_block_open = "marker_end"
               end
             end
           end
 
-          -- End dragging - adjust pan to keep view stable (undo block closed at top level)
+          -- End dragging
           if reaper.ImGui_IsMouseReleased(ctx, 0) then
-            if dragging_start or dragging_end then
-              -- Adjust pan_offset to keep view_start in same position after drag ends
-              -- view_start = range_center - view_length/2 + pan_offset
-              -- We need to compensate for changes in range_center and view_length
-              local old_item_length = drag_start_length * drag_start_playrate
+            if state.dragging_start or state.dragging_end then
+              local old_item_length = state.drag_start_length * state.drag_start_playrate
               local new_item_length = source_item_length
-              local old_item_end = drag_start_offset + old_item_length
+              local old_item_end = state.drag_start_offset + old_item_length
               local new_item_end = start_offset + new_item_length
 
-              -- Old range (at drag start)
-              local old_left = math.min(0, drag_start_offset)
+              local old_left = math.min(0, state.drag_start_offset)
               local old_right = math.max(source_length, old_item_end)
               local old_range_center = (old_left + old_right) / 2
               local old_base = old_right - old_left
 
-              -- New range (after drag)
               local new_left = math.min(0, start_offset)
               local new_right = math.max(source_length, new_item_end)
               local new_range_center = (new_left + new_right) / 2
               local new_base = new_right - new_left
 
-              local old_view_length = old_base / zoom_level
-              local new_view_length = new_base / zoom_level
+              local old_view_length = old_base / state.zoom_level
+              local new_view_length = new_base / state.zoom_level
 
-              -- Adjustment: keep view_start constant
-              pan_offset = pan_offset + (old_range_center - new_range_center) + (new_view_length - old_view_length) / 2
+              state.pan_offset = state.pan_offset + (old_range_center - new_range_center) + (new_view_length - old_view_length) / 2
             end
-            dragging_start = false
-            dragging_end = false
+            state.dragging_start = false
+            state.dragging_end = false
           end
 
           -- Mouse button 4/5 quick marker positioning
-          -- Mouse 4 = move left marker, Mouse 5 = move right marker
           if mouse_in_waveform or mouse_in_marker_area then
             local clicked_mouse4 = reaper.ImGui_IsMouseClicked(ctx, 4)
             local clicked_mouse5 = reaper.ImGui_IsMouseClicked(ctx, 3)
@@ -2348,9 +702,7 @@ local function loop()
               reaper.Undo_BeginBlock()
 
               if clicked_mouse4 then
-                -- Move left marker (start) to click position
                 local new_start = click_time
-                -- Clamp: can't go past end marker
                 new_start = math.min(new_start, current_end - 0.01)
                 local new_source_length = current_end - new_start
                 local new_item_length = new_source_length / playrate
@@ -2362,9 +714,7 @@ local function loop()
                 reaper.Undo_EndBlock("NVSD_ItemView: Set start marker", -1)
 
               elseif clicked_mouse5 then
-                -- Move right marker (end) to click position
                 local new_end = click_time
-                -- Clamp: can't go before start marker
                 new_end = math.max(new_end, start_offset + 0.01)
                 local new_source_length = new_end - start_offset
                 local new_item_length = new_source_length / playrate
@@ -2376,9 +726,8 @@ local function loop()
             end
           end
 
-          -- Helper: snap time to nearest source boundary if within threshold
+          -- Helper: snap time to nearest source boundary
           local function snap_to_source_boundary(t, src_len, threshold_time)
-            -- Find nearest multiple of source_length
             local nearest_boundary = math.floor(t / src_len + 0.5) * src_len
             if math.abs(t - nearest_boundary) <= threshold_time then
               return nearest_boundary
@@ -2386,45 +735,34 @@ local function loop()
             return t
           end
 
-          -- Helper: snap source time to REAPER grid (if snapping enabled)
+          -- Helper: snap source time to REAPER grid
           local function snap_to_grid_if_enabled(source_t)
-            -- Check if REAPER snap is enabled (action 1157)
             local snap_enabled = reaper.GetToggleCommandState(1157) == 1
             if not snap_enabled then return source_t end
 
-            -- Convert source time to project time
-            local project_t = source_to_project_time(source_t, item_position, start_offset, playrate)
-            -- Snap to grid in project time
+            local project_t = utils.source_to_project_time(source_t, item_position, start_offset, playrate)
             local snapped_project_t = reaper.SnapToGrid(0, project_t)
-            -- Convert back to source time
-            return project_to_source_time(snapped_project_t, item_position, start_offset, playrate)
+            return utils.project_to_source_time(snapped_project_t, item_position, start_offset, playrate)
           end
 
-          -- Calculate snap threshold in time units
-          local snap_threshold_time = (SNAP_THRESHOLD_PX / waveform_width) * view_length
+          local snap_threshold_time = (config.SNAP_THRESHOLD_PX / waveform_width) * view_length
 
-          -- Check if Alt is held (for sliding both markers together)
           local alt_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
 
-          -- Alt+drag: slide both markers (change which part of source is used, keep item length/position same)
-          if (dragging_start or dragging_end) and alt_held and reaper.ImGui_IsMouseDown(ctx, 0) then
-            -- Calculate mouse delta in time units
-            local mouse_delta_px = mouse_x - drag_start_mouse_x
-            local mouse_delta_time = (mouse_delta_px / waveform_width) * drag_start_view_length
+          -- Alt+drag: slide both markers
+          if (state.dragging_start or state.dragging_end) and alt_held and reaper.ImGui_IsMouseDown(ctx, 0) then
+            local mouse_delta_px = mouse_x - state.drag_start_mouse_x
+            local mouse_delta_time = (mouse_delta_px / waveform_width) * state.drag_start_view_length
 
-            -- Item length stays the same
-            local original_source_length = drag_start_length * drag_start_playrate
+            local original_source_length = state.drag_start_length * state.drag_start_playrate
 
-            -- Calculate raw new positions
-            local raw_start = drag_start_offset + mouse_delta_time
+            local raw_start = state.drag_start_offset + mouse_delta_time
             local raw_end = raw_start + original_source_length
 
-            -- Only snap the marker that was actually grabbed
             local new_start
             local snapped_to_boundary = false
 
-            if dragging_start then
-              -- Grabbed start marker - only snap start to boundary
+            if state.dragging_start then
               local start_snapped = snap_to_source_boundary(raw_start, source_length, snap_threshold_time)
               if start_snapped ~= raw_start then
                 new_start = start_snapped
@@ -2433,10 +771,8 @@ local function loop()
                 new_start = snap_to_grid_if_enabled(raw_start)
               end
             else
-              -- Grabbed end marker - only snap end to boundary
               local end_snapped = snap_to_source_boundary(raw_end, source_length, snap_threshold_time)
               if end_snapped ~= raw_end then
-                -- Adjust start so end lands on boundary
                 new_start = end_snapped - original_source_length
                 snapped_to_boundary = true
               else
@@ -2446,87 +782,80 @@ local function loop()
 
             local new_end = new_start + original_source_length
 
-            -- Convert to take-relative offset
+            -- Clamp to source boundaries (keep item length constant)
+            if new_start < 0 then
+              new_start = 0
+              new_end = original_source_length
+            end
+            if new_end > source_length then
+              new_end = source_length
+              new_start = source_length - original_source_length
+            end
+
             local new_take_offset = new_start - section_offset
 
-            -- Update drag current positions for stable rendering
-            drag_current_start = new_start
-            drag_current_end = new_end
+            state.drag_current_start = new_start
+            state.drag_current_end = new_end
 
             reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
-            -- D_LENGTH stays the same - no change needed
             reaper.UpdateArrange()
 
-          -- Dragging start marker: move start, keep end fixed (in source time)
-          elseif dragging_start and reaper.ImGui_IsMouseDown(ctx, 0) then
-            -- original_end is in source time (accounts for playrate at drag start)
-            local original_source_end = drag_start_offset + (drag_start_length * drag_start_playrate)
+          -- Dragging start marker
+          elseif state.dragging_start and reaper.ImGui_IsMouseDown(ctx, 0) then
+            local original_source_end = state.drag_start_offset + (state.drag_start_length * state.drag_start_playrate)
             local new_start
             if mouse_x >= wave_x and mouse_x <= wave_x + waveform_width then
-              -- Inside waveform: direct 1:1 mapping
               new_start = px_to_time(mouse_x)
             else
-              -- Outside waveform: extend at controlled rate (1 source_length per waveform_width)
               local edge_time = mouse_x < wave_x and view_start or view_start + view_length
               local overflow_px = mouse_x < wave_x and (wave_x - mouse_x) or (mouse_x - wave_x - waveform_width)
               local overflow_time = (overflow_px / waveform_width) * source_length
               new_start = mouse_x < wave_x and (edge_time - overflow_time) or (edge_time + overflow_time)
             end
-            -- Snap to REAPER grid (if enabled), then to source boundaries
             new_start = snap_to_grid_if_enabled(new_start)
             new_start = snap_to_source_boundary(new_start, source_length, snap_threshold_time)
-            -- Only clamp: can't go past end (need at least 0.01s source length)
             new_start = math.min(new_start, original_source_end - 0.01)
-            -- new_source_length is in source time, convert to item time by dividing by playrate
             local new_source_length = original_source_end - new_start
-            local new_item_length = new_source_length / drag_start_playrate
-            -- Convert to take-relative offset (can be negative for pre-source looping)
+            local new_item_length = new_source_length / state.drag_start_playrate
             local new_take_offset = new_start - section_offset
 
-            -- Update drag current positions for stable rendering
-            drag_current_start = new_start
-            drag_current_end = original_source_end
+            state.drag_current_start = new_start
+            state.drag_current_end = original_source_end
 
             reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
             reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_item_length)
             reaper.UpdateArrange()
 
-          -- Dragging end marker: keep start fixed, change length
-          elseif dragging_end and reaper.ImGui_IsMouseDown(ctx, 0) then
+          -- Dragging end marker
+          elseif state.dragging_end and reaper.ImGui_IsMouseDown(ctx, 0) then
             local new_end
             if mouse_x >= wave_x and mouse_x <= wave_x + waveform_width then
-              -- Inside waveform: direct 1:1 mapping
               new_end = px_to_time(mouse_x)
             else
-              -- Outside waveform: extend at controlled rate (1 source_length per waveform_width)
               local edge_time = mouse_x < wave_x and view_start or view_start + view_length
               local overflow_px = mouse_x < wave_x and (wave_x - mouse_x) or (mouse_x - wave_x - waveform_width)
               local overflow_time = (overflow_px / waveform_width) * source_length
               new_end = mouse_x < wave_x and (edge_time - overflow_time) or (edge_time + overflow_time)
             end
-            -- Snap to REAPER grid (if enabled), then to source boundaries
             new_end = snap_to_grid_if_enabled(new_end)
             new_end = snap_to_source_boundary(new_end, source_length, snap_threshold_time)
-            -- new_source_length is in source time, convert to item time (use drag_start_offset for consistency)
-            local new_source_length = new_end - drag_start_offset
-            local new_item_length = new_source_length / drag_start_playrate
-            -- Only clamp: need at least 0.01s item length (no upper bound - allows looping)
+            local new_source_length = new_end - state.drag_start_offset
+            local new_item_length = new_source_length / state.drag_start_playrate
             new_item_length = math.max(0.01, new_item_length)
 
-            -- Update drag current positions for stable rendering
-            drag_current_start = drag_start_offset
-            drag_current_end = new_end
+            state.drag_current_start = state.drag_start_offset
+            state.drag_current_end = new_end
 
             reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_item_length)
             reaper.UpdateArrange()
           end
 
-          -- Draw markers on top (draw if visible in view)
-          if start_marker_x >= wave_x - MARKER_WIDTH and start_marker_x <= wave_x + waveform_width + MARKER_WIDTH then
-            draw_marker(draw_list, start_marker_x, wave_y, waveform_height, true, near_start, dragging_start)
+          -- Draw markers on top
+          if start_marker_x >= wave_x - config.MARKER_WIDTH and start_marker_x <= wave_x + waveform_width + config.MARKER_WIDTH then
+            drawing.draw_marker(draw_list, start_marker_x, wave_y, waveform_height, true, near_start, state.dragging_start, config)
           end
-          if end_marker_x >= wave_x - MARKER_WIDTH and end_marker_x <= wave_x + waveform_width + MARKER_WIDTH then
-            draw_marker(draw_list, end_marker_x, wave_y, waveform_height, false, near_end, dragging_end)
+          if end_marker_x >= wave_x - config.MARKER_WIDTH and end_marker_x <= wave_x + waveform_width + config.MARKER_WIDTH then
+            drawing.draw_marker(draw_list, end_marker_x, wave_y, waveform_height, false, near_end, state.dragging_end, config)
           end
 
         else
@@ -2536,11 +865,10 @@ local function loop()
         reaper.ImGui_Text(ctx, take and reaper.TakeIsMIDI(take) and "MIDI items not supported" or "No valid take")
       end
     else
-      -- Display "No item selected." centered in the window
       local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
       local text = "No item selected."
       local text_w = reaper.ImGui_CalcTextSize(ctx, text)
-      local text_h = 13  -- Approximate text height
+      local text_h = 13
       local center_x = (avail_w - text_w) / 2
       local center_y = (avail_h - text_h) / 2
       reaper.ImGui_SetCursorPos(ctx, center_x, center_y)
