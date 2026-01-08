@@ -274,46 +274,49 @@ local function loop()
           local item_changed = item ~= state.cached_item
           local reversed_changed = is_reversed ~= state.cached_reversed
 
-          -- Progressive loading: instant preview, then full resolution
-          local PREVIEW_SAMPLES = 2000  -- Fast preview resolution
+          -- Check if user is dragging in REAPER (mouse button held outside our control)
+          local mouse_held = reaper.ImGui_IsMouseDown(ctx, 0)
+          local we_are_dragging = state.dragging_start or state.dragging_end or state.is_panning
+                                  or state.is_ruler_dragging or state.is_any_control_dragging()
+          local user_dragging_in_reaper = mouse_held and not we_are_dragging
 
+          -- Deferred loading: Don't load peaks while user is dragging in REAPER
+          -- This keeps REAPER responsive during edge drags, etc.
           if item_changed or source_changed or reversed_changed then
-            -- Stage 1: Load fast preview immediately
+            -- Just mark that we need to load - don't load yet
             state.cached_item = item
             state.cached_source = source
             state.cached_source_length = source_length
             state.cached_reversed = is_reversed
             state.target_samples = desired_samples
+            state.loading_stage = 0  -- Need to load
+            state.cached_peaks = nil  -- Clear old peaks
+            state.cached_lod = nil
+          end
 
-            local peaks_result, num_ch_or_error = utils.get_peaks(source, PREVIEW_SAMPLES)
+          -- Only load peaks when user is NOT dragging in REAPER
+          if not user_dragging_in_reaper and state.loading_stage == 0 and state.cached_peaks == nil then
+            -- Load full resolution directly (no preview stage needed when not blocking)
+            local peaks_result, num_ch_or_error = utils.get_peaks(source, desired_samples)
             if peaks_result then
               state.cached_peaks = peaks_result
               state.cached_num_channels = num_ch_or_error
-              state.cached_num_samples = PREVIEW_SAMPLES
+              state.cached_num_samples = desired_samples
               state.cached_lod = utils.build_lod_peaks(peaks_result, num_ch_or_error)
               state.peaks_error = nil
-              state.loading_stage = 1  -- Preview loaded, need full res
+              state.loading_stage = 2
             else
-              state.cached_peaks = nil
-              state.cached_lod = nil
               state.peaks_error = num_ch_or_error
-              state.loading_stage = 0
             end
-          elseif state.loading_stage == 1 and state.target_samples > state.cached_num_samples then
-            -- Stage 2: Load full resolution in next frame
-            local peaks_result, num_ch_or_error = utils.get_peaks(source, state.target_samples)
+          elseif state.loading_stage == 2 and desired_samples ~= state.cached_num_samples and not user_dragging_in_reaper then
+            -- Resolution requirements changed (window resize, etc)
+            local peaks_result, num_ch_or_error = utils.get_peaks(source, desired_samples)
             if peaks_result then
               state.cached_peaks = peaks_result
               state.cached_num_channels = num_ch_or_error
-              state.cached_num_samples = state.target_samples
+              state.cached_num_samples = desired_samples
               state.cached_lod = utils.build_lod_peaks(peaks_result, num_ch_or_error)
-              state.peaks_error = nil
             end
-            state.loading_stage = 2  -- Full resolution loaded
-          elseif state.loading_stage == 2 and desired_samples ~= state.target_samples then
-            -- Resolution requirements changed (window resize, etc)
-            state.target_samples = desired_samples
-            state.loading_stage = 1  -- Trigger reload next frame
           end
 
           -- Reset pan and zoom when item changes
