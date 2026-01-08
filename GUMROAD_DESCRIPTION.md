@@ -44,7 +44,10 @@ Drag markers past the source edges to create loops. Visual indicators show exact
 Toggle between time-stretch (preserves length) and playrate mode—just like Ableton's Warp.
 
 **Quick Actions**
-Mouse buttons 4/5 instantly position markers. One-click mute. Reverse button. Open in external editor. Everything you need, where you need it.
+Mouse buttons 4/5 instantly position markers. One-click mute. Reverse button. Clear button to reset pitch/speed. Open in external editor. Everything you need, where you need it.
+
+**8 Color Themes**
+Choose from Default, NVK Modern, Ableton Dark, Pro Tools, High Contrast, Warm, Cool, or Monochrome. Live preview as you browse. Settings persist across sessions.
 
 **Multi-Channel Support**
 Stereo and surround files display as stacked waveform channels.

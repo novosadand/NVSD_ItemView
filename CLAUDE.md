@@ -40,34 +40,45 @@ cd ~/dev/NVSD_ItemView && lua5.4 tests/run_tests.lua && ./sync.sh
 ### File Structure
 ```
 NVSD_ItemView/
-├── NVSD_ItemView.lua          # Main script (≈2560 lines)
+├── NVSD_ItemView.lua           # Main script entry point
+├── NVSD_ItemView_Settings.lua  # Standalone settings action
 ├── README.md                   # User documentation
 ├── GUMROAD_DESCRIPTION.md      # Sales copy for Gumroad
 ├── CLAUDE.md                   # Development documentation (this file)
 ├── sync.sh                     # Sync script (WSL → Windows)
+├── lib/
+│   ├── config.lua              # Constants, colors, dimensions
+│   ├── state.lua               # Application state management
+│   ├── utils.lua               # Math helpers, conversions
+│   ├── drawing.lua             # Waveform, ruler, markers, info bar
+│   ├── controls.lua            # Buttons, gain slider, pitch knob
+│   ├── settings.lua            # Theme definitions, ExtState persistence
+│   └── settings_ui.lua         # Settings popup window
 ├── docs/
 │   ├── REAPER_WAVEFORM_RENDERING.md   # PCM_Source_GetPeaks reference
 │   └── REAPER_TIMELINE_GRID.md        # Timeline/tempo API reference
 └── tests/
     ├── luaunit.lua             # LuaUnit testing framework
     ├── run_tests.lua           # Test runner
-    └── nvsd_itemview_test.lua  # 68 unit tests
+    └── nvsd_itemview_test.lua  # Unit tests
 ```
 
-### Code Organization (NVSD_ItemView.lua)
+### Module Overview
 
-| Section | Lines | Description |
-|---------|-------|-------------|
-| Header & Config | 1-60 | Constants, colors, dimensions |
-| State Variables | 61-185 | Drag states, zoom, pan, caching |
-| Utility Functions | 186-470 | Math helpers, conversions, formatting |
-| Drawing Functions | 471-1000 | Ruler, waveform, markers, overlays |
-| Control Panels | 1001-1600 | Buttons, gain slider, pitch knob |
-| Main Loop | 1601-2560 | Input handling, item detection, rendering |
+| Module | Description |
+|--------|-------------|
+| `NVSD_ItemView.lua` | Main entry point, event loop, item handling |
+| `lib/config.lua` | Constants, colors, dimensions, pitch modes |
+| `lib/state.lua` | Drag state, zoom/pan, caching, undo tracking |
+| `lib/utils.lua` | Math helpers, dB/gain, pitch/playrate conversions |
+| `lib/drawing.lua` | Waveform rendering, ruler, markers, info bar |
+| `lib/controls.lua` | WARP button, gain slider, pitch knob, Clear button |
+| `lib/settings.lua` | Theme definitions (8 presets), ExtState persistence |
+| `lib/settings_ui.lua` | Settings popup with live theme preview |
 
 ### Key Abstractions
 
-**Unified Drag Control System** (lines 117-181)
+**Unified Drag Control System** (`lib/state.lua`)
 ```lua
 drag_controls = {
   gain = { active, start_y, start_value, shift_held },
@@ -75,10 +86,19 @@ drag_controls = {
   semitones = { ... },
   cents = { ... },
 }
-start_drag(name, mouse_y, value, track_shift)
-end_drag(name)
-is_dragging(name)
-get_drag_delta(ctx, name, mouse_y, current_value, fine_sensitivity)
+state.start_drag(name, mouse_y, value, track_shift)
+state.end_drag(name)
+state.is_dragging(name)
+state.get_drag_delta(ctx, name, mouse_y, current_value, fine_sensitivity)
+```
+
+**Settings System** (`lib/settings.lua`, `lib/settings_ui.lua`)
+```lua
+settings.THEMES           -- 8 color theme presets
+settings.current          -- Active theme_id and shortcuts
+settings.get_colors()     -- Get current theme colors
+settings.apply(new)       -- Apply and persist to ExtState
+settings.check_shortcut() -- Check if shortcut key combo pressed
 ```
 
 **Peak Caching System**

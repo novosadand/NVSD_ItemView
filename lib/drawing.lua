@@ -125,9 +125,44 @@ function drawing.draw_time_ruler(draw_list, x, y, width, height, view_start, vie
 end
 
 -- Draw file info bar at the top
+-- Returns: mouse_over_filename, gear_clicked
 function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file_path, mouse_x, mouse_y, item, config, utils)
   reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, config.COLOR_INFO_BAR_BG)
   reaper.ImGui_DrawList_AddLine(draw_list, x, y + height, x + width, y + height, 0x333333FF, 1)
+
+  -- Gear icon (settings) on the right
+  local gear_size = 12
+  local gear_padding = 4
+  local gear_x = x + width - gear_size - gear_padding
+  local gear_y = y + (height - gear_size) / 2
+  local gear_cx = gear_x + gear_size / 2
+  local gear_cy = gear_y + gear_size / 2
+
+  local mouse_in_gear = mouse_x >= gear_x - 2 and mouse_x <= gear_x + gear_size + 2
+                        and mouse_y >= gear_y - 2 and mouse_y <= gear_y + gear_size + 2
+
+  local gear_color = mouse_in_gear and 0xCCCCCCFF or 0x888888FF
+
+  -- Draw gear icon (simple cog shape)
+  local outer_r = gear_size / 2
+  local inner_r = outer_r * 0.5
+  local teeth = 6
+
+  -- Outer circle with teeth
+  reaper.ImGui_DrawList_AddCircleFilled(draw_list, gear_cx, gear_cy, outer_r * 0.75, gear_color, 16)
+
+  -- Draw teeth
+  for i = 0, teeth - 1 do
+    local angle = (i / teeth) * math.pi * 2
+    local tooth_x = gear_cx + math.cos(angle) * outer_r * 0.95
+    local tooth_y = gear_cy + math.sin(angle) * outer_r * 0.95
+    reaper.ImGui_DrawList_AddCircleFilled(draw_list, tooth_x, tooth_y, outer_r * 0.25, gear_color, 8)
+  end
+
+  -- Inner hole
+  reaper.ImGui_DrawList_AddCircleFilled(draw_list, gear_cx, gear_cy, inner_r * 0.6, config.COLOR_INFO_BAR_BG, 12)
+
+  local gear_clicked = mouse_in_gear and reaper.ImGui_IsMouseClicked(ctx, 0)
 
   -- Mute toggle
   local mute_size = 10
@@ -241,10 +276,10 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
 
   if mouse_over_filename and reaper.ImGui_IsMouseClicked(ctx, 0) then
     reaper.Main_OnCommand(41623, 0)
-    return true
+    return true, false
   end
 
-  return mouse_over_filename
+  return mouse_over_filename, gear_clicked
 end
 
 -- Draw waveform with looping support
@@ -329,13 +364,24 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
     peak_maxs[ch] = 0
   end
 
-  -- Pre-compute color constants
-  local FILL_ACTIVE = 0x4A9F4ACC
-  local OUTLINE_ACTIVE = 0x5ABF5AFF
-  local FILL_LOOPED = 0x3A7A3ACC
-  local OUTLINE_LOOPED = 0x4A8F4AFF
-  local FILL_INACTIVE = 0x2A4A2ACC
-  local OUTLINE_INACTIVE = 0x3A6A3AFF
+  -- Derive waveform colors from config (with alpha for fill)
+  local function color_with_alpha(color, alpha)
+    return ((color >> 8) << 8) | alpha
+  end
+  local function darken_color(color, factor)
+    local r = ((color >> 24) & 0xFF) * factor
+    local g = ((color >> 16) & 0xFF) * factor
+    local b = ((color >> 8) & 0xFF) * factor
+    local a = color & 0xFF
+    return (math.floor(r) << 24) | (math.floor(g) << 16) | (math.floor(b) << 8) | a
+  end
+
+  local OUTLINE_ACTIVE = config.COLOR_WAVEFORM
+  local FILL_ACTIVE = color_with_alpha(darken_color(config.COLOR_WAVEFORM, 0.85), 0xCC)
+  local OUTLINE_INACTIVE = config.COLOR_WAVEFORM_INACTIVE
+  local FILL_INACTIVE = color_with_alpha(darken_color(config.COLOR_WAVEFORM_INACTIVE, 0.7), 0xCC)
+  local OUTLINE_LOOPED = darken_color(config.COLOR_WAVEFORM, 0.75)
+  local FILL_LOOPED = color_with_alpha(darken_color(config.COLOR_WAVEFORM, 0.6), 0xCC)
 
   -- Cache last index range to skip recalculation for same range
   local last_idx_start, last_idx_end = -1, -1

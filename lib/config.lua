@@ -3,6 +3,9 @@
 
 local config = {}
 
+-- Settings reference (set by main script)
+config.settings = nil
+
 -- Layout dimensions
 config.MARKER_WIDTH = 12
 config.WINDOW_PADDING = 2
@@ -21,23 +24,80 @@ config.PITCH_KNOB_RADIUS = 16
 config.PITCH_MIN = -48
 config.PITCH_MAX = 48
 
--- Colors (0xRRGGBBAA format)
-config.COLOR_WAVEFORM = 0x5A9F5AFF
-config.COLOR_WAVEFORM_INACTIVE = 0x3A6A3AFF
-config.COLOR_WAVEFORM_BG = 0x1A1A1AFF
-config.COLOR_CENTERLINE = 0x2A2A2AFF
-config.COLOR_MARKER = 0x4A90D9FF
-config.COLOR_MARKER_HOVER = 0x6AB0F9FF
-config.COLOR_BORDER = 0x4A7A4AFF
-config.COLOR_RULER_BG = 0x252525FF
-config.COLOR_RULER_TEXT = 0x888888FF
-config.COLOR_RULER_TICK = 0x666666FF
-config.COLOR_GRID_BAR = 0x383838FF
-config.COLOR_GRID_BEAT = 0x282828FF
-config.COLOR_PLAYHEAD = 0x00CC00FF
-config.COLOR_INFO_BAR_BG = 0x1E1E1EFF
-config.COLOR_INFO_BAR_TEXT = 0xBBBBBBFF
-config.COLOR_INFO_BAR_ICON = 0x5A9F5AFF
+-- Default colors (0xRRGGBBAA format)
+local DEFAULT_COLORS = {
+  waveform = 0x5A9F5AFF,
+  waveform_inactive = 0x3A6A3AFF,
+  waveform_bg = 0x1A1A1AFF,
+  centerline = 0x2A2A2AFF,
+  markers = 0x4A90D9FF,
+  markers_hover = 0x6AB0F9FF,
+  border = 0x4A7A4AFF,
+  ruler_bg = 0x252525FF,
+  ruler_text = 0x888888FF,
+  ruler_tick = 0x666666FF,
+  grid_bar = 0x383838FF,
+  grid_beat = 0x282828FF,
+  playhead = 0x00CC00FF,
+  info_bar_bg = 0x1E1E1EFF,
+  info_bar_text = 0xBBBBBBFF,
+  info_bar_icon = 0x5A9F5AFF,
+  btn_on = 0x4A90D9FF,
+  btn_off = 0x404040FF,
+  btn_hover = 0x5AA0E9FF,
+  btn_text = 0xFFFFFFFF,
+}
+
+-- Color properties (updated by refresh_colors)
+config.COLOR_WAVEFORM = DEFAULT_COLORS.waveform
+config.COLOR_WAVEFORM_INACTIVE = DEFAULT_COLORS.waveform_inactive
+config.COLOR_WAVEFORM_BG = DEFAULT_COLORS.waveform_bg
+config.COLOR_CENTERLINE = DEFAULT_COLORS.centerline
+config.COLOR_MARKER = DEFAULT_COLORS.markers
+config.COLOR_MARKER_HOVER = DEFAULT_COLORS.markers_hover
+config.COLOR_BORDER = DEFAULT_COLORS.border
+config.COLOR_RULER_BG = DEFAULT_COLORS.ruler_bg
+config.COLOR_RULER_TEXT = DEFAULT_COLORS.ruler_text
+config.COLOR_RULER_TICK = DEFAULT_COLORS.ruler_tick
+config.COLOR_GRID_BAR = DEFAULT_COLORS.grid_bar
+config.COLOR_GRID_BEAT = DEFAULT_COLORS.grid_beat
+config.COLOR_PLAYHEAD = DEFAULT_COLORS.playhead
+config.COLOR_INFO_BAR_BG = DEFAULT_COLORS.info_bar_bg
+config.COLOR_INFO_BAR_TEXT = DEFAULT_COLORS.info_bar_text
+config.COLOR_INFO_BAR_ICON = DEFAULT_COLORS.info_bar_icon
+config.COLOR_BTN_ON = DEFAULT_COLORS.btn_on
+config.COLOR_BTN_OFF = DEFAULT_COLORS.btn_off
+config.COLOR_BTN_HOVER = DEFAULT_COLORS.btn_hover
+config.COLOR_BTN_TEXT = DEFAULT_COLORS.btn_text
+
+-- Refresh colors from settings (call this when settings change)
+function config.refresh_colors()
+  local colors = DEFAULT_COLORS
+  if config.settings then
+    colors = config.settings.get_colors()
+  end
+
+  config.COLOR_WAVEFORM = colors.waveform
+  config.COLOR_WAVEFORM_INACTIVE = colors.waveform_inactive
+  config.COLOR_WAVEFORM_BG = colors.waveform_bg
+  config.COLOR_CENTERLINE = colors.centerline
+  config.COLOR_MARKER = colors.markers
+  config.COLOR_MARKER_HOVER = colors.markers_hover
+  config.COLOR_BORDER = colors.border
+  config.COLOR_RULER_BG = colors.ruler_bg
+  config.COLOR_RULER_TEXT = colors.ruler_text
+  config.COLOR_RULER_TICK = colors.ruler_tick
+  config.COLOR_GRID_BAR = colors.grid_bar
+  config.COLOR_GRID_BEAT = colors.grid_beat
+  config.COLOR_PLAYHEAD = colors.playhead
+  config.COLOR_INFO_BAR_BG = colors.info_bar_bg
+  config.COLOR_INFO_BAR_TEXT = colors.info_bar_text
+  config.COLOR_INFO_BAR_ICON = colors.info_bar_icon
+  config.COLOR_BTN_ON = colors.btn_on
+  config.COLOR_BTN_OFF = colors.btn_off
+  config.COLOR_BTN_HOVER = colors.btn_hover
+  config.COLOR_BTN_TEXT = colors.btn_text
+end
 
 -- Pitch shift mode values (I_PITCHMODE)
 config.PITCH_MODES = {

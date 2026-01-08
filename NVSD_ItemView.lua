@@ -12,6 +12,13 @@ local state = dofile(script_dir .. "/lib/state.lua")
 local utils = dofile(script_dir .. "/lib/utils.lua")
 local drawing = dofile(script_dir .. "/lib/drawing.lua")
 local controls = dofile(script_dir .. "/lib/controls.lua")
+local settings = dofile(script_dir .. "/lib/settings.lua")
+local settings_ui = dofile(script_dir .. "/lib/settings_ui.lua")
+
+-- Initialize settings
+config.settings = settings
+settings.load()
+config.refresh_colors()
 
 -- Auto-reload: Detect file changes and restart script
 local function get_file_size(path)
@@ -76,17 +83,26 @@ local function loop()
   local visible, open = reaper.ImGui_Begin(ctx, "NVSD_ItemView", true, window_flags)
 
   if visible then
-    -- Handle undo/redo shortcuts
+    -- Handle undo/redo shortcuts (from settings)
+    if settings.check_shortcut(ctx, "undo") then
+      reaper.Main_OnCommand(40029, 0)
+    elseif settings.check_shortcut(ctx, "redo") then
+      reaper.Main_OnCommand(40030, 0)
+    end
+
+    -- Also support Ctrl+Shift+Z as alternate redo
     local ctrl = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
     local shift = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
     local z_key = reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Z())
-    local y_key = reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Y())
-
-    if ctrl and z_key and not shift then
-      reaper.Main_OnCommand(40029, 0)
-    elseif ctrl and (y_key or (z_key and shift)) then
+    if ctrl and shift and z_key then
       reaper.Main_OnCommand(40030, 0)
     end
+
+    -- Refresh colors (in case settings were applied)
+    config.refresh_colors()
+
+    -- Draw settings UI if open
+    settings_ui.draw(ctx, settings)
 
     -- Create undo point on mouse release if we were dragging
     if reaper.ImGui_IsMouseReleased(ctx, 0) and state.undo_block_open then
@@ -114,17 +130,30 @@ local function loop()
 
     local item = nil
 
-    -- Priority 1: If mouse button is held over an item, use that and make it sticky
+    -- Track mouse button state for edge-drag detection
+    local mouse_is_down = false
     if reaper.JS_Mouse_GetState then
       local mouse_state = reaper.JS_Mouse_GetState(1)
-      if (mouse_state & 1) ~= 0 then
-        local mouse_screen_x, mouse_screen_y = reaper.GetMousePosition()
-        local item_under_mouse, take_under_mouse = reaper.GetItemFromPoint(mouse_screen_x, mouse_screen_y, false)
-        if item_under_mouse then
-          item = item_under_mouse
-          state.sticky_item = item
-        end
+      mouse_is_down = (mouse_state & 1) ~= 0
+    end
+
+    -- Detect mouse button press (transition from up to down)
+    local mouse_just_pressed = mouse_is_down and not state.was_mouse_down
+    state.was_mouse_down = mouse_is_down
+
+    -- Priority 1: On mouse press, check if over an item and make it sticky
+    -- Only update sticky on initial click, not while dragging (prevents jumping to other items)
+    if mouse_just_pressed then
+      local mouse_screen_x, mouse_screen_y = reaper.GetMousePosition()
+      local item_under_mouse, take_under_mouse = reaper.GetItemFromPoint(mouse_screen_x, mouse_screen_y, false)
+      if item_under_mouse then
+        state.sticky_item = item_under_mouse
       end
+    end
+
+    -- While mouse is held, use the sticky item (don't change it)
+    if mouse_is_down and state.sticky_item then
+      item = state.sticky_item
     end
 
     -- Priority 2: Use sticky item if valid
@@ -293,7 +322,28 @@ local function loop()
 
           -- Draw file info bar at the top
           local file_path = reaper.GetMediaSourceFileName(source, "")
-          drawing.draw_info_bar(draw_list, ctx, wave_x, info_bar_y, waveform_width, config.INFO_BAR_HEIGHT, source, file_path, mouse_x, mouse_y, item, config, utils)
+          local _, gear_clicked = drawing.draw_info_bar(draw_list, ctx, wave_x, info_bar_y, waveform_width, config.INFO_BAR_HEIGHT, source, file_path, mouse_x, mouse_y, item, config, utils)
+
+          -- Open settings when gear is clicked
+          if gear_clicked then
+            settings_ui.open(settings)
+          end
+
+          -- Right-click menu
+          if reaper.ImGui_IsMouseClicked(ctx, 1) then
+            local in_window = mouse_x >= cursor_x and mouse_x <= cursor_x + avail_w
+                              and mouse_y >= cursor_y and mouse_y <= cursor_y + avail_h
+            if in_window then
+              reaper.ImGui_OpenPopup(ctx, "context_menu")
+            end
+          end
+
+          if reaper.ImGui_BeginPopup(ctx, "context_menu") then
+            if reaper.ImGui_MenuItem(ctx, "Settings...") then
+              settings_ui.open(settings)
+            end
+            reaper.ImGui_EndPopup(ctx)
+          end
 
           -- Calculate ACTUAL current marker positions
           local function time_to_px_actual(t)

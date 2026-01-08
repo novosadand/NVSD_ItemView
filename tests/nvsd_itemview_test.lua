@@ -2169,3 +2169,168 @@ function TestNVSDItemView:test_state_pending_cache_invalidation()
     lu.assertNil(state.cached_source)
     lu.assertEquals(state.cached_source_length, 0)
 end
+
+-- ============================================================================
+-- Settings Module Tests
+-- ============================================================================
+
+function TestNVSDItemView:test_settings_format_shortcut()
+    -- Test shortcut formatting for display
+    local function format_shortcut(shortcut)
+        local parts = {}
+        if shortcut.ctrl then table.insert(parts, "Ctrl") end
+        if shortcut.shift then table.insert(parts, "Shift") end
+        if shortcut.alt then table.insert(parts, "Alt") end
+        table.insert(parts, shortcut.key)
+        return table.concat(parts, "+")
+    end
+
+    -- Test Ctrl+Z
+    local shortcut1 = {ctrl = true, shift = false, alt = false, key = "Z"}
+    lu.assertEquals(format_shortcut(shortcut1), "Ctrl+Z")
+
+    -- Test Ctrl+Shift+Z
+    local shortcut2 = {ctrl = true, shift = true, alt = false, key = "Z"}
+    lu.assertEquals(format_shortcut(shortcut2), "Ctrl+Shift+Z")
+
+    -- Test Alt+F4
+    local shortcut3 = {ctrl = false, shift = false, alt = true, key = "F4"}
+    lu.assertEquals(format_shortcut(shortcut3), "Alt+F4")
+
+    -- Test just a key (no modifiers)
+    local shortcut4 = {ctrl = false, shift = false, alt = false, key = "Space"}
+    lu.assertEquals(format_shortcut(shortcut4), "Space")
+
+    -- Test all modifiers
+    local shortcut5 = {ctrl = true, shift = true, alt = true, key = "A"}
+    lu.assertEquals(format_shortcut(shortcut5), "Ctrl+Shift+Alt+A")
+end
+
+function TestNVSDItemView:test_settings_shortcut_to_string()
+    -- Test serializing shortcut for ExtState storage
+    local function shortcut_to_string(shortcut)
+        local parts = {}
+        if shortcut.ctrl then table.insert(parts, "ctrl") end
+        if shortcut.shift then table.insert(parts, "shift") end
+        if shortcut.alt then table.insert(parts, "alt") end
+        table.insert(parts, shortcut.key)
+        return table.concat(parts, "+")
+    end
+
+    local shortcut = {ctrl = true, shift = false, alt = false, key = "Z"}
+    lu.assertEquals(shortcut_to_string(shortcut), "ctrl+Z")
+
+    local shortcut2 = {ctrl = true, shift = true, alt = false, key = "Y"}
+    lu.assertEquals(shortcut_to_string(shortcut2), "ctrl+shift+Y")
+end
+
+function TestNVSDItemView:test_settings_string_to_shortcut()
+    -- Test parsing shortcut from ExtState storage
+    local function string_to_shortcut(str)
+        local shortcut = {ctrl = false, shift = false, alt = false, key = ""}
+        for part in string.gmatch(str, "[^+]+") do
+            local lower_part = part:lower()
+            if lower_part == "ctrl" then
+                shortcut.ctrl = true
+            elseif lower_part == "shift" then
+                shortcut.shift = true
+            elseif lower_part == "alt" then
+                shortcut.alt = true
+            else
+                shortcut.key = part  -- Keep original case for key name
+            end
+        end
+        return shortcut
+    end
+
+    -- Test parsing Ctrl+Z
+    local result = string_to_shortcut("ctrl+Z")
+    lu.assertTrue(result.ctrl)
+    lu.assertFalse(result.shift)
+    lu.assertFalse(result.alt)
+    lu.assertEquals(result.key, "Z")
+
+    -- Test parsing Ctrl+Shift+Y
+    local result2 = string_to_shortcut("ctrl+shift+Y")
+    lu.assertTrue(result2.ctrl)
+    lu.assertTrue(result2.shift)
+    lu.assertFalse(result2.alt)
+    lu.assertEquals(result2.key, "Y")
+
+    -- Test parsing Alt+F1
+    local result3 = string_to_shortcut("alt+F1")
+    lu.assertFalse(result3.ctrl)
+    lu.assertFalse(result3.shift)
+    lu.assertTrue(result3.alt)
+    lu.assertEquals(result3.key, "F1")
+end
+
+function TestNVSDItemView:test_settings_theme_lookup()
+    -- Test theme retrieval by ID
+    local THEMES = {
+        {id = "default", name = "Default", colors = {waveform = 0x5A9F5AFF}},
+        {id = "ableton_dark", name = "Ableton Dark", colors = {waveform = 0x7B9BA6FF}},
+        {id = "warm", name = "Warm", colors = {waveform = 0xD4915AFF}},
+    }
+
+    local function get_theme(id)
+        for _, theme in ipairs(THEMES) do
+            if theme.id == id then
+                return theme
+            end
+        end
+        return THEMES[1]  -- fallback to default
+    end
+
+    -- Test finding existing theme
+    local theme = get_theme("ableton_dark")
+    lu.assertEquals(theme.name, "Ableton Dark")
+    lu.assertEquals(theme.colors.waveform, 0x7B9BA6FF)
+
+    -- Test fallback to default for unknown ID
+    local unknown = get_theme("nonexistent")
+    lu.assertEquals(unknown.name, "Default")
+end
+
+function TestNVSDItemView:test_settings_check_changes()
+    -- Test detecting unsaved changes in settings
+    local function check_changes(pending_theme_id, original_theme_id, pending_shortcuts, original_shortcuts)
+        if pending_theme_id ~= original_theme_id then
+            return true
+        end
+        for name, pending in pairs(pending_shortcuts) do
+            local original = original_shortcuts[name]
+            if original then
+                if pending.ctrl ~= original.ctrl or
+                   pending.shift ~= original.shift or
+                   pending.alt ~= original.alt or
+                   pending.key ~= original.key then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    local original_shortcuts = {
+        undo = {ctrl = true, shift = false, alt = false, key = "Z"},
+        redo = {ctrl = true, shift = false, alt = false, key = "Y"},
+    }
+
+    -- No changes
+    local pending_same = {
+        undo = {ctrl = true, shift = false, alt = false, key = "Z"},
+        redo = {ctrl = true, shift = false, alt = false, key = "Y"},
+    }
+    lu.assertFalse(check_changes("default", "default", pending_same, original_shortcuts))
+
+    -- Theme changed
+    lu.assertTrue(check_changes("ableton_dark", "default", pending_same, original_shortcuts))
+
+    -- Shortcut changed
+    local pending_changed = {
+        undo = {ctrl = true, shift = true, alt = false, key = "Z"},  -- Added shift
+        redo = {ctrl = true, shift = false, alt = false, key = "Y"},
+    }
+    lu.assertTrue(check_changes("default", "default", pending_changed, original_shortcuts))
+end
