@@ -105,6 +105,16 @@ local function loop()
       reaper.Main_OnCommand(40030, 0)
     end
 
+    -- Zoom shortcuts
+    if settings.check_shortcut(ctx, "zoom_in") then
+      state.zoom_level = math.min(500.0, state.zoom_level * 1.5)
+    elseif settings.check_shortcut(ctx, "zoom_out") then
+      state.zoom_level = math.max(1.0, state.zoom_level / 1.5)
+    elseif settings.check_shortcut(ctx, "reset_zoom") then
+      state.zoom_level = 1.0
+      state.pan_offset = 0
+    end
+
     -- Refresh colors (in case settings were applied)
     config.refresh_colors()
 
@@ -221,6 +231,63 @@ local function loop()
 
     if item then
       local take = reaper.GetActiveTake(item)
+
+      -- Item-specific shortcuts (work on any item with an active take)
+      if take then
+        -- Toggle WARP (preserve pitch)
+        if settings.check_shortcut(ctx, "toggle_warp") then
+          reaper.Undo_BeginBlock()
+          local preserve_pitch = reaper.GetMediaItemTakeInfo_Value(take, "B_PPITCH")
+          local new_value = preserve_pitch == 1 and 0 or 1
+          reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", new_value)
+          reaper.UpdateArrange()
+          reaper.Undo_EndBlock("NVSD_ItemView: Toggle WARP", -1)
+        end
+
+        -- Toggle Mute
+        if settings.check_shortcut(ctx, "toggle_mute") then
+          reaper.Undo_BeginBlock()
+          local is_muted = reaper.GetMediaItemInfo_Value(item, "B_MUTE")
+          local new_mute = is_muted == 1 and 0 or 1
+          reaper.SetMediaItemInfo_Value(item, "B_MUTE", new_mute)
+          reaper.UpdateArrange()
+          reaper.Undo_EndBlock("NVSD_ItemView: Toggle mute", -1)
+        end
+
+        -- Reverse
+        if settings.check_shortcut(ctx, "reverse") then
+          reaper.Undo_BeginBlock()
+          reaper.SelectAllMediaItems(0, false)
+          reaper.SetMediaItemSelected(item, true)
+          reaper.Main_OnCommand(41051, 0)
+          reaper.UpdateArrange()
+          reaper.Undo_EndBlock("NVSD_ItemView: Reverse", -1)
+          state.pending_cache_invalidation = 3
+        end
+
+        -- Clear (reset pitch/speed)
+        if settings.check_shortcut(ctx, "clear") then
+          reaper.Undo_BeginBlock()
+          local current_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
+          local current_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+          local original_length = current_length * current_playrate
+          reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", 0)
+          reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", 1.0)
+          reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 0)
+          reaper.SetMediaItemInfo_Value(item, "D_LENGTH", original_length)
+          reaper.UpdateArrange()
+          reaper.Undo_EndBlock("NVSD_ItemView: Clear pitch/speed", -1)
+        end
+
+        -- Open in external editor
+        if settings.check_shortcut(ctx, "open_editor") then
+          reaper.Undo_BeginBlock()
+          reaper.SelectAllMediaItems(0, false)
+          reaper.SetMediaItemSelected(item, true)
+          reaper.Main_OnCommand(40109, 0)
+          reaper.Undo_EndBlock("NVSD_ItemView: Open in External Editor", -1)
+        end
+      end
 
       if take and not reaper.TakeIsMIDI(take) then
         local take_source = reaper.GetMediaItemTake_Source(take)

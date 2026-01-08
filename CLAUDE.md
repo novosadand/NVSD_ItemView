@@ -255,6 +255,18 @@ end
 
 ---
 
+## Distribution
+
+**ReaPack** is the standard distribution method for REAPER scripts.
+
+**See [docs/REAPACK_DISTRIBUTION.md](docs/REAPACK_DISTRIBUTION.md) for full guide** covering:
+- reapack-index tool installation and commands
+- Package metadata tags (`@version`, `@description`, `@provides`, etc.)
+- Repository structure and workflow
+- How to share via Gumroad + ReaPack
+
+---
+
 ## Contributing Guidelines
 
 1. Write tests before implementing features
