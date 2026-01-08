@@ -721,15 +721,18 @@ local function loop()
             end
           end
 
-          -- Ruler drag zoom
+          -- Ruler drag zoom + pan
           if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_ruler then
             state.is_ruler_dragging = true
             state.ruler_drag_start_y = mouse_y
             state.ruler_drag_start_zoom = state.zoom_level
             state.ruler_drag_cumulative_y = 0
+            state.ruler_drag_start_pan = state.pan_offset
             if state.has_js_extension then
               local screen_x, screen_y = reaper.GetMousePosition()
+              state.ruler_drag_screen_x = screen_x
               state.ruler_drag_screen_y = screen_y
+              state.ruler_drag_cursor_x = screen_x  -- Tracks visible cursor X position
             end
           end
 
@@ -741,12 +744,55 @@ local function loop()
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
             if state.has_js_extension then
               local cur_screen_x, cur_screen_y = reaper.GetMousePosition()
-              state.ruler_drag_cumulative_y = state.ruler_drag_cumulative_y + (cur_screen_y - state.ruler_drag_screen_y)
-              reaper.JS_Mouse_SetPosition(cur_screen_x, state.ruler_drag_screen_y)
+              local delta_x = cur_screen_x - state.ruler_drag_screen_x
+              local delta_y = cur_screen_y - state.ruler_drag_screen_y
+
+              -- Accumulate Y for zoom
+              state.ruler_drag_cumulative_y = state.ruler_drag_cumulative_y + delta_y
+
+              -- Apply zoom
               local zoom_sensitivity = 0.03
               local zoom_multiplier = 1.0 + (state.ruler_drag_cumulative_y * zoom_sensitivity)
-              local new_zoom = state.ruler_drag_start_zoom * zoom_multiplier
-              zoom_to_cursor(new_zoom, mouse_x)
+              local new_zoom = math.max(1.0, state.ruler_drag_start_zoom * zoom_multiplier)
+              state.zoom_level = new_zoom
+
+              -- Check if we can pan (zoomed in)
+              local can_pan = state.zoom_level > 1.0
+
+              -- Apply pan from X movement
+              if can_pan and delta_x ~= 0 then
+                local pan_sensitivity = view_length / waveform_width  -- Time per pixel
+                state.pan_offset = state.pan_offset - (delta_x * pan_sensitivity)
+
+                -- Clamp pan to valid range
+                local range_base = math.max(source_length, start_offset + source_item_length) - math.min(0, start_offset)
+                local half_view = (range_base / state.zoom_level) / 2
+                local range_center = (math.min(0, start_offset) + math.max(source_length, start_offset + source_item_length)) / 2
+                local min_pan = -range_center + half_view
+                local max_pan = source_length - range_center - half_view
+                if min_pan > max_pan then min_pan, max_pan = max_pan, min_pan end
+                state.pan_offset = math.max(min_pan, math.min(max_pan, state.pan_offset))
+              end
+
+              -- Calculate cursor X position
+              local win_x, win_y = reaper.ImGui_GetWindowPos(ctx)
+              local wave_screen_left = win_x + wave_x - cursor_x + config.WINDOW_PADDING
+              local wave_screen_right = wave_screen_left + waveform_width
+
+              local target_cursor_x = state.ruler_drag_cursor_x
+              if can_pan then
+                -- Move cursor X with mouse, but clamp to waveform bounds
+                target_cursor_x = target_cursor_x + delta_x
+                target_cursor_x = math.max(wave_screen_left, math.min(wave_screen_right, target_cursor_x))
+                state.ruler_drag_cursor_x = target_cursor_x
+              end
+              -- If can't pan, cursor X stays locked at ruler_drag_cursor_x
+
+              -- Set cursor position: X can move (within bounds), Y is locked
+              reaper.JS_Mouse_SetPosition(math.floor(state.ruler_drag_cursor_x), state.ruler_drag_screen_y)
+
+              -- Update reference X for next frame's delta calculation
+              state.ruler_drag_screen_x = math.floor(state.ruler_drag_cursor_x)
             else
               local delta_y = mouse_y - state.ruler_drag_start_y
               local zoom_sensitivity = 0.03

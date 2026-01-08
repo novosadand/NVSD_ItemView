@@ -48,8 +48,11 @@ state.zoom_level = 1.0
 state.is_ruler_dragging = false
 state.ruler_drag_start_y = 0
 state.ruler_drag_start_zoom = 1.0
+state.ruler_drag_screen_x = 0
 state.ruler_drag_screen_y = 0
 state.ruler_drag_cumulative_y = 0
+state.ruler_drag_start_pan = 0
+state.ruler_drag_cursor_x = 0  -- Tracks visible cursor X during drag
 state.last_zoomed_item = nil
 
 -- Sticky item state
