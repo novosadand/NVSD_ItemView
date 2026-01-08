@@ -728,6 +728,7 @@ local function loop()
             state.ruler_drag_start_zoom = state.zoom_level
             state.ruler_drag_cumulative_y = 0
             state.ruler_drag_start_pan = state.pan_offset
+            state.ruler_drag_window_x = mouse_x  -- Store window-space X for zoom centering
             if state.has_js_extension then
               local screen_x, screen_y = reaper.GetMousePosition()
               state.ruler_drag_screen_x = screen_x
@@ -750,31 +751,30 @@ local function loop()
               -- Accumulate Y for zoom
               state.ruler_drag_cumulative_y = state.ruler_drag_cumulative_y + delta_y
 
-              -- Apply zoom
+              -- Apply zoom centered on initial cursor position
               local zoom_sensitivity = 0.008
               local zoom_multiplier = 1.0 + (state.ruler_drag_cumulative_y * zoom_sensitivity)
               local new_zoom = math.max(1.0, state.ruler_drag_start_zoom * zoom_multiplier)
-              state.zoom_level = new_zoom
+              zoom_to_cursor(new_zoom, state.ruler_drag_window_x)
 
               -- Check if we can pan (zoomed in)
               local can_pan = state.zoom_level > 1.0
 
-              -- Apply pan from X movement
+              -- Apply additional pan from X movement
               if can_pan and delta_x ~= 0 then
-                local pan_sensitivity = view_length / waveform_width  -- Time per pixel
+                local new_view_length = zoom_base_view_length / state.zoom_level
+                local pan_sensitivity = new_view_length / waveform_width  -- Time per pixel at current zoom
                 state.pan_offset = state.pan_offset - (delta_x * pan_sensitivity)
 
                 -- Clamp pan to valid range
-                local range_base = math.max(source_length, start_offset + source_item_length) - math.min(0, start_offset)
-                local half_view = (range_base / state.zoom_level) / 2
-                local range_center = (math.min(0, start_offset) + math.max(source_length, start_offset + source_item_length)) / 2
+                local half_view = new_view_length / 2
                 local min_pan = -range_center + half_view
                 local max_pan = source_length - range_center - half_view
                 if min_pan > max_pan then min_pan, max_pan = max_pan, min_pan end
                 state.pan_offset = math.max(min_pan, math.min(max_pan, state.pan_offset))
               end
 
-              -- Calculate cursor X position
+              -- Calculate cursor X position in screen coords
               local win_x, win_y = reaper.ImGui_GetWindowPos(ctx)
               local wave_screen_left = win_x + wave_x - cursor_x + config.WINDOW_PADDING
               local wave_screen_right = wave_screen_left + waveform_width

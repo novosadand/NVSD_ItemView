@@ -53,6 +53,7 @@ state.ruler_drag_screen_y = 0
 state.ruler_drag_cumulative_y = 0
 state.ruler_drag_start_pan = 0
 state.ruler_drag_cursor_x = 0  -- Tracks visible cursor X during drag
+state.ruler_drag_window_x = 0  -- Window-space X for zoom centering
 state.last_zoomed_item = nil
 
 -- Sticky item state
