@@ -185,30 +185,13 @@ local function loop()
       state.last_zoomed_item = nil
     end
 
-    -- Skip ALL expensive processing while mouse is held and item is new
-    -- This ensures zero interference with REAPER's native operations
-    local defer_new_item = false
+    -- Skip expensive processing while mouse is held and item is new
+    -- Show "No item selected" temporarily to avoid blocking REAPER
     if item and mouse_is_down and item ~= state.cached_item then
-      if state.cached_item ~= nil then
-        -- Mouse is held and we're looking at a different item than cached
-        -- Keep showing the old cached item to avoid any lag
-        item = state.cached_item
-      else
-        -- First time seeing an item while mouse is held - defer loading
-        defer_new_item = true
-      end
+      item = nil  -- Defer to "No item selected" state
     end
 
-    if defer_new_item then
-      -- Show loading message while deferring
-      local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
-      local text = "Loading..."
-      local text_w = reaper.ImGui_CalcTextSize(ctx, text)
-      local center_x = (avail_w - text_w) / 2
-      local center_y = (avail_h - 13) / 2
-      reaper.ImGui_SetCursorPos(ctx, center_x, center_y)
-      reaper.ImGui_TextColored(ctx, 0x888888FF, text)
-    elseif item then
+    if item then
       local take = reaper.GetActiveTake(item)
 
       if take and not reaper.TakeIsMIDI(take) then
