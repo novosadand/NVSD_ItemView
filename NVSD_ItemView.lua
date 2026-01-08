@@ -751,7 +751,7 @@ local function loop()
               state.ruler_drag_cumulative_y = state.ruler_drag_cumulative_y + delta_y
 
               -- Apply zoom
-              local zoom_sensitivity = 0.03
+              local zoom_sensitivity = 0.008
               local zoom_multiplier = 1.0 + (state.ruler_drag_cumulative_y * zoom_sensitivity)
               local new_zoom = math.max(1.0, state.ruler_drag_start_zoom * zoom_multiplier)
               state.zoom_level = new_zoom
@@ -795,7 +795,7 @@ local function loop()
               state.ruler_drag_screen_x = math.floor(state.ruler_drag_cursor_x)
             else
               local delta_y = mouse_y - state.ruler_drag_start_y
-              local zoom_sensitivity = 0.03
+              local zoom_sensitivity = 0.008
               local zoom_multiplier = 1.0 + (delta_y * zoom_sensitivity)
               local new_zoom = state.ruler_drag_start_zoom * zoom_multiplier
               zoom_to_cursor(new_zoom, mouse_x)
