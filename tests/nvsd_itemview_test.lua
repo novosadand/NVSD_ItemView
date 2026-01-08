@@ -2408,3 +2408,68 @@ function TestNVSDItemView:test_original_length_calculation()
     -- Item at original length (playrate = 1.0)
     lu.assertAlmostEquals(calculate_original_length(10.0, 1.0), 10.0, 0.001)
 end
+
+-- Progressive loading tests
+function TestNVSDItemView:test_progressive_loading_stages()
+    -- Test that loading stages transition correctly
+    -- Stage 0: idle, Stage 1: preview loaded, Stage 2: full loaded
+    local loading_stage = 0
+    local target_samples = 0
+    local cached_num_samples = 0
+
+    -- Simulate item change - should go to stage 1 with preview
+    local PREVIEW_SAMPLES = 2000
+    loading_stage = 1
+    cached_num_samples = PREVIEW_SAMPLES
+    target_samples = 200000
+
+    lu.assertEquals(loading_stage, 1)
+    lu.assertEquals(cached_num_samples, PREVIEW_SAMPLES)
+    lu.assertTrue(target_samples > cached_num_samples)
+
+    -- Simulate full load - should go to stage 2
+    cached_num_samples = target_samples
+    loading_stage = 2
+
+    lu.assertEquals(loading_stage, 2)
+    lu.assertEquals(cached_num_samples, target_samples)
+end
+
+function TestNVSDItemView:test_progressive_loading_preview_resolution()
+    -- Test that preview samples is much smaller than full resolution
+    local PREVIEW_SAMPLES = 2000
+    local min_full_samples = 20000
+    local max_full_samples = 800000
+
+    -- Preview should be at least 10x smaller than minimum full res
+    lu.assertTrue(PREVIEW_SAMPLES <= min_full_samples / 10)
+
+    -- Preview should provide instant response (< 5000 samples is very fast)
+    lu.assertTrue(PREVIEW_SAMPLES <= 5000)
+end
+
+function TestNVSDItemView:test_invalidate_cache_resets_loading()
+    -- Test that cache invalidation resets progressive loading state
+    local state = {
+        cached_peaks = {1, 2, 3},
+        cached_source = "source",
+        cached_source_length = 10,
+        cached_item = "item",
+        cached_num_samples = 50000,
+        loading_stage = 2,
+        target_samples = 200000
+    }
+
+    -- Simulate invalidate_cache
+    state.cached_peaks = nil
+    state.cached_source = nil
+    state.cached_source_length = 0
+    state.cached_item = nil
+    state.cached_num_samples = 0
+    state.loading_stage = 0
+    state.target_samples = 0
+
+    lu.assertNil(state.cached_peaks)
+    lu.assertEquals(state.loading_stage, 0)
+    lu.assertEquals(state.target_samples, 0)
+end

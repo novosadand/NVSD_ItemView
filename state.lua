@@ -14,6 +14,10 @@ state.cached_num_channels = 1
 state.peaks_error = nil
 state.pending_cache_invalidation = 0
 
+-- Progressive loading state
+state.loading_stage = 0  -- 0=idle, 1=preview loaded, 2=full loaded
+state.target_samples = 0  -- Final resolution we want
+
 -- Marker dragging
 state.dragging_start = false
 state.dragging_end = false
@@ -131,6 +135,8 @@ function state.invalidate_cache()
   state.cached_source_length = 0
   state.cached_item = nil
   state.cached_num_samples = 0
+  state.loading_stage = 0
+  state.target_samples = 0
 end
 
 return state

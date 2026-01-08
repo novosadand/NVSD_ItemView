@@ -272,26 +272,48 @@ local function loop()
           -- Check if we need to refresh the cache
           local source_changed = source ~= state.cached_source or source_length ~= state.cached_source_length
           local item_changed = item ~= state.cached_item
-          local samples_changed = desired_samples ~= state.cached_num_samples
           local reversed_changed = is_reversed ~= state.cached_reversed
 
-          if item_changed or source_changed or samples_changed or reversed_changed then
+          -- Progressive loading: instant preview, then full resolution
+          local PREVIEW_SAMPLES = 2000  -- Fast preview resolution
+
+          if item_changed or source_changed or reversed_changed then
+            -- Stage 1: Load fast preview immediately
             state.cached_item = item
             state.cached_source = source
             state.cached_source_length = source_length
-            state.cached_num_samples = desired_samples
             state.cached_reversed = is_reversed
-            local peaks_result, num_ch_or_error = utils.get_peaks(source, desired_samples)
+            state.target_samples = desired_samples
+
+            local peaks_result, num_ch_or_error = utils.get_peaks(source, PREVIEW_SAMPLES)
             if peaks_result then
               state.cached_peaks = peaks_result
               state.cached_num_channels = num_ch_or_error
+              state.cached_num_samples = PREVIEW_SAMPLES
               state.cached_lod = utils.build_lod_peaks(peaks_result, num_ch_or_error)
               state.peaks_error = nil
+              state.loading_stage = 1  -- Preview loaded, need full res
             else
               state.cached_peaks = nil
               state.cached_lod = nil
               state.peaks_error = num_ch_or_error
+              state.loading_stage = 0
             end
+          elseif state.loading_stage == 1 and state.target_samples > state.cached_num_samples then
+            -- Stage 2: Load full resolution in next frame
+            local peaks_result, num_ch_or_error = utils.get_peaks(source, state.target_samples)
+            if peaks_result then
+              state.cached_peaks = peaks_result
+              state.cached_num_channels = num_ch_or_error
+              state.cached_num_samples = state.target_samples
+              state.cached_lod = utils.build_lod_peaks(peaks_result, num_ch_or_error)
+              state.peaks_error = nil
+            end
+            state.loading_stage = 2  -- Full resolution loaded
+          elseif state.loading_stage == 2 and desired_samples ~= state.target_samples then
+            -- Resolution requirements changed (window resize, etc)
+            state.target_samples = desired_samples
+            state.loading_stage = 1  -- Trigger reload next frame
           end
 
           -- Reset pan and zoom when item changes

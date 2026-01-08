@@ -111,7 +111,7 @@ If this script saves you time, consider supporting development. If you're broke,
 
 ## Updates
 
-You'll receive updates as they're released. Current version includes 86 unit tests ensuring reliability across REAPER versions.
+You'll receive updates as they're released. Current version includes 89 unit tests ensuring reliability across REAPER versions.
 
 ---
 

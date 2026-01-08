@@ -121,7 +121,7 @@ settings.check_shortcut() -- Check if shortcut key combo pressed
 cd ~/dev/NVSD_ItemView && lua5.4 tests/run_tests.lua
 ```
 
-### Test Coverage (86 tests)
+### Test Coverage (89 tests)
 - Gain/dB conversions
 - Pitch/semitones/cents conversions
 - Slider position calculations
