@@ -443,28 +443,10 @@ local function loop()
             end
           end
 
-          -- Reset pan and zoom when item changes
-          -- Set initial zoom/pan to show the item's used portion (not entire source)
+          -- Reset zoom and pan when item changes - show full source
           if item ~= state.last_zoomed_item or item ~= state.last_panned_item then
-            -- Calculate zoom to fit item portion with some padding
-            local item_portion = source_item_length
-            local padding = 1.3  -- 30% padding on each side
-            local target_view = item_portion * padding
-
-            if target_view < source_length then
-              -- Zoom in to show item portion
-              state.zoom_level = source_length / target_view
-
-              -- Center view on the item's portion
-              local item_center = start_offset + source_item_length / 2
-              local source_center = source_length / 2
-              state.pan_offset = item_center - source_center
-            else
-              -- Item covers most/all of source, just show everything
-              state.zoom_level = 1.0
-              state.pan_offset = 0
-            end
-
+            state.zoom_level = 1.0
+            state.pan_offset = 0
             state.last_panned_item = item
             state.last_zoomed_item = item
           end
