@@ -50,7 +50,7 @@ No more offset math. No more blind trimming.
 Install via ReaPack (automatic updates included):
 
 1. In REAPER: Extensions > ReaPack > Import repositories
-2. Paste this URL: `https://raw.githubusercontent.com/NVSD/NVSD_ItemView/master/index.xml`
+2. Paste this URL: `https://raw.githubusercontent.com/novosadand/NVSD_ItemView/master/index.xml`
 3. Extensions > ReaPack > Browse packages
 4. Search "NVSD ItemView" > Install
 5. Restart REAPER

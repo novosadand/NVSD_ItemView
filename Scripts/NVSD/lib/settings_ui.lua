@@ -136,7 +136,7 @@ local function draw_appearance_tab(ctx, draw_list, settings, x, y, width, height
       ui_state.pending_theme_id = theme.id
       settings.current.theme_id = theme.id -- Live preview
       settings.colors_dirty = true
-      ui_state.has_changes = check_changes(settings)
+      ui_state.has_changes = ui_state.pending_theme_id ~= ui_state.original_theme_id
     end
   end
 end

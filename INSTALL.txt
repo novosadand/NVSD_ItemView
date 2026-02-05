@@ -28,7 +28,7 @@ Enables: edge-drag waveform display, reverse detection
 STEP 3: Add NVSD Repository
 ----------------------------
 1. In REAPER: Extensions > ReaPack > Import repositories
-2. Paste: https://raw.githubusercontent.com/NVSD/NVSD_ItemView/master/index.xml
+2. Paste: https://raw.githubusercontent.com/novosadand/NVSD_ItemView/master/index.xml
 3. Click OK
 
 

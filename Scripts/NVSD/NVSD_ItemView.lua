@@ -10,8 +10,8 @@
 -- @provides
 --   [nomain] lib/*.lua
 --   [nomain] NVSD_ItemView_Settings.lua
--- @link https://nvsd.gumroad.com
--- @donation https://nvsd.gumroad.com
+-- @link https://github.com/novosadand/NVSD_ItemView
+-- @donation https://novosadand.gumroad.com
 --
 -- Requires: ReaImGui extension
 
