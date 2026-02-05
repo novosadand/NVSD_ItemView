@@ -99,16 +99,6 @@ If this script saves you time, consider supporting development. If you're broke,
 
 ---
 
-## What People Are Saying
-
-*"Finally, REAPER has a proper clip view!"*
-
-*"This should be built into REAPER. Game changer for sample editing."*
-
-*"The pitch controls alone are worth it. So much faster than the item properties dialog."*
-
----
-
 ## Updates
 
 You'll receive updates as they're released. Current version includes 89 unit tests ensuring reliability across REAPER versions.
@@ -117,7 +107,7 @@ You'll receive updates as they're released. Current version includes 89 unit tes
 
 ## Support
 
-Questions? Issues? Reach out and I'll help you get set up.
+Questions? Issues? Email novosad.and@gmail.com and I'll help you get set up.
 
 ---
 

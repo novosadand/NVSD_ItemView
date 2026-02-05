@@ -1,5 +1,18 @@
--- NVSD_ItemView.lua
--- Ableton-style clip view for REAPER audio items
+-- @description NVSD ItemView - Ableton-style Clip View
+-- @author NVSD
+-- @version 1.0.0
+-- @changelog
+--   Initial release
+-- @about
+--   Ableton-style clip view for REAPER audio items.
+--   See full source waveform, drag markers to control playback region.
+--   Built-in gain, pitch, WARP, reverse, and 8 color themes.
+-- @provides
+--   [nomain] lib/*.lua
+--   [nomain] NVSD_ItemView_Settings.lua
+-- @link https://nvsd.gumroad.com
+-- @donation https://nvsd.gumroad.com
+--
 -- Requires: ReaImGui extension
 
 -- Get script directory for loading modules
@@ -45,6 +58,22 @@ end
 -- Create ImGui context
 local ctx = reaper.ImGui_CreateContext("NVSD_ItemView")
 
+-- Intercept mouse wheel on REAPER's main window so we can zoom the waveform
+-- without needing to click the window first (JS extension required)
+local main_hwnd = reaper.GetMainHwnd()
+local wheel_intercepted = false
+if state.has_js_extension and reaper.JS_WindowMessage_Intercept then
+  pcall(reaper.JS_WindowMessage_Release, main_hwnd, "WM_MOUSEWHEEL")
+  wheel_intercepted = reaper.JS_WindowMessage_Intercept(main_hwnd, "WM_MOUSEWHEEL", false) == 1
+end
+local last_wheel_time = 0
+
+reaper.atexit(function()
+  if wheel_intercepted then
+    pcall(reaper.JS_WindowMessage_Release, main_hwnd, "WM_MOUSEWHEEL")
+  end
+end)
+
 -- Check for file changes (call periodically)
 local function check_for_changes()
   if not script_path then return false end
@@ -83,11 +112,50 @@ local function loop()
   local visible, open = reaper.ImGui_Begin(ctx, "NVSD_ItemView", true, window_flags)
 
   if visible then
-    -- Auto-focus window when hovered with Ctrl held (enables scroll-to-zoom without clicking first)
-    local is_hovered = reaper.ImGui_IsWindowHovered(ctx, reaper.ImGui_HoveredFlags_ChildWindows())
-    local ctrl_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
-    if is_hovered and ctrl_held and not reaper.ImGui_IsWindowFocused(ctx) then
-      reaper.ImGui_SetWindowFocus(ctx)
+    -- Peek native mouse wheel events (for Ctrl+scroll zoom without needing to click window)
+    state.native_wheel_delta = 0
+    if wheel_intercepted then
+      local retval, _, time, wParam, lParam = reaper.JS_WindowMessage_Peek(main_hwnd, "WM_MOUSEWHEEL")
+      if retval and time ~= last_wheel_time then
+        last_wheel_time = time
+        local delta_raw = (wParam >> 16) & 0xFFFF
+        if delta_raw > 32767 then delta_raw = delta_raw - 65536 end
+        local keys = wParam & 0xFFFF
+        local ctrl = (keys & 0x0008) ~= 0 -- MK_CONTROL
+
+        -- Check if mouse is over our window using stored screen rect
+        local mx = lParam & 0xFFFF
+        if mx > 32767 then mx = mx - 65536 end
+        local my = (lParam >> 16) & 0xFFFF
+        if my > 32767 then my = my - 65536 end
+        local r = state.win_screen_rect
+        local over_us = r and mx >= r[1] and mx <= r[3] and my >= r[2] and my <= r[4]
+
+        if ctrl and over_us then
+          state.native_wheel_delta = delta_raw
+        else
+          -- Not for us — forward to REAPER
+          reaper.JS_WindowMessage_Release(main_hwnd, "WM_MOUSEWHEEL")
+          reaper.JS_WindowMessage_Send(main_hwnd, "WM_MOUSEWHEEL", wParam, lParam)
+          wheel_intercepted = reaper.JS_WindowMessage_Intercept(main_hwnd, "WM_MOUSEWHEEL", false) == 1
+        end
+      end
+    end
+
+    -- Store window screen rect for native wheel hit testing
+    local win_x, win_y = reaper.ImGui_GetWindowPos(ctx)
+    local win_w, win_h = reaper.ImGui_GetWindowSize(ctx)
+    local ok1, sx1, sy1 = pcall(reaper.ImGui_PointConvertNative, ctx, win_x, win_y, true)
+    if ok1 then
+      local ok2, sx2, sy2 = pcall(reaper.ImGui_PointConvertNative, ctx, win_x + win_w, win_y + win_h, true)
+      if ok2 then
+        state.win_screen_rect = {sx1, sy1, sx2, sy2}
+      end
+    end
+
+    -- Forward Space to REAPER transport (so playback works without clicking back to timeline)
+    if reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Space()) then
+      reaper.Main_OnCommand(40044, 0)  -- Transport: Play/Stop
     end
 
     -- Handle undo/redo shortcuts (from settings)
@@ -115,8 +183,11 @@ local function loop()
       state.pan_offset = 0
     end
 
-    -- Refresh colors (in case settings were applied)
-    config.refresh_colors()
+    -- Refresh colors only when settings change
+    if settings.colors_dirty then
+      config.refresh_colors()
+      settings.colors_dirty = false
+    end
 
     -- Draw settings UI if open
     settings_ui.draw(ctx, settings)
@@ -142,6 +213,8 @@ local function loop()
     -- Clear sticky when selection changes
     if selected_item ~= state.last_selected_item then
       state.sticky_item = nil
+      state.sticky_item_valid = false
+      state.sticky_validation_counter = 0
     end
     state.last_selected_item = selected_item
 
@@ -154,9 +227,19 @@ local function loop()
       mouse_is_down = (mouse_state & 1) ~= 0
     end
 
-    -- Detect mouse button press (transition from up to down)
+    -- Detect mouse button press/release (transitions)
     local mouse_just_pressed = mouse_is_down and not state.was_mouse_down
+    local mouse_just_released = not mouse_is_down and state.was_mouse_down
     state.was_mouse_down = mouse_is_down
+
+    -- Cooldown after mouse release: prevents I/O during the brief gap between
+    -- click release and the next interaction (avoids blocking during rapid clicks/drags)
+    if mouse_just_released then
+      state.load_cooldown = 5  -- ~83ms at 60fps — enough to clear any rapid re-click
+    end
+    if state.load_cooldown > 0 then
+      state.load_cooldown = state.load_cooldown - 1
+    end
 
     -- Priority 1: On mouse press, check if over an item and make it sticky
     -- Only update sticky on initial click, not while dragging (prevents jumping to other items)
@@ -165,6 +248,8 @@ local function loop()
       local item_under_mouse, take_under_mouse = reaper.GetItemFromPoint(mouse_screen_x, mouse_screen_y, false)
       if item_under_mouse then
         state.sticky_item = item_under_mouse
+        state.sticky_item_valid = true
+        state.sticky_validation_counter = 0
       end
     end
 
@@ -173,21 +258,28 @@ local function loop()
       item = state.sticky_item
     end
 
-    -- Priority 2: Use sticky item if valid
+    -- Priority 2: Use sticky item if valid (throttled validation: every 10 frames)
     if not item and state.sticky_item then
-      local still_valid = false
-      local num_items = reaper.CountMediaItems(0)
-      for i = 0, num_items - 1 do
-        if reaper.GetMediaItem(0, i) == state.sticky_item then
-          still_valid = true
-          break
+      state.sticky_validation_counter = state.sticky_validation_counter + 1
+      if state.sticky_validation_counter >= 10 then
+        state.sticky_validation_counter = 0
+        -- Full validation scan
+        local still_valid = false
+        local num_items = reaper.CountMediaItems(0)
+        for i = 0, num_items - 1 do
+          if reaper.GetMediaItem(0, i) == state.sticky_item then
+            still_valid = true
+            break
+          end
+        end
+        state.sticky_item_valid = still_valid
+        if not still_valid then
+          state.sticky_item = nil
         end
       end
 
-      if still_valid then
+      if state.sticky_item_valid then
         item = state.sticky_item
-      else
-        state.sticky_item = nil
       end
     end
 
@@ -376,10 +468,10 @@ local function loop()
           local reversed_changed = is_reversed ~= state.cached_reversed
 
           -- Check if user is dragging in REAPER (mouse button held outside our control)
-          local mouse_held = reaper.ImGui_IsMouseDown(ctx, 0)
+          -- Use JS_Mouse_GetState (system-wide) instead of ImGui_IsMouseDown (ImGui window only)
           local we_are_dragging = state.dragging_start or state.dragging_end or state.is_panning
                                   or state.is_ruler_dragging or state.is_any_control_dragging()
-          local user_dragging_in_reaper = mouse_held and not we_are_dragging
+          local user_dragging_in_reaper = mouse_is_down and not we_are_dragging
 
           -- Get file path for caching
           local file_path = reaper.GetMediaSourceFileName(source, "")
@@ -413,33 +505,63 @@ local function loop()
             end
           end
 
-          -- Only load peaks when user is NOT dragging in REAPER
-          if not user_dragging_in_reaper and state.loading_stage == 0 and state.cached_peaks == nil then
-            -- Load full resolution directly (no preview stage needed when not blocking)
-            local peaks_result, num_ch_or_error = utils.get_peaks(source, desired_samples)
-            if peaks_result then
-              state.cached_peaks = peaks_result
-              state.cached_num_channels = num_ch_or_error
-              state.cached_num_samples = desired_samples
-              state.cached_lod = utils.build_lod_peaks(peaks_result, num_ch_or_error)
-              state.peaks_error = nil
-              state.loading_stage = 2
-
-              -- Store in file cache for future instant access (skip reversed)
-              if file_path and not is_reversed then
-                state.set_cached_peaks(file_path, peaks_result, state.cached_lod, num_ch_or_error, source_length, desired_samples)
+          -- Progressive peak loading (3 stages across frames to prevent blocking)
+          -- Stage 0→1: Fast preview (~4K samples, <5ms) for instant waveform display
+          -- Stage 1→2: Full resolution peaks (spreads I/O to next frame)
+          -- Stage 2+:  Build LOD for fast zoom-out rendering (next frame after that)
+          if not user_dragging_in_reaper and state.load_cooldown == 0 then
+            if state.loading_stage == 0 and state.cached_peaks == nil then
+              -- Stage 1: Fast preview for instant display
+              local preview_count = math.min(desired_samples, math.max(math.floor(waveform_width * 2), 4000))
+              local peaks_result, num_ch_or_error = utils.get_peaks(source, preview_count)
+              if peaks_result then
+                state.cached_peaks = peaks_result
+                state.cached_num_channels = num_ch_or_error
+                state.cached_num_samples = preview_count
+                state.cached_lod = nil
+                state.peaks_error = nil
+                -- Skip to stage 2 if preview already covers full resolution
+                state.loading_stage = preview_count >= desired_samples and 2 or 1
+              else
+                state.peaks_error = num_ch_or_error
               end
-            else
-              state.peaks_error = num_ch_or_error
-            end
-          elseif state.loading_stage == 2 and desired_samples ~= state.cached_num_samples and not user_dragging_in_reaper then
-            -- Resolution requirements changed (window resize, etc)
-            local peaks_result, num_ch_or_error = utils.get_peaks(source, desired_samples)
-            if peaks_result then
-              state.cached_peaks = peaks_result
-              state.cached_num_channels = num_ch_or_error
-              state.cached_num_samples = desired_samples
-              state.cached_lod = utils.build_lod_peaks(peaks_result, num_ch_or_error)
+
+            elseif state.loading_stage == 1 then
+              -- Stage 2: Full resolution peaks
+              local peaks_result, num_ch_or_error = utils.get_peaks(source, desired_samples)
+              if peaks_result then
+                state.cached_peaks = peaks_result
+                state.cached_num_channels = num_ch_or_error
+                state.cached_num_samples = desired_samples
+                state.cached_lod = nil  -- LOD built next frame
+                state.loading_stage = 2
+                -- Store in file cache (LOD added next frame)
+                if file_path and not is_reversed then
+                  state.set_cached_peaks(file_path, peaks_result, nil, num_ch_or_error, source_length, desired_samples)
+                end
+              end
+
+            elseif state.loading_stage == 2 and not state.cached_lod and state.cached_peaks then
+              -- Stage 3: Build LOD for fast zoom-out rendering
+              state.cached_lod = utils.build_lod_peaks(state.cached_peaks, state.cached_num_channels)
+              state.peaks_error = nil
+              -- Update file cache with LOD
+              if file_path and not is_reversed then
+                local entry = state.get_cached_peaks(file_path)
+                if entry then
+                  entry.lod = state.cached_lod
+                end
+              end
+
+            elseif state.loading_stage == 2 and state.cached_lod and desired_samples ~= state.cached_num_samples then
+              -- Resolution changed (window resize): reload
+              local peaks_result, num_ch_or_error = utils.get_peaks(source, desired_samples)
+              if peaks_result then
+                state.cached_peaks = peaks_result
+                state.cached_num_channels = num_ch_or_error
+                state.cached_num_samples = desired_samples
+                state.cached_lod = utils.build_lod_peaks(peaks_result, num_ch_or_error)
+              end
             end
           end
 
@@ -467,6 +589,15 @@ local function loop()
             waveform_width, waveform_height,
             state.cached_peaks, view_offset, view_item_length, source_length, state.pan_offset, state.zoom_level, ruler_y, item_vol, is_reversed, state.cached_num_channels, config, state.cached_lod)
 
+          -- Unified coordinate conversion (used by all subsequent code)
+          local function time_to_px(t)
+            return wave_x + ((t - view_start) / view_length) * waveform_width
+          end
+
+          local function px_to_time(px)
+            return view_start + ((px - wave_x) / waveform_width) * view_length
+          end
+
           -- Draw file info bar at the top
           local file_path = reaper.GetMediaSourceFileName(source, "")
           local _, gear_clicked = drawing.draw_info_bar(draw_list, ctx, wave_x, info_bar_y, waveform_width, config.INFO_BAR_HEIGHT, source, file_path, mouse_x, mouse_y, item, config, utils)
@@ -493,9 +624,6 @@ local function loop()
           end
 
           -- Calculate ACTUAL current marker positions
-          local function time_to_px_actual(t)
-            return wave_x + ((t - view_start) / view_length) * waveform_width
-          end
           local render_start, render_end
           if state.dragging_start or state.dragging_end then
             render_start = state.drag_current_start
@@ -507,8 +635,8 @@ local function loop()
           -- Clamp markers to source bounds (for looped items, show full source)
           render_start = math.max(0, math.min(source_length, render_start))
           render_end = math.max(0, math.min(source_length, render_end))
-          local actual_start_px = time_to_px_actual(render_start) - wave_x
-          local actual_end_px = time_to_px_actual(render_end) - wave_x
+          local actual_start_px = time_to_px(render_start) - wave_x
+          local actual_end_px = time_to_px(render_end) - wave_x
           start_px = actual_start_px
           end_px = actual_end_px
 
@@ -523,12 +651,8 @@ local function loop()
           local COLOR_UNUSED_SOURCE = 0x00000038
           local COLOR_OUTSIDE_SOURCE = 0x00000058
 
-          local function time_to_overlay_px(t)
-            return wave_x + ((t - view_start) / view_length) * waveform_width
-          end
-
-          local source_start_px = time_to_overlay_px(0)
-          local source_end_px = time_to_overlay_px(source_length)
+          local source_start_px = time_to_px(0)
+          local source_end_px = time_to_px(source_length)
           local view_left = wave_x
           local view_right = wave_x + waveform_width
 
@@ -563,24 +687,6 @@ local function loop()
             end
           end
 
-          -- Determine which parts of source are active
-          local function is_source_time_active(t)
-            if t < 0 or t > source_length then return false end
-
-            -- Main item region (clamped to source)
-            local main_start = math.max(0, item_start)
-            local main_end = math.min(source_length, item_end)
-            if t >= main_start and t <= main_end then return true end
-
-            -- Looped region from beginning (when item extends past source end)
-            if loop_end > 0 and t >= 0 and t <= loop_end then return true end
-
-            -- Looped region from end (when item starts before source start)
-            if loop_from_end > 0 and t >= (source_length - loop_from_end) and t <= source_length then return true end
-
-            return false
-          end
-
           -- Draw outside source overlay (before source start)
           if source_start_px > view_left then
             local left = view_left
@@ -605,8 +711,8 @@ local function loop()
           if loop_end > 0 then
             -- Source loops - check if there's a gap between loop_end and main_start
             if loop_end < main_start_clamped then
-              local gap_start_px = time_to_overlay_px(loop_end)
-              local gap_end_px = time_to_overlay_px(main_start_clamped)
+              local gap_start_px = time_to_px(loop_end)
+              local gap_end_px = time_to_px(main_start_clamped)
               local left = math.max(gap_start_px, view_left)
               local right = math.min(gap_end_px, view_right)
               if right > left then
@@ -617,7 +723,7 @@ local function loop()
             -- No loop from end - unused from source start to item start
             if main_start_clamped > 0 then
               local left = math.max(source_start_px, view_left)
-              local right = math.min(time_to_overlay_px(main_start_clamped), view_right)
+              local right = math.min(time_to_px(main_start_clamped), view_right)
               if right > left then
                 reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_UNUSED_SOURCE)
               end
@@ -630,8 +736,8 @@ local function loop()
             -- Source loops from beginning - check if there's a gap
             local loop_start_time = source_length - loop_from_end
             if main_end_clamped < loop_start_time then
-              local gap_start_px = time_to_overlay_px(main_end_clamped)
-              local gap_end_px = time_to_overlay_px(loop_start_time)
+              local gap_start_px = time_to_px(main_end_clamped)
+              local gap_end_px = time_to_px(loop_start_time)
               local left = math.max(gap_start_px, view_left)
               local right = math.min(gap_end_px, view_right)
               if right > left then
@@ -641,7 +747,7 @@ local function loop()
           else
             -- No loop from start - unused from item end to source end
             if main_end_clamped < source_length then
-              local left = math.max(time_to_overlay_px(main_end_clamped), view_left)
+              local left = math.max(time_to_px(main_end_clamped), view_left)
               local right = math.min(source_end_px, view_right)
               if right > left then
                 reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_UNUSED_SOURCE)
@@ -655,11 +761,7 @@ local function loop()
           -- Draw original source boundary markers in ruler
           local COLOR_SOURCE_MARKER = 0xFFAA44FF
 
-          local function source_time_to_px(t)
-            return wave_x + ((t - view_start) / view_length) * waveform_width
-          end
-
-          local orig_start_px = source_time_to_px(0)
+          local orig_start_px = time_to_px(0)
           if orig_start_px >= wave_x - 2 and orig_start_px <= wave_x + waveform_width + 2 then
             reaper.ImGui_DrawList_AddLine(draw_list, orig_start_px, ruler_y, orig_start_px, ruler_y + config.RULER_HEIGHT, COLOR_SOURCE_MARKER, 2)
             local bracket_len = 4
@@ -667,21 +769,12 @@ local function loop()
             reaper.ImGui_DrawList_AddLine(draw_list, orig_start_px, ruler_y + config.RULER_HEIGHT - 1, orig_start_px + bracket_len, ruler_y + config.RULER_HEIGHT - 1, COLOR_SOURCE_MARKER, 2)
           end
 
-          local orig_end_px = source_time_to_px(source_length)
+          local orig_end_px = time_to_px(source_length)
           if orig_end_px >= wave_x - 2 and orig_end_px <= wave_x + waveform_width + 2 then
             reaper.ImGui_DrawList_AddLine(draw_list, orig_end_px, ruler_y, orig_end_px, ruler_y + config.RULER_HEIGHT, COLOR_SOURCE_MARKER, 2)
             local bracket_len = 4
             reaper.ImGui_DrawList_AddLine(draw_list, orig_end_px - bracket_len, ruler_y + 1, orig_end_px, ruler_y + 1, COLOR_SOURCE_MARKER, 2)
             reaper.ImGui_DrawList_AddLine(draw_list, orig_end_px - bracket_len, ruler_y + config.RULER_HEIGHT - 1, orig_end_px, ruler_y + config.RULER_HEIGHT - 1, COLOR_SOURCE_MARKER, 2)
-          end
-
-          -- Helper functions
-          local function px_to_time(px)
-            return view_start + ((px - wave_x) / waveform_width) * view_length
-          end
-
-          local function time_to_px(t)
-            return wave_x + ((t - view_start) / view_length) * waveform_width
           end
 
           -- Draw REAPER timeline selection overlay
@@ -818,10 +911,16 @@ local function loop()
             state.pan_offset = math.max(min_pan, math.min(max_pan, state.pan_offset))
           end
 
-          -- Ctrl+mouse wheel zoom
+          -- Ctrl+mouse wheel zoom (from ImGui input or native OS interception)
           local wheel = reaper.ImGui_GetMouseWheel(ctx)
+          local used_native_wheel = false
+          if wheel == 0 and (state.native_wheel_delta or 0) ~= 0 then
+            wheel = state.native_wheel_delta > 0 and 1 or -1
+            used_native_wheel = true
+            state.native_wheel_delta = 0
+          end
           if wheel ~= 0 and mouse_in_view then
-            local ctrl_down = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
+            local ctrl_down = used_native_wheel or reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
             if ctrl_down then
               local zoom_factor = 1.35
               local new_zoom = wheel > 0 and (state.zoom_level * zoom_factor) or (state.zoom_level / zoom_factor)
@@ -1158,6 +1257,17 @@ local function loop()
           end
           if end_marker_x >= wave_x - config.MARKER_WIDTH and end_marker_x <= wave_x + waveform_width + config.MARKER_WIDTH then
             drawing.draw_marker(draw_list, end_marker_x, wave_y, waveform_height, false, near_end, state.dragging_end, config)
+          end
+
+          -- Draw playhead on top of everything
+          local play_state = reaper.GetPlayState()
+          if play_state & 5 ~= 0 then -- playing (1) or recording (4+1)
+            local play_pos = reaper.GetPlayPosition()
+            local playhead_source = utils.project_to_source_time(play_pos, item_position, start_offset, playrate)
+            local playhead_px = time_to_px(playhead_source)
+            if playhead_px >= wave_x and playhead_px <= wave_x + waveform_width then
+              drawing.draw_playhead(draw_list, playhead_px, wave_y, waveform_height, config)
+            end
           end
 
         else

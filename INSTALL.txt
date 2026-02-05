@@ -36,7 +36,8 @@ STEP 3: Install the Script
 1. Open REAPER
 2. Go to: Options > Show REAPER resource path in explorer/finder
 3. Open the "Scripts" folder (create it if it doesn't exist)
-4. Copy "NVSD_ItemView.lua" into the Scripts folder
+4. Copy the entire "NVSD_ItemView_v1.0.0" folder into the Scripts folder
+   (Keep the folder structure intact - the lib/ subfolder is required)
 
 
 STEP 4: Load the Script
@@ -80,7 +81,7 @@ Waveform doesn't show when dragging item edges:
 
 SUPPORT
 -------
-Questions or issues? Contact: [YOUR EMAIL/SUPPORT LINK]
+Questions or issues? Contact: novosad.and@gmail.com
 
 
 Thank you for your purchase!
