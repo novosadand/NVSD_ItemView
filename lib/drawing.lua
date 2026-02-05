@@ -3,6 +3,25 @@
 
 local drawing = {}
 
+-- Power curve LUT: maps [0..1024] → value^0.7 for fast waveform scaling
+local power_lut = {}
+for i = 0, 1024 do
+  power_lut[i] = (i / 1024) ^ 0.7
+end
+
+-- Fast power curve using LUT: returns sign(value) * |value|^0.7
+local function power_curve(value)
+  if value >= 0 then
+    local idx = value * 1024
+    if idx > 1024 then idx = 1024 end
+    return power_lut[math.floor(idx)]
+  else
+    local idx = -value * 1024
+    if idx > 1024 then idx = 1024 end
+    return -power_lut[math.floor(idx)]
+  end
+end
+
 -- Draw dashed vertical line
 function drawing.draw_dashed_line(draw_list, x, y1, y2, color, dash_length, gap_length, line_width)
   dash_length = dash_length or 5
@@ -284,7 +303,7 @@ end
 
 -- Draw waveform with looping support
 function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offset, source_item_length, source_length, pan_offset_time, zoom_lvl, ruler_y, visual_gain, is_reversed, num_channels, config, lod)
-  if not peaks or #peaks == 0 or source_length <= 0 then return 0, 0, 0, source_length end
+  if not peaks or peaks.count == 0 or source_length <= 0 then return 0, 0, 0, source_length end
 
   pan_offset_time = pan_offset_time or 0
   zoom_lvl = zoom_lvl or 1.0
@@ -335,7 +354,7 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
   local time_per_pixel = view_length / num_samples
 
   -- Select appropriate LOD level based on how many peaks would cover each pixel
-  local peaks_per_pixel = (#peaks / source_length) * time_per_pixel
+  local peaks_per_pixel = (peaks.count / source_length) * time_per_pixel
   local active_peaks, lod_scale = peaks, 1
   if lod and peaks_per_pixel > 2 then
     -- Use coarser LOD when zoomed out (many peaks per pixel)
@@ -351,7 +370,10 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
     end
   end
 
-  local num_peaks = #active_peaks
+  local num_peaks = active_peaks.count
+  local active_ch = active_peaks.channels
+  local active_mins = active_peaks.mins
+  local active_maxs = active_peaks.maxs
   local peaks_per_second = num_peaks / source_length
 
   -- Pre-allocate reusable tables (avoid GC pressure)
@@ -410,14 +432,15 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
     if idx_start ~= last_idx_start or idx_end ~= last_idx_end then
       last_idx_start, last_idx_end = idx_start, idx_end
 
-      -- Aggregate min/max inline (reuse tables instead of allocating)
+      -- Aggregate min/max inline using flat arrays
       for ch = 1, num_channels do
         local ch_min, ch_max = 1, -1
         for idx = idx_start, idx_end do
-          local p = active_peaks[idx]
-          local ch_peak = p[ch] or p[1]
-          if ch_peak.min < ch_min then ch_min = ch_peak.min end
-          if ch_peak.max > ch_max then ch_max = ch_peak.max end
+          local flat_idx = (idx - 1) * active_ch + ch
+          local v_min = active_mins[flat_idx]
+          local v_max = active_maxs[flat_idx]
+          if v_min and v_min < ch_min then ch_min = v_min end
+          if v_max and v_max > ch_max then ch_max = v_max end
         end
         peak_mins[ch] = ch_min
         peak_maxs[ch] = ch_max
@@ -447,10 +470,8 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
       if raw_min > 1 then raw_min = 1 elseif raw_min < -1 then raw_min = -1 end
 
       -- Apply power curve to boost quiet signals (0.7 = between linear and sqrt)
-      local sign_max = raw_max >= 0 and 1 or -1
-      local sign_min = raw_min >= 0 and 1 or -1
-      local scaled_max = sign_max * (math.abs(raw_max) ^ 0.7)
-      local scaled_min = sign_min * (math.abs(raw_min) ^ 0.7)
+      local scaled_max = power_curve(raw_max)
+      local scaled_min = power_curve(raw_min)
 
       local top_y = center_y - (scaled_max * half_height)
       local bot_y = center_y - (scaled_min * half_height)
@@ -472,7 +493,9 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
         reaper.ImGui_DrawList_AddLine(draw_list, prev.px, prev.bot, px, bot_y, outline_color, 1)
       end
 
-      prev_data[ch] = {px = px, top = top_y, bot = bot_y}
+      prev.px = px
+      prev.top = top_y
+      prev.bot = bot_y
     end
   end
 
@@ -545,6 +568,14 @@ function drawing.draw_marker(draw_list, x, y, height, is_start, is_hovered, is_d
     reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
       x, y + height - handle_size, x - handle_size, y + height - handle_size / 2, x, y + height, color)
   end
+end
+
+-- Draw playhead (vertical line with triangle indicator at top)
+function drawing.draw_playhead(draw_list, x, y, height, config)
+  reaper.ImGui_DrawList_AddLine(draw_list, x, y, x, y + height, config.COLOR_PLAYHEAD, 2)
+  local tri_size = 6
+  reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
+    x - tri_size, y, x + tri_size, y, x, y + tri_size, config.COLOR_PLAYHEAD)
 end
 
 -- Draw a knob

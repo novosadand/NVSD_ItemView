@@ -49,6 +49,7 @@ end
 function settings_ui.close(settings, restore_original)
   if restore_original and settings and ui_state.original_theme_id then
     settings.current.theme_id = ui_state.original_theme_id
+    settings.colors_dirty = true
   end
   ui_state.open = false
   ui_state.original_theme_id = nil
@@ -134,6 +135,7 @@ local function draw_appearance_tab(ctx, draw_list, settings, x, y, width, height
     if is_hover and reaper.ImGui_IsMouseClicked(ctx, 0) then
       ui_state.pending_theme_id = theme.id
       settings.current.theme_id = theme.id -- Live preview
+      settings.colors_dirty = true
       ui_state.has_changes = check_changes(settings)
     end
   end

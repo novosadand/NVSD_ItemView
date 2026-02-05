@@ -123,25 +123,38 @@ function utils.get_file_name(path)
   return path:match("([^/\\]+)$") or path
 end
 
--- Get bit depth from WAV file header
+-- Bit depth cache (persists across frames, keyed by file path)
+local bit_depth_cache = {}
+
+-- Get bit depth from WAV file header (cached)
 function utils.get_wav_bit_depth(file_path)
   if not file_path or file_path == "" then return nil end
+
+  local cached = bit_depth_cache[file_path]
+  if cached ~= nil then
+    -- false means "looked up but not a WAV" (distinguish from nil = not cached)
+    return cached ~= false and cached or nil
+  end
+
   local f = io.open(file_path, "rb")
-  if not f then return nil end
+  if not f then
+    bit_depth_cache[file_path] = false
+    return nil
+  end
 
   local riff = f:read(4)
-  if riff ~= "RIFF" then f:close() return nil end
+  if riff ~= "RIFF" then f:close() bit_depth_cache[file_path] = false return nil end
 
   f:read(4)
   local wave = f:read(4)
-  if wave ~= "WAVE" then f:close() return nil end
+  if wave ~= "WAVE" then f:close() bit_depth_cache[file_path] = false return nil end
 
   while true do
     local chunk_id = f:read(4)
-    if not chunk_id then f:close() return nil end
+    if not chunk_id then f:close() bit_depth_cache[file_path] = false return nil end
 
     local chunk_size_bytes = f:read(4)
-    if not chunk_size_bytes then f:close() return nil end
+    if not chunk_size_bytes then f:close() bit_depth_cache[file_path] = false return nil end
 
     local chunk_size = string.byte(chunk_size_bytes, 1) +
                        string.byte(chunk_size_bytes, 2) * 256 +
@@ -153,9 +166,11 @@ function utils.get_wav_bit_depth(file_path)
       if fmt_data and #fmt_data >= 16 then
         local bits_per_sample = string.byte(fmt_data, 15) + string.byte(fmt_data, 16) * 256
         f:close()
+        bit_depth_cache[file_path] = bits_per_sample
         return bits_per_sample
       end
       f:close()
+      bit_depth_cache[file_path] = false
       return nil
     else
       f:seek("cur", chunk_size)
@@ -164,6 +179,8 @@ function utils.get_wav_bit_depth(file_path)
 end
 
 -- Get peaks data from audio source for a specific time range
+-- Returns flat structure: { mins={...}, maxs={...}, count=N, channels=C }
+-- Flat indexing: element for sample i, channel ch = (i-1)*channels + ch
 function utils.get_peaks_for_range(source, start_time, duration, num_samples)
   if not source then return nil, "no source" end
 
@@ -185,32 +202,30 @@ function utils.get_peaks_for_range(source, start_time, duration, num_samples)
 
   if ret == 0 then return nil, "GetPeaks returned 0" end
 
-  local peaks = {}
   local actual_samples = math.min(ret & 0xFFFFF, num_samples)
   local min_block_offset = actual_samples * num_channels
+  local total = actual_samples * num_channels
+  local mins = {}
+  local maxs = {}
 
-  for i = 1, actual_samples do
-    local channels = {}
-
-    if num_channels == 1 then
-      channels[1] = {
-        min = buf[min_block_offset + i] or 0,
-        max = buf[i] or 0
-      }
-    else
+  if num_channels == 1 then
+    for i = 1, actual_samples do
+      mins[i] = buf[min_block_offset + i] or 0
+      maxs[i] = buf[i] or 0
+    end
+  else
+    for i = 1, actual_samples do
       local base_idx = (i - 1) * num_channels + 1
+      local flat_base = (i - 1) * num_channels
       for ch = 1, num_channels do
-        channels[ch] = {
-          max = buf[base_idx + ch - 1] or 0,
-          min = buf[min_block_offset + base_idx + ch - 1] or 0
-        }
+        local flat_idx = flat_base + ch
+        maxs[flat_idx] = buf[base_idx + ch - 1] or 0
+        mins[flat_idx] = buf[min_block_offset + base_idx + ch - 1] or 0
       end
     end
-
-    peaks[i] = channels
   end
 
-  return peaks, num_channels
+  return { mins = mins, maxs = maxs, count = actual_samples, channels = num_channels }, num_channels
 end
 
 -- Get peaks for entire source
@@ -222,38 +237,43 @@ end
 
 -- Build LOD (Level of Detail) peaks for fast rendering at any zoom level
 -- Each level aggregates 4x the previous: L0=original, L1=4x, L2=16x, L3=64x
+-- Input/output: flat format { mins={...}, maxs={...}, count=N, channels=C }
 function utils.build_lod_peaks(peaks, num_channels)
-  if not peaks or #peaks == 0 then return nil end
+  if not peaks or peaks.count == 0 then return nil end
 
   local lod = {peaks}  -- Level 0 is original
 
   local current = peaks
   for level = 1, 4 do  -- Build 4 additional levels
     local factor = 4
-    local new_len = math.floor(#current / factor)
+    local cur_count = current.count
+    local cur_ch = current.channels
+    local new_len = math.floor(cur_count / factor)
     if new_len < 10 then break end  -- Stop if too few peaks
 
-    local aggregated = {}
-    for i = 1, new_len do
-      local base = (i - 1) * factor + 1
-      local channels = {}
+    local new_mins = {}
+    local new_maxs = {}
+    local cur_mins = current.mins
+    local cur_maxs = current.maxs
 
-      for ch = 1, num_channels do
+    for i = 1, new_len do
+      local base_sample = (i - 1) * factor  -- 0-based sample index of first in group
+      for ch = 1, cur_ch do
         local ch_min, ch_max = 1, -1
         for j = 0, factor - 1 do
-          local p = current[base + j]
-          if p then
-            local ch_peak = p[ch] or p[1]
-            if ch_peak.min < ch_min then ch_min = ch_peak.min end
-            if ch_peak.max > ch_max then ch_max = ch_peak.max end
-          end
+          local src_idx = (base_sample + j) * cur_ch + ch
+          local v_min = cur_mins[src_idx]
+          local v_max = cur_maxs[src_idx]
+          if v_min and v_min < ch_min then ch_min = v_min end
+          if v_max and v_max > ch_max then ch_max = v_max end
         end
-        channels[ch] = {min = ch_min, max = ch_max}
+        local dst_idx = (i - 1) * cur_ch + ch
+        new_mins[dst_idx] = ch_min
+        new_maxs[dst_idx] = ch_max
       end
-
-      aggregated[i] = channels
     end
 
+    local aggregated = { mins = new_mins, maxs = new_maxs, count = new_len, channels = cur_ch }
     lod[level + 1] = aggregated
     current = aggregated
   end

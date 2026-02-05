@@ -269,6 +269,9 @@ settings.THEMES = {
   },
 }
 
+-- Dirty flag: when true, config.refresh_colors() will run next frame
+settings.colors_dirty = true  -- Start dirty so initial load applies colors
+
 -- Current settings (loaded from ExtState or defaults)
 settings.current = {
   theme_id = "default",
@@ -367,6 +370,7 @@ end
 function settings.apply(new_settings)
   settings.current.theme_id = new_settings.theme_id
   settings.current.shortcuts = new_settings.shortcuts
+  settings.colors_dirty = true
   settings.save()
 end
 
@@ -382,6 +386,7 @@ function settings.reset_all()
       key = default.key
     }
   end
+  settings.colors_dirty = true
   settings.save()
 end
 

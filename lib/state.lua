@@ -17,6 +17,7 @@ state.pending_cache_invalidation = 0
 -- Progressive loading state
 state.loading_stage = 0  -- 0=idle, 1=preview loaded, 2=full loaded
 state.target_samples = 0  -- Final resolution we want
+state.load_cooldown = 0   -- Frames to wait after mouse release before loading
 
 -- Multi-item peaks cache (keyed by source file path)
 state.peaks_cache = {}  -- { [filepath] = { peaks, lod, num_channels, source_length, num_samples } }
@@ -59,6 +60,8 @@ state.last_zoomed_item = nil
 -- Sticky item state
 state.sticky_item = nil
 state.last_selected_item = nil
+state.sticky_validation_counter = 0
+state.sticky_item_valid = false
 
 -- Cursor lock state
 state.drag_lock_screen_x = 0
