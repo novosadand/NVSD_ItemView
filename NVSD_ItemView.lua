@@ -58,22 +58,6 @@ end
 -- Create ImGui context
 local ctx = reaper.ImGui_CreateContext("NVSD_ItemView")
 
--- Intercept mouse wheel on REAPER's main window so we can zoom the waveform
--- without needing to click the window first (JS extension required)
-local main_hwnd = reaper.GetMainHwnd()
-local wheel_intercepted = false
-if state.has_js_extension and reaper.JS_WindowMessage_Intercept then
-  pcall(reaper.JS_WindowMessage_Release, main_hwnd, "WM_MOUSEWHEEL")
-  wheel_intercepted = reaper.JS_WindowMessage_Intercept(main_hwnd, "WM_MOUSEWHEEL", false) == 1
-end
-local last_wheel_time = 0
-
-reaper.atexit(function()
-  if wheel_intercepted then
-    pcall(reaper.JS_WindowMessage_Release, main_hwnd, "WM_MOUSEWHEEL")
-  end
-end)
-
 -- Check for file changes (call periodically)
 local function check_for_changes()
   if not script_path then return false end
@@ -112,45 +96,11 @@ local function loop()
   local visible, open = reaper.ImGui_Begin(ctx, "NVSD_ItemView", true, window_flags)
 
   if visible then
-    -- Peek native mouse wheel events (for Ctrl+scroll zoom without needing to click window)
-    state.native_wheel_delta = 0
-    if wheel_intercepted then
-      local retval, _, time, wParam, lParam = reaper.JS_WindowMessage_Peek(main_hwnd, "WM_MOUSEWHEEL")
-      if retval and time ~= last_wheel_time then
-        last_wheel_time = time
-        local delta_raw = (wParam >> 16) & 0xFFFF
-        if delta_raw > 32767 then delta_raw = delta_raw - 65536 end
-        local keys = wParam & 0xFFFF
-        local ctrl = (keys & 0x0008) ~= 0 -- MK_CONTROL
-
-        -- Check if mouse is over our window using stored screen rect
-        local mx = lParam & 0xFFFF
-        if mx > 32767 then mx = mx - 65536 end
-        local my = (lParam >> 16) & 0xFFFF
-        if my > 32767 then my = my - 65536 end
-        local r = state.win_screen_rect
-        local over_us = r and mx >= r[1] and mx <= r[3] and my >= r[2] and my <= r[4]
-
-        if ctrl and over_us then
-          state.native_wheel_delta = delta_raw
-        else
-          -- Not for us — forward to REAPER
-          reaper.JS_WindowMessage_Release(main_hwnd, "WM_MOUSEWHEEL")
-          reaper.JS_WindowMessage_Send(main_hwnd, "WM_MOUSEWHEEL", wParam, lParam)
-          wheel_intercepted = reaper.JS_WindowMessage_Intercept(main_hwnd, "WM_MOUSEWHEEL", false) == 1
-        end
-      end
-    end
-
-    -- Store window screen rect for native wheel hit testing
-    local win_x, win_y = reaper.ImGui_GetWindowPos(ctx)
-    local win_w, win_h = reaper.ImGui_GetWindowSize(ctx)
-    local ok1, sx1, sy1 = pcall(reaper.ImGui_PointConvertNative, ctx, win_x, win_y, true)
-    if ok1 then
-      local ok2, sx2, sy2 = pcall(reaper.ImGui_PointConvertNative, ctx, win_x + win_w, win_y + win_h, true)
-      if ok2 then
-        state.win_screen_rect = {sx1, sy1, sx2, sy2}
-      end
+    -- Auto-focus window when hovered with Ctrl held (enables scroll-to-zoom without clicking first)
+    local is_hovered = reaper.ImGui_IsWindowHovered(ctx, reaper.ImGui_HoveredFlags_ChildWindows())
+    local ctrl_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
+    if is_hovered and ctrl_held and not reaper.ImGui_IsWindowFocused(ctx) then
+      reaper.ImGui_SetWindowFocus(ctx)
     end
 
     -- Forward Space to REAPER transport (so playback works without clicking back to timeline)
@@ -911,16 +861,10 @@ local function loop()
             state.pan_offset = math.max(min_pan, math.min(max_pan, state.pan_offset))
           end
 
-          -- Ctrl+mouse wheel zoom (from ImGui input or native OS interception)
+          -- Ctrl+mouse wheel zoom
           local wheel = reaper.ImGui_GetMouseWheel(ctx)
-          local used_native_wheel = false
-          if wheel == 0 and (state.native_wheel_delta or 0) ~= 0 then
-            wheel = state.native_wheel_delta > 0 and 1 or -1
-            used_native_wheel = true
-            state.native_wheel_delta = 0
-          end
           if wheel ~= 0 and mouse_in_view then
-            local ctrl_down = used_native_wheel or reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
+            local ctrl_down = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
             if ctrl_down then
               local zoom_factor = 1.35
               local new_zoom = wheel > 0 and (state.zoom_level * zoom_factor) or (state.zoom_level / zoom_factor)
