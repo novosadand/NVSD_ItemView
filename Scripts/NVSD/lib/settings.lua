@@ -8,8 +8,6 @@ local EXT_SECTION = "NVSD_ItemView"
 
 -- Default shortcuts (using key names that map to ImGui_Key_*)
 settings.DEFAULT_SHORTCUTS = {
-  undo = {ctrl = true, shift = false, alt = false, key = "Z"},
-  redo = {ctrl = true, shift = false, alt = false, key = "Y"},
   zoom_in = {ctrl = false, shift = false, alt = false, key = ""},  -- Not set by default
   zoom_out = {ctrl = false, shift = false, alt = false, key = ""},
   reset_zoom = {ctrl = false, shift = false, alt = false, key = "F"},

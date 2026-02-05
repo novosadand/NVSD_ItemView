@@ -108,19 +108,15 @@ local function loop()
       reaper.Main_OnCommand(40044, 0)  -- Transport: Play/Stop
     end
 
-    -- Handle undo/redo shortcuts (from settings)
-    if settings.check_shortcut(ctx, "undo") then
-      reaper.Main_OnCommand(40029, 0)
-    elseif settings.check_shortcut(ctx, "redo") then
-      reaper.Main_OnCommand(40030, 0)
-    end
-
-    -- Also support Ctrl+Shift+Z as alternate redo
+    -- Forward undo/redo to REAPER (universal, not configurable)
     local ctrl = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
     local shift = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
-    local z_key = reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Z())
-    if ctrl and shift and z_key then
-      reaper.Main_OnCommand(40030, 0)
+    if ctrl then
+      if reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Z()) then
+        reaper.Main_OnCommand(shift and 40030 or 40029, 0)  -- Shift: Redo, else Undo
+      elseif reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Y()) then
+        reaper.Main_OnCommand(40030, 0)  -- Redo
+      end
     end
 
     -- Zoom shortcuts
@@ -1037,8 +1033,8 @@ local function loop()
 
           -- Mouse button 4/5 quick marker positioning
           if mouse_in_waveform or mouse_in_marker_area then
-            local clicked_mouse4 = reaper.ImGui_IsMouseClicked(ctx, 4)
-            local clicked_mouse5 = reaper.ImGui_IsMouseClicked(ctx, 3)
+            local clicked_mouse4 = reaper.ImGui_IsMouseClicked(ctx, 3)  -- ImGui Extra1 = Mouse4
+            local clicked_mouse5 = reaper.ImGui_IsMouseClicked(ctx, 4)  -- ImGui Extra2 = Mouse5
 
             if clicked_mouse4 or clicked_mouse5 then
               local click_time = px_to_time(mouse_x)

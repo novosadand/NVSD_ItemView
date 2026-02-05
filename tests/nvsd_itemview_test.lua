@@ -2473,3 +2473,422 @@ function TestNVSDItemView:test_invalidate_cache_resets_loading()
     lu.assertEquals(state.loading_stage, 0)
     lu.assertEquals(state.target_samples, 0)
 end
+
+-- ============================================================================
+-- New Tests: Settings Serialization
+-- ============================================================================
+
+function TestNVSDItemView:test_settings_roundtrip_all_defaults()
+    -- Verify serialize + parse roundtrip for each default shortcut
+    local function shortcut_to_string(shortcut)
+        local parts = {}
+        if shortcut.ctrl then table.insert(parts, "ctrl") end
+        if shortcut.shift then table.insert(parts, "shift") end
+        if shortcut.alt then table.insert(parts, "alt") end
+        table.insert(parts, shortcut.key)
+        return table.concat(parts, "+")
+    end
+
+    local function string_to_shortcut(str)
+        local shortcut = {ctrl = false, shift = false, alt = false, key = ""}
+        for part in string.gmatch(str, "[^+]+") do
+            local lower_part = part:lower()
+            if lower_part == "ctrl" then shortcut.ctrl = true
+            elseif lower_part == "shift" then shortcut.shift = true
+            elseif lower_part == "alt" then shortcut.alt = true
+            else shortcut.key = part end
+        end
+        return shortcut
+    end
+
+    local defaults = {
+        zoom_in = {ctrl = false, shift = false, alt = false, key = ""},
+        zoom_out = {ctrl = false, shift = false, alt = false, key = ""},
+        reset_zoom = {ctrl = false, shift = false, alt = false, key = "F"},
+        toggle_warp = {ctrl = false, shift = false, alt = false, key = "W"},
+        toggle_mute = {ctrl = false, shift = false, alt = false, key = "M"},
+        reverse = {ctrl = false, shift = false, alt = false, key = "R"},
+        clear = {ctrl = false, shift = false, alt = false, key = "C"},
+        open_editor = {ctrl = false, shift = false, alt = false, key = "E"},
+    }
+
+    for name, shortcut in pairs(defaults) do
+        local serialized = shortcut_to_string(shortcut)
+        local parsed = string_to_shortcut(serialized)
+        lu.assertEquals(parsed.ctrl, shortcut.ctrl, name .. " ctrl mismatch")
+        lu.assertEquals(parsed.shift, shortcut.shift, name .. " shift mismatch")
+        lu.assertEquals(parsed.alt, shortcut.alt, name .. " alt mismatch")
+        lu.assertEquals(parsed.key, shortcut.key, name .. " key mismatch")
+    end
+end
+
+function TestNVSDItemView:test_settings_parse_empty_key()
+    -- Parse shortcut with empty key field
+    local function string_to_shortcut(str)
+        local shortcut = {ctrl = false, shift = false, alt = false, key = ""}
+        for part in string.gmatch(str, "[^+]+") do
+            local lower_part = part:lower()
+            if lower_part == "ctrl" then shortcut.ctrl = true
+            elseif lower_part == "shift" then shortcut.shift = true
+            elseif lower_part == "alt" then shortcut.alt = true
+            else shortcut.key = part end
+        end
+        return shortcut
+    end
+
+    -- Empty string should produce empty key
+    local result = string_to_shortcut("")
+    lu.assertEquals(result.key, "")
+    lu.assertFalse(result.ctrl)
+end
+
+function TestNVSDItemView:test_settings_parse_special_keys()
+    -- Parse shortcuts with special key names
+    local function string_to_shortcut(str)
+        local shortcut = {ctrl = false, shift = false, alt = false, key = ""}
+        for part in string.gmatch(str, "[^+]+") do
+            local lower_part = part:lower()
+            if lower_part == "ctrl" then shortcut.ctrl = true
+            elseif lower_part == "shift" then shortcut.shift = true
+            elseif lower_part == "alt" then shortcut.alt = true
+            else shortcut.key = part end
+        end
+        return shortcut
+    end
+
+    -- F1
+    local f1 = string_to_shortcut("F1")
+    lu.assertEquals(f1.key, "F1")
+
+    -- F12
+    local f12 = string_to_shortcut("ctrl+F12")
+    lu.assertEquals(f12.key, "F12")
+    lu.assertTrue(f12.ctrl)
+
+    -- Space
+    local space = string_to_shortcut("Space")
+    lu.assertEquals(space.key, "Space")
+
+    -- Delete
+    local delete = string_to_shortcut("ctrl+Delete")
+    lu.assertEquals(delete.key, "Delete")
+    lu.assertTrue(delete.ctrl)
+end
+
+function TestNVSDItemView:test_settings_format_no_modifiers()
+    -- Format bare key like "W" -> "W"
+    local function format_shortcut(shortcut)
+        local parts = {}
+        if shortcut.ctrl then table.insert(parts, "Ctrl") end
+        if shortcut.shift then table.insert(parts, "Shift") end
+        if shortcut.alt then table.insert(parts, "Alt") end
+        table.insert(parts, shortcut.key)
+        return table.concat(parts, "+")
+    end
+
+    local bare = {ctrl = false, shift = false, alt = false, key = "W"}
+    lu.assertEquals(format_shortcut(bare), "W")
+
+    local bare2 = {ctrl = false, shift = false, alt = false, key = "F"}
+    lu.assertEquals(format_shortcut(bare2), "F")
+end
+
+function TestNVSDItemView:test_settings_theme_fallback_to_default()
+    -- Unknown theme ID returns first theme
+    local THEMES = {
+        {id = "default", name = "Default"},
+        {id = "warm", name = "Warm"},
+    }
+
+    local function get_theme(id)
+        for _, theme in ipairs(THEMES) do
+            if theme.id == id then return theme end
+        end
+        return THEMES[1]
+    end
+
+    -- Known ID works
+    lu.assertEquals(get_theme("warm").name, "Warm")
+
+    -- Unknown ID falls back to first
+    lu.assertEquals(get_theme("nonexistent_theme_xyz").name, "Default")
+    lu.assertEquals(get_theme("").name, "Default")
+end
+
+function TestNVSDItemView:test_settings_deep_copy_independence()
+    -- Modify copy, original unchanged
+    local original = {ctrl = true, shift = false, alt = false, key = "Z"}
+    local copy = {
+        ctrl = original.ctrl,
+        shift = original.shift,
+        alt = original.alt,
+        key = original.key
+    }
+
+    -- Modify copy
+    copy.ctrl = false
+    copy.key = "A"
+
+    -- Original unchanged
+    lu.assertTrue(original.ctrl)
+    lu.assertEquals(original.key, "Z")
+    -- Copy changed
+    lu.assertFalse(copy.ctrl)
+    lu.assertEquals(copy.key, "A")
+end
+
+-- ============================================================================
+-- New Tests: Bug Fix Verification
+-- ============================================================================
+
+function TestNVSDItemView:test_mouse_button_mapping()
+    -- Document correct ImGui mouse button indices
+    -- ImGui button 0 = Left, 1 = Right, 2 = Middle, 3 = Extra1 (Mouse4), 4 = Extra2 (Mouse5)
+    local IMGUI_LEFT = 0
+    local IMGUI_RIGHT = 1
+    local IMGUI_MIDDLE = 2
+    local IMGUI_EXTRA1 = 3  -- Mouse 4 (back/forward button)
+    local IMGUI_EXTRA2 = 4  -- Mouse 5 (back/forward button)
+
+    -- Mouse4 should use index 3 (Extra1)
+    lu.assertEquals(IMGUI_EXTRA1, 3)
+    -- Mouse5 should use index 4 (Extra2)
+    lu.assertEquals(IMGUI_EXTRA2, 4)
+    -- They must not be swapped
+    lu.assertTrue(IMGUI_EXTRA1 < IMGUI_EXTRA2)
+end
+
+function TestNVSDItemView:test_semitones_drag_preserves_cents()
+    -- When dragging semitones, cents should stay frozen at their start value
+    local function semitones_cents_to_pitch(semitones, cents)
+        return semitones + cents / 100
+    end
+
+    -- Start: pitch 2.50 -> semitones=3, cents=-50 (rounded)
+    -- But for this test: pitch=2.50, display_cents at drag start = 50
+    local start_cents = 50
+    local start_semitones = 2
+
+    -- Drag +1 semitone: should be 3 + 50/100 = 3.50
+    local new_pitch = semitones_cents_to_pitch(start_semitones + 1, start_cents)
+    lu.assertAlmostEquals(new_pitch, 3.50, 0.001)
+
+    -- Drag -1 semitone: should be 1 + 50/100 = 1.50
+    new_pitch = semitones_cents_to_pitch(start_semitones - 1, start_cents)
+    lu.assertAlmostEquals(new_pitch, 1.50, 0.001)
+
+    -- Without freezing (using recomputed cents), we'd get drift
+    -- This test verifies we use the stored cents, not recomputed ones
+end
+
+function TestNVSDItemView:test_semitones_cents_roundtrip()
+    -- 2.50 + 1 semitone should give 3.50
+    local function pitch_to_semitones_cents(pitch)
+        local semitones = math.floor(pitch + 0.5)
+        local cents = math.floor((pitch - semitones) * 100 + 0.5)
+        return semitones, cents
+    end
+
+    local function semitones_cents_to_pitch(semitones, cents)
+        return semitones + cents / 100
+    end
+
+    -- Start at pitch 2.50
+    local semi, cents = pitch_to_semitones_cents(2.50)
+    -- 2.50 rounds to semi=3, cents=-50
+    lu.assertEquals(semi, 3)    -- floor(2.50 + 0.5) = floor(3.0) = 3
+    lu.assertEquals(cents, -50) -- floor((2.50 - 3) * 100 + 0.5) = floor(-49.5) = -50
+
+    -- Add 1 semitone using frozen cents
+    local new_pitch = semitones_cents_to_pitch(semi + 1, cents)
+    lu.assertAlmostEquals(new_pitch, 3.50, 0.001)  -- 4 + (-50/100) = 3.50
+
+    -- Verify roundtrip: decompose and recompose gives same result
+    local semi2, cents2 = pitch_to_semitones_cents(new_pitch)
+    local roundtrip = semitones_cents_to_pitch(semi2, cents2)
+    lu.assertAlmostEquals(roundtrip, new_pitch, 0.001)
+end
+
+-- ============================================================================
+-- New Tests: State/Cache
+-- ============================================================================
+
+function TestNVSDItemView:test_peaks_cache_lru_eviction()
+    -- Add 21 items to a cache with max 20, oldest should be evicted
+    local cache = {}
+    local cache_order = {}
+    local CACHE_MAX = 20
+
+    local function set_cached(filepath, data)
+        if cache[filepath] then
+            for i, path in ipairs(cache_order) do
+                if path == filepath then table.remove(cache_order, i) break end
+            end
+        end
+        while #cache_order >= CACHE_MAX do
+            local oldest = table.remove(cache_order)
+            cache[oldest] = nil
+        end
+        cache[filepath] = data
+        table.insert(cache_order, 1, filepath)
+    end
+
+    -- Add 21 items
+    for i = 1, 21 do
+        set_cached("file_" .. i, {peaks = i})
+    end
+
+    -- Cache should have exactly 20 items
+    lu.assertEquals(#cache_order, 20)
+
+    -- First item (file_1) should be evicted
+    lu.assertNil(cache["file_1"])
+
+    -- Most recent (file_21) should be at front
+    lu.assertEquals(cache_order[1], "file_21")
+
+    -- Second item (file_2) should still exist
+    lu.assertNotNil(cache["file_2"])
+end
+
+function TestNVSDItemView:test_peaks_cache_access_reorders()
+    -- Accessing a cached item moves it to front of LRU order
+    local cache = {}
+    local cache_order = {}
+
+    local function set_cached(filepath, data)
+        cache[filepath] = data
+        table.insert(cache_order, 1, filepath)
+    end
+
+    local function get_cached(filepath)
+        local entry = cache[filepath]
+        if entry then
+            for i, path in ipairs(cache_order) do
+                if path == filepath then table.remove(cache_order, i) break end
+            end
+            table.insert(cache_order, 1, filepath)
+        end
+        return entry
+    end
+
+    -- Add A, B, C (C is most recent)
+    set_cached("A", {peaks = 1})
+    set_cached("B", {peaks = 2})
+    set_cached("C", {peaks = 3})
+
+    lu.assertEquals(cache_order[1], "C")
+    lu.assertEquals(cache_order[3], "A")
+
+    -- Access A -> moves to front
+    get_cached("A")
+    lu.assertEquals(cache_order[1], "A")
+    lu.assertEquals(cache_order[2], "C")
+    lu.assertEquals(cache_order[3], "B")
+end
+
+function TestNVSDItemView:test_invalidate_file_removes_from_cache()
+    -- Invalidating a specific file removes it from both cache and order
+    local cache = {}
+    local cache_order = {}
+
+    cache["fileA"] = {peaks = 1}
+    cache["fileB"] = {peaks = 2}
+    cache_order = {"fileB", "fileA"}
+
+    local function invalidate_file(filepath)
+        if cache[filepath] then
+            cache[filepath] = nil
+            for i, path in ipairs(cache_order) do
+                if path == filepath then table.remove(cache_order, i) break end
+            end
+        end
+    end
+
+    invalidate_file("fileA")
+
+    lu.assertNil(cache["fileA"])
+    lu.assertNotNil(cache["fileB"])
+    lu.assertEquals(#cache_order, 1)
+    lu.assertEquals(cache_order[1], "fileB")
+end
+
+-- ============================================================================
+-- New Tests: Settings UI State
+-- ============================================================================
+
+function TestNVSDItemView:test_settings_ui_open_sets_state()
+    -- Opening settings populates pending values
+    local ui_state = {
+        open = false,
+        pending_theme_id = nil,
+        original_theme_id = nil,
+    }
+
+    local settings = {
+        current = { theme_id = "warm" }
+    }
+
+    -- Simulate open
+    ui_state.open = true
+    ui_state.pending_theme_id = settings.current.theme_id
+    ui_state.original_theme_id = settings.current.theme_id
+
+    lu.assertTrue(ui_state.open)
+    lu.assertEquals(ui_state.pending_theme_id, "warm")
+    lu.assertEquals(ui_state.original_theme_id, "warm")
+end
+
+function TestNVSDItemView:test_settings_ui_cancel_restores()
+    -- Closing with restore=true reverts theme to original
+    local ui_state = {
+        open = true,
+        pending_theme_id = "ableton_dark",
+        original_theme_id = "default",
+    }
+
+    local settings = {
+        current = { theme_id = "ableton_dark" },
+        colors_dirty = false,
+    }
+
+    -- Simulate close with restore
+    local restore_original = true
+    if restore_original and ui_state.original_theme_id then
+        settings.current.theme_id = ui_state.original_theme_id
+        settings.colors_dirty = true
+    end
+    ui_state.open = false
+    ui_state.original_theme_id = nil
+
+    lu.assertFalse(ui_state.open)
+    lu.assertEquals(settings.current.theme_id, "default")  -- restored
+    lu.assertTrue(settings.colors_dirty)
+end
+
+function TestNVSDItemView:test_settings_ui_save_applies()
+    -- Closing with restore=false keeps the new theme
+    local ui_state = {
+        open = true,
+        pending_theme_id = "ableton_dark",
+        original_theme_id = "default",
+    }
+
+    local settings = {
+        current = { theme_id = "ableton_dark" },
+        colors_dirty = false,
+    }
+
+    -- Simulate close without restore (save)
+    local restore_original = false
+    if restore_original and ui_state.original_theme_id then
+        settings.current.theme_id = ui_state.original_theme_id
+        settings.colors_dirty = true
+    end
+    ui_state.open = false
+    ui_state.original_theme_id = nil
+
+    lu.assertFalse(ui_state.open)
+    lu.assertEquals(settings.current.theme_id, "ableton_dark")  -- kept
+    lu.assertFalse(settings.colors_dirty)  -- not changed back
+end

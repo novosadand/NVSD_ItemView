@@ -68,15 +68,11 @@ state.drag_lock_screen_x = 0
 state.drag_lock_screen_y = 0
 state.drag_cumulative_delta_y = 0
 state.drag_last_screen_y = 0  -- Track last frame's Y position for delta calculation
-state.drag_window_to_screen_y = 0
 state.has_js_extension = reaper.JS_Mouse_SetPosition ~= nil
 
 -- Warp mode state
 state.warp_mode = false
 state.warp_dropdown_open = false
-
--- Mouse tracking for click vs drag detection
-state.mouse_held_frames = 0
 
 -- Unified drag control state
 state.drag_controls = {

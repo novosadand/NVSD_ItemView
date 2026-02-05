@@ -322,10 +322,6 @@ function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, pa
     state.end_drag("gain")
   elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_slider then
     state.start_drag("gain", mouse_y, slider_pos, true)
-    if state.has_js_extension then
-      local _, screen_y = reaper.GetMousePosition()
-      state.drag_window_to_screen_y = screen_y - mouse_y
-    end
   end
 
   if reaper.ImGui_IsMouseReleased(ctx, 0) and state.is_dragging("gain") then
@@ -480,6 +476,7 @@ function controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, p
     state.end_drag("semitones")
   elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_semitones_box then
     state.start_drag("semitones", mouse_y, display_semitones, false)
+    state.drag_controls.semitones.start_cents = display_cents  -- Capture cents at drag start
   end
 
   if reaper.ImGui_IsMouseReleased(ctx, 0) and state.is_dragging("semitones") then
@@ -489,7 +486,8 @@ function controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, p
   if state.is_dragging("semitones") and reaper.ImGui_IsMouseDown(ctx, 0) then
     local delta_y = state.get_drag_delta(ctx, "semitones", mouse_y, display_semitones, nil)
     local delta_semitones = math.floor(delta_y / 10 + 0.5)
-    local new_pitch = math.max(config.PITCH_MIN, math.min(config.PITCH_MAX, utils.semitones_cents_to_pitch(state.drag_controls.semitones.start_value + delta_semitones, display_cents)))
+    local frozen_cents = state.drag_controls.semitones.start_cents or display_cents
+    local new_pitch = math.max(config.PITCH_MIN, math.min(config.PITCH_MAX, utils.semitones_cents_to_pitch(state.drag_controls.semitones.start_value + delta_semitones, frozen_cents)))
     if take then
       set_take_pitch(take, new_pitch, state, utils)
       reaper.UpdateArrange()
