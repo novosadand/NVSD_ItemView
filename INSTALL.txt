@@ -4,22 +4,16 @@ NVSD ItemView - Installation Guide
 REQUIREMENTS
 ------------
 - REAPER 6.0 or higher
-- ReaImGui extension (required)
+- ReaPack (package manager)
+- ReaImGui extension (required, installed via ReaPack)
 - SWS Extension (recommended)
 - js_ReaScriptAPI (optional)
 
 
-STEP 1: Install ReaImGui (Required)
------------------------------------
-1. Open REAPER
-2. Go to: Extensions > ReaPack > Browse packages
-3. Search for "ReaImGui"
-4. Right-click > Install
-5. Restart REAPER
-
-If you don't have ReaPack:
-- Download from: https://reapack.com
-- Run installer, restart REAPER, then follow steps above
+STEP 1: Install ReaPack (if you don't have it)
+-----------------------------------------------
+1. Download from: https://reapack.com
+2. Run installer, restart REAPER
 
 
 STEP 2: Install SWS Extension (Recommended)
@@ -31,22 +25,22 @@ Enables: edge-drag waveform display, reverse detection
 3. Restart REAPER
 
 
-STEP 3: Install the Script
+STEP 3: Add NVSD Repository
+----------------------------
+1. In REAPER: Extensions > ReaPack > Import repositories
+2. Paste: https://raw.githubusercontent.com/NVSD/NVSD_ItemView/master/index.xml
+3. Click OK
+
+
+STEP 4: Install the Script
 --------------------------
-1. Open REAPER
-2. Go to: Options > Show REAPER resource path in explorer/finder
-3. Open the "Scripts" folder (create it if it doesn't exist)
-4. Copy the entire "NVSD_ItemView_v1.0.0" folder into the Scripts folder
-   (Keep the folder structure intact - the lib/ subfolder is required)
+1. Extensions > ReaPack > Browse packages
+2. Search for "NVSD ItemView"
+3. Right-click > Install
+4. Restart REAPER
+5. The script is now in your Actions list!
 
-
-STEP 4: Load the Script
------------------------
-1. In REAPER, open the Actions List (press "?" or go to Actions > Show action list)
-2. Click "Load ReaScript..."
-3. Navigate to your Scripts folder
-4. Select "NVSD_ItemView.lua"
-5. The script is now in your action list!
+ReaImGui will be installed automatically as a dependency.
 
 
 STEP 5: (Optional) Assign a Shortcut
@@ -64,24 +58,27 @@ USAGE
 4. Drag blue markers to adjust which portion plays
 5. Use left panel for gain, pitch, and warp controls
 
-For full documentation, see README.md or visit the product page.
+For full documentation, see README.md
+
+
+UPDATING
+--------
+Extensions > ReaPack > Synchronize packages
+Updates are delivered automatically.
 
 
 TROUBLESHOOTING
 ---------------
 "This script requires ReaImGui" error:
-  → Install ReaImGui via ReaPack and restart REAPER
+  -> Install ReaImGui via ReaPack and restart REAPER
 
 Window doesn't appear:
-  → Make sure ReaImGui is installed and REAPER was restarted
+  -> Make sure ReaImGui is installed and REAPER was restarted
 
 Waveform doesn't show when dragging item edges:
-  → Install SWS Extension for this feature
+  -> Install SWS Extension for this feature
 
 
 SUPPORT
 -------
 Questions or issues? Contact: novosad.and@gmail.com
-
-
-Thank you for your purchase!
