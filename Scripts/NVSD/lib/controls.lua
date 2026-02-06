@@ -11,10 +11,10 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   local row_y = left_col_y + 10
   local text_height = 13
 
-  local COLOR_BTN_ON = 0x4A90D9FF
-  local COLOR_BTN_OFF = 0x404040FF
-  local COLOR_BTN_HOVER = 0x5AA0E9FF
-  local COLOR_BTN_TEXT = 0xFFFFFFFF
+  local COLOR_BTN_ON = config.COLOR_BTN_ON
+  local COLOR_BTN_OFF = config.COLOR_BTN_OFF
+  local COLOR_BTN_HOVER = config.COLOR_BTN_HOVER
+  local COLOR_BTN_TEXT = config.COLOR_BTN_TEXT
 
   -- Detect warp mode from B_PPITCH (preserve pitch when changing rate)
   -- Warp mode (blue): B_PPITCH=1 (matches REAPER's item properties checkbox)

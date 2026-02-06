@@ -162,6 +162,8 @@ function utils.get_wav_bit_depth(file_path)
                        string.byte(chunk_size_bytes, 3) * 65536 +
                        string.byte(chunk_size_bytes, 4) * 16777216
 
+    if chunk_size <= 0 then f:close() bit_depth_cache[file_path] = false return nil end
+
     if chunk_id == "fmt " then
       local fmt_data = f:read(math.min(chunk_size, 16))
       if fmt_data and #fmt_data >= 16 then
@@ -227,77 +229,6 @@ function utils.get_peaks_for_range(source, start_time, duration, num_samples)
   end
 
   return { mins = mins, maxs = maxs, count = actual_samples, channels = num_channels }, num_channels
-end
-
--- Get peaks for entire source
-function utils.get_peaks(source, num_samples)
-  if not source then return nil, "no source" end
-  local source_length = reaper.GetMediaSourceLength(source)
-  return utils.get_peaks_for_range(source, 0, source_length, num_samples)
-end
-
--- Build LOD (Level of Detail) peaks for fast rendering at any zoom level
--- Each level aggregates 4x the previous: L0=original, L1=4x, L2=16x, L3=64x
--- Input/output: flat format { mins={...}, maxs={...}, count=N, channels=C }
-function utils.build_lod_peaks(peaks, num_channels)
-  if not peaks or peaks.count == 0 then return nil end
-
-  local lod = {peaks}  -- Level 0 is original
-
-  local current = peaks
-  for level = 1, 4 do  -- Build 4 additional levels
-    local factor = 4
-    local cur_count = current.count
-    local cur_ch = current.channels
-    local new_len = math.floor(cur_count / factor)
-    if new_len < 10 then break end  -- Stop if too few peaks
-
-    local new_mins = {}
-    local new_maxs = {}
-    local cur_mins = current.mins
-    local cur_maxs = current.maxs
-
-    for i = 1, new_len do
-      local base_sample = (i - 1) * factor  -- 0-based sample index of first in group
-      for ch = 1, cur_ch do
-        local ch_min, ch_max = math.huge, -math.huge
-        for j = 0, factor - 1 do
-          local src_idx = (base_sample + j) * cur_ch + ch
-          local v_min = cur_mins[src_idx]
-          local v_max = cur_maxs[src_idx]
-          if v_min and v_min < ch_min then ch_min = v_min end
-          if v_max and v_max > ch_max then ch_max = v_max end
-        end
-        local dst_idx = (i - 1) * cur_ch + ch
-        new_mins[dst_idx] = ch_min
-        new_maxs[dst_idx] = ch_max
-      end
-    end
-
-    local aggregated = { mins = new_mins, maxs = new_maxs, count = new_len, channels = cur_ch }
-    lod[level + 1] = aggregated
-    current = aggregated
-  end
-
-  return lod
-end
-
--- Select appropriate LOD level based on peaks needed per pixel
-function utils.select_lod_level(lod, peaks_per_pixel)
-  if not lod then return nil, 1 end
-
-  -- Each level reduces by 4x, so:
-  -- Level 0: original, Level 1: 4x, Level 2: 16x, Level 3: 64x, Level 4: 256x
-  local level = 1
-  local threshold = peaks_per_pixel
-
-  if threshold > 128 and lod[5] then level = 5
-  elseif threshold > 32 and lod[4] then level = 4
-  elseif threshold > 8 and lod[3] then level = 3
-  elseif threshold > 2 and lod[2] then level = 2
-  end
-
-  return lod[level], 4 ^ (level - 1)  -- Return peaks and scale factor
 end
 
 -- Check if mouse is near marker

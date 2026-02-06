@@ -1,6 +1,6 @@
 -- @description NVSD ItemView - Ableton-style clip view for REAPER items
 -- @author NVSD
--- @version 1.0.0
+-- @version 1.1.0
 -- @changelog
 --   Initial release
 -- @about
@@ -266,12 +266,20 @@ local function loop()
 
         -- Reverse
         if settings.check_shortcut(ctx, "reverse") then
+          local saved_items = {}
+          for i = 0, reaper.CountSelectedMediaItems(0) - 1 do
+            saved_items[#saved_items + 1] = reaper.GetSelectedMediaItem(0, i)
+          end
           reaper.Undo_BeginBlock()
           reaper.SelectAllMediaItems(0, false)
           reaper.SetMediaItemSelected(item, true)
           reaper.Main_OnCommand(41051, 0)
           reaper.UpdateArrange()
           reaper.Undo_EndBlock("NVSD_ItemView: Reverse", -1)
+          reaper.SelectAllMediaItems(0, false)
+          for _, sel_item in ipairs(saved_items) do
+            reaper.SetMediaItemSelected(sel_item, true)
+          end
           state.pending_cache_invalidation = 3
         end
 
@@ -291,11 +299,19 @@ local function loop()
 
         -- Open in external editor
         if settings.check_shortcut(ctx, "open_editor") then
+          local saved_items = {}
+          for i = 0, reaper.CountSelectedMediaItems(0) - 1 do
+            saved_items[#saved_items + 1] = reaper.GetSelectedMediaItem(0, i)
+          end
           reaper.Undo_BeginBlock()
           reaper.SelectAllMediaItems(0, false)
           reaper.SetMediaItemSelected(item, true)
           reaper.Main_OnCommand(40109, 0)
           reaper.Undo_EndBlock("NVSD_ItemView: Open in External Editor", -1)
+          reaper.SelectAllMediaItems(0, false)
+          for _, sel_item in ipairs(saved_items) do
+            reaper.SetMediaItemSelected(sel_item, true)
+          end
         end
       end
 
@@ -984,13 +1000,15 @@ local function loop()
           end
 
           -- Helper: snap source time to REAPER grid
-          local function snap_to_grid_if_enabled(source_t)
+          -- snap_offset: override start_offset for snapping (use drag_start_offset during marker drags)
+          local function snap_to_grid_if_enabled(source_t, snap_offset)
             local snap_enabled = reaper.GetToggleCommandState(1157) == 1
             if not snap_enabled then return source_t end
 
-            local project_t = utils.source_to_project_time(source_t, item_position, start_offset, playrate)
+            local offset = snap_offset or start_offset
+            local project_t = utils.source_to_project_time(source_t, item_position, offset, playrate)
             local snapped_project_t = reaper.SnapToGrid(0, project_t)
-            return utils.project_to_source_time(snapped_project_t, item_position, start_offset, playrate)
+            return utils.project_to_source_time(snapped_project_t, item_position, offset, playrate)
           end
 
           local snap_threshold_time = (config.SNAP_THRESHOLD_PX / waveform_width) * view_length
@@ -1022,7 +1040,7 @@ local function loop()
                 new_start = end_snapped - original_source_length
                 snapped_to_boundary = true
               else
-                new_start = snap_to_grid_if_enabled(raw_start)
+                new_start = snap_to_grid_if_enabled(raw_start, state.drag_start_offset)
               end
             end
 
@@ -1058,7 +1076,7 @@ local function loop()
               local overflow_time = (overflow_px / waveform_width) * source_length
               new_start = mouse_x < wave_x and (edge_time - overflow_time) or (edge_time + overflow_time)
             end
-            new_start = snap_to_grid_if_enabled(new_start)
+            new_start = snap_to_grid_if_enabled(new_start, state.drag_start_offset)
             new_start = snap_to_source_boundary(new_start, source_length, snap_threshold_time)
             new_start = math.min(new_start, original_source_end - 0.01)
             local new_source_length = original_source_end - new_start
@@ -1083,8 +1101,9 @@ local function loop()
               local overflow_time = (overflow_px / waveform_width) * source_length
               new_end = mouse_x < wave_x and (edge_time - overflow_time) or (edge_time + overflow_time)
             end
-            new_end = snap_to_grid_if_enabled(new_end)
+            new_end = snap_to_grid_if_enabled(new_end, state.drag_start_offset)
             new_end = snap_to_source_boundary(new_end, source_length, snap_threshold_time)
+            new_end = math.max(state.drag_start_offset + 0.01 * state.drag_start_playrate, new_end)
             local new_source_length = new_end - state.drag_start_offset
             local new_item_length = new_source_length / state.drag_start_playrate
             new_item_length = math.max(0.01, new_item_length)

@@ -45,9 +45,27 @@ Note: You also need to install ReaImGui via ReaPack (search "ReaImGui" in Browse
 
 STEP 5: (Optional) Assign a Shortcut
 ------------------------------------
-1. In the Actions List, find "Script: NVSD_ItemView.lua"
+1. In the Actions List, search for "NVSD ItemView"
 2. Click "Add..." to assign a keyboard shortcut
 3. Or right-click > "Add to toolbar"
+
+
+MANUAL INSTALLATION (without ReaPack)
+--------------------------------------
+If you downloaded the ZIP from Gumroad:
+
+1. Extract the ZIP contents
+2. Copy the entire folder to your REAPER Scripts directory:
+   - Windows: %APPDATA%\REAPER\Scripts\NVSD\
+   - macOS: ~/Library/Application Support/REAPER/Scripts/NVSD/
+   - Linux: ~/.config/REAPER/Scripts/NVSD/
+3. In REAPER: Actions > Show action list
+4. Click "Load ReaScript..."
+5. Navigate to the folder and select "NVSD_ItemView.lua"
+6. The script now appears in your Actions list
+7. Optionally assign a keyboard shortcut or add to toolbar
+
+Note: You still need ReaImGui installed (available via ReaPack).
 
 
 USAGE

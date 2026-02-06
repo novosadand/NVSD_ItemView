@@ -47,6 +47,9 @@ state.ruler_drag_cursor_x = 0  -- Tracks visible cursor X during drag
 state.ruler_drag_window_x = 0  -- Window-space X for zoom centering
 state.last_zoomed_item = nil
 
+-- Mouse tracking
+state.was_mouse_down = false
+
 -- Sticky item state
 state.sticky_item = nil
 state.last_selected_item = nil
@@ -106,13 +109,6 @@ end
 -- Check if any control drag is active
 function state.is_any_control_dragging()
   return state.drag_controls.gain.active or state.drag_controls.pitch.active
-      or state.drag_controls.semitones.active or state.drag_controls.cents.active
-end
-
--- Check if a knob-type drag is active (needs cursor locking)
--- Gain slider is excluded: it uses direct mouse tracking instead
-function state.is_knob_dragging()
-  return state.drag_controls.pitch.active
       or state.drag_controls.semitones.active or state.drag_controls.cents.active
 end
 
