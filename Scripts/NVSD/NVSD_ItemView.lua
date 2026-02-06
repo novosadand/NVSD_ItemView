@@ -85,6 +85,27 @@ end
 
 -- Main GUI function
 local function loop()
+  -- Skip frame entirely if a modal dialog is open (autosave, save-as, preferences, etc.)
+  -- Modal dialogs take over REAPER's message loop; ImGui calls during this can crash at the C level.
+  if reaper.JS_Window_GetForeground then
+    local fg = reaper.JS_Window_GetForeground()
+    local main = reaper.GetMainHwnd()
+    if fg and main and fg ~= main then
+      local parent = reaper.JS_Window_GetParent(fg)
+      if parent == main then
+        -- A child dialog of REAPER is in the foreground — skip frame
+        reaper.defer(loop)
+        return
+      end
+    end
+  end
+
+  -- Everything below is wrapped in pcall to catch Lua-level errors.
+  local open = true
+  local needs_reload = false
+
+  local ok, err = pcall(function()
+
   -- Track mouse state early (needed to gate expensive operations)
   local mouse_is_down = false
   if reaper.JS_Mouse_GetState then
@@ -97,17 +118,10 @@ local function loop()
     should_reload = true
   end
 
-  -- If reload pending, clean up and restart script
   if should_reload then
-    ctx = nil
-    dofile(script_path)
+    needs_reload = true
     return
   end
-
-  -- Protected frame: catch any error (stale pointers during autosave, project load, undo)
-  -- so the script recovers gracefully instead of crashing REAPER.
-  local open = true
-  local ok, err = pcall(function()
 
   -- Window flags
   local window_flags = reaper.ImGui_WindowFlags_NoCollapse()
@@ -1186,6 +1200,13 @@ local function loop()
   reaper.ImGui_PopStyleVar(ctx)
 
   end) -- pcall
+
+  -- Handle reload outside pcall (dofile replaces the running script)
+  if needs_reload then
+    ctx = nil
+    dofile(script_path)
+    return
+  end
 
   if not ok then
     -- Reset all interaction state to prevent stuck drags after error
