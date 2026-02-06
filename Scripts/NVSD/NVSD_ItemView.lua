@@ -104,6 +104,11 @@ local function loop()
     return
   end
 
+  -- Protected frame: catch any error (stale pointers during autosave, project load, undo)
+  -- so the script recovers gracefully instead of crashing REAPER.
+  local open = true
+  local ok, err = pcall(function()
+
   -- Window flags
   local window_flags = reaper.ImGui_WindowFlags_NoCollapse()
                      + reaper.ImGui_WindowFlags_NoScrollWithMouse()
@@ -111,7 +116,8 @@ local function loop()
   -- Add window padding
   reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowPadding(), config.WINDOW_PADDING, config.WINDOW_PADDING)
 
-  local visible, open = reaper.ImGui_Begin(ctx, "NVSD_ItemView", true, window_flags)
+  local visible
+  visible, open = reaper.ImGui_Begin(ctx, "NVSD_ItemView", true, window_flags)
 
   if visible then
     -- Cache modifier key state once per frame (avoids repeated Lua→C bridge calls)
@@ -1178,6 +1184,19 @@ local function loop()
   end
 
   reaper.ImGui_PopStyleVar(ctx)
+
+  end) -- pcall
+
+  if not ok then
+    -- Reset all interaction state to prevent stuck drags after error
+    state.dragging_start = false
+    state.dragging_end = false
+    state.is_panning = false
+    state.is_ruler_dragging = false
+    state.undo_block_open = nil
+    state.sticky_item = nil
+    state.sticky_item_valid = false
+  end
 
   if open then
     reaper.defer(loop)
