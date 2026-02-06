@@ -74,8 +74,15 @@ end
 
 -- Main GUI function
 local function loop()
-  -- Auto-reload check
-  if check_for_changes() then
+  -- Track mouse state early (needed to gate expensive operations)
+  local mouse_is_down = false
+  if reaper.JS_Mouse_GetState then
+    local mouse_state = reaper.JS_Mouse_GetState(1)
+    mouse_is_down = (mouse_state & 1) ~= 0
+  end
+
+  -- Auto-reload check (skip during mouse-down to avoid disk I/O lag)
+  if not mouse_is_down and check_for_changes() then
     should_reload = true
   end
 
@@ -166,13 +173,6 @@ local function loop()
 
     local item = nil
 
-    -- Track mouse button state for edge-drag detection
-    local mouse_is_down = false
-    if reaper.JS_Mouse_GetState then
-      local mouse_state = reaper.JS_Mouse_GetState(1)
-      mouse_is_down = (mouse_state & 1) ~= 0
-    end
-
     -- Detect mouse button press/release (transitions)
     local mouse_just_pressed = mouse_is_down and not state.was_mouse_down
     local mouse_just_released = not mouse_is_down and state.was_mouse_down
@@ -206,21 +206,24 @@ local function loop()
 
     -- Priority 2: Use sticky item if valid (throttled validation: every 10 frames)
     if not item and state.sticky_item then
-      state.sticky_validation_counter = state.sticky_validation_counter + 1
-      if state.sticky_validation_counter >= 10 then
-        state.sticky_validation_counter = 0
-        -- Full validation scan
-        local still_valid = false
-        local num_items = reaper.CountMediaItems(0)
-        for i = 0, num_items - 1 do
-          if reaper.GetMediaItem(0, i) == state.sticky_item then
-            still_valid = true
-            break
+      -- Skip expensive validation scan while mouse is held (avoid blocking REAPER)
+      if not mouse_is_down then
+        state.sticky_validation_counter = state.sticky_validation_counter + 1
+        if state.sticky_validation_counter >= 10 then
+          state.sticky_validation_counter = 0
+          -- Full validation scan
+          local still_valid = false
+          local num_items = reaper.CountMediaItems(0)
+          for i = 0, num_items - 1 do
+            if reaper.GetMediaItem(0, i) == state.sticky_item then
+              still_valid = true
+              break
+            end
           end
-        end
-        state.sticky_item_valid = still_valid
-        if not still_valid then
-          state.sticky_item = nil
+          state.sticky_item_valid = still_valid
+          if not still_valid then
+            state.sticky_item = nil
+          end
         end
       end
 
@@ -1033,8 +1036,8 @@ local function loop()
 
           -- Mouse button 4/5 quick marker positioning
           if mouse_in_waveform or mouse_in_marker_area then
-            local clicked_mouse4 = reaper.ImGui_IsMouseClicked(ctx, 3)  -- ImGui Extra1 = Mouse4
-            local clicked_mouse5 = reaper.ImGui_IsMouseClicked(ctx, 4)  -- ImGui Extra2 = Mouse5
+            local clicked_mouse4 = reaper.ImGui_IsMouseClicked(ctx, 4)
+            local clicked_mouse5 = reaper.ImGui_IsMouseClicked(ctx, 3)
 
             if clicked_mouse4 or clicked_mouse5 then
               local click_time = px_to_time(mouse_x)

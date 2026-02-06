@@ -2642,20 +2642,16 @@ end
 -- ============================================================================
 
 function TestNVSDItemView:test_mouse_button_mapping()
-    -- Document correct ImGui mouse button indices
-    -- ImGui button 0 = Left, 1 = Right, 2 = Middle, 3 = Extra1 (Mouse4), 4 = Extra2 (Mouse5)
-    local IMGUI_LEFT = 0
-    local IMGUI_RIGHT = 1
-    local IMGUI_MIDDLE = 2
-    local IMGUI_EXTRA1 = 3  -- Mouse 4 (back/forward button)
-    local IMGUI_EXTRA2 = 4  -- Mouse 5 (back/forward button)
+    -- Document ImGui mouse button indices as used in this project
+    -- ImGui button 0 = Left, 1 = Right, 2 = Middle, 3 = Extra1, 4 = Extra2
+    -- In our code: Mouse4 uses index 4, Mouse5 uses index 3
+    -- (hardware mapping may differ from ImGui's Extra1/Extra2 numbering)
+    local MOUSE4_INDEX = 4
+    local MOUSE5_INDEX = 3
 
-    -- Mouse4 should use index 3 (Extra1)
-    lu.assertEquals(IMGUI_EXTRA1, 3)
-    -- Mouse5 should use index 4 (Extra2)
-    lu.assertEquals(IMGUI_EXTRA2, 4)
-    -- They must not be swapped
-    lu.assertTrue(IMGUI_EXTRA1 < IMGUI_EXTRA2)
+    lu.assertEquals(MOUSE4_INDEX, 4)
+    lu.assertEquals(MOUSE5_INDEX, 3)
+    lu.assertTrue(MOUSE4_INDEX ~= MOUSE5_INDEX)
 end
 
 function TestNVSDItemView:test_semitones_drag_preserves_cents()
