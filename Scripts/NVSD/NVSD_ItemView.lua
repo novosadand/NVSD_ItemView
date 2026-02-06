@@ -83,10 +83,14 @@ local function check_for_changes()
   return false
 end
 
+-- Dialog cooldown: skip frames after a dialog closes so REAPER's state can settle
+local dialog_cooldown = 0
+
 -- Main GUI function
 local function loop()
   -- Skip frame entirely if a modal dialog is open (autosave, save-as, preferences, etc.)
   -- Modal dialogs take over REAPER's message loop; ImGui calls during this can crash at the C level.
+  -- Also skip for a cooldown period after the dialog closes to let REAPER's state settle.
   if reaper.JS_Window_GetForeground then
     local fg = reaper.JS_Window_GetForeground()
     local main = reaper.GetMainHwnd()
@@ -94,10 +98,29 @@ local function loop()
       local parent = reaper.JS_Window_GetParent(fg)
       if parent == main then
         -- A child dialog of REAPER is in the foreground — skip frame
+        dialog_cooldown = 30  -- ~0.5s at 60fps after dialog closes
         reaper.defer(loop)
         return
       end
     end
+  end
+
+  if dialog_cooldown > 0 then
+    dialog_cooldown = dialog_cooldown - 1
+    -- Reset stale state that may have been invalidated by the dialog
+    if dialog_cooldown == 0 then
+      state.sticky_item = nil
+      state.sticky_item_valid = false
+      state.dragging_start = false
+      state.dragging_end = false
+      state.is_panning = false
+      state.is_ruler_dragging = false
+      state.undo_block_open = nil
+      state.was_mouse_down = false
+      state.invalidate_view_peaks()
+    end
+    reaper.defer(loop)
+    return
   end
 
   -- Everything below is wrapped in pcall to catch Lua-level errors.
