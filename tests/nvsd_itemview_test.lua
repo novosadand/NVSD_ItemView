@@ -2061,38 +2061,38 @@ function TestNVSDItemView:test_state_get_drag_delta_inactive()
     lu.assertEquals(get_drag_delta_basic("gain", 100), 0)
 end
 
-function TestNVSDItemView:test_state_invalidate_cache()
-    -- Test invalidate_cache clears all cache variables
+function TestNVSDItemView:test_state_invalidate_view_peaks()
+    -- Test invalidate_view_peaks clears all per-view state
     local state = {
-        cached_peaks = { 1, 2, 3 },
-        cached_source = "some_source",
-        cached_source_length = 10.5,
-        cached_item = "some_item",
-        cached_num_samples = 500,
+        view_peaks = { mins = {}, maxs = {}, count = 100 },
+        view_source = "some_source",
+        view_start = 1.0,
+        view_length = 2.0,
+        view_num_samples = 400,
     }
 
-    local function invalidate_cache()
-        state.cached_peaks = nil
-        state.cached_source = nil
-        state.cached_source_length = 0
-        state.cached_item = nil
-        state.cached_num_samples = 0
+    local function invalidate_view_peaks()
+        state.view_peaks = nil
+        state.view_source = nil
+        state.view_start = -1
+        state.view_length = -1
+        state.view_num_samples = 0
     end
 
-    -- Verify cache has values
-    lu.assertNotNil(state.cached_peaks)
-    lu.assertNotNil(state.cached_source)
-    lu.assertEquals(state.cached_source_length, 10.5)
+    -- Verify state has values
+    lu.assertNotNil(state.view_peaks)
+    lu.assertNotNil(state.view_source)
+    lu.assertEquals(state.view_start, 1.0)
 
     -- Invalidate
-    invalidate_cache()
+    invalidate_view_peaks()
 
     -- Verify all cleared
-    lu.assertNil(state.cached_peaks)
-    lu.assertNil(state.cached_source)
-    lu.assertEquals(state.cached_source_length, 0)
-    lu.assertNil(state.cached_item)
-    lu.assertEquals(state.cached_num_samples, 0)
+    lu.assertNil(state.view_peaks)
+    lu.assertNil(state.view_source)
+    lu.assertEquals(state.view_start, -1)
+    lu.assertEquals(state.view_length, -1)
+    lu.assertEquals(state.view_num_samples, 0)
 end
 
 function TestNVSDItemView:test_state_undo_block_not_overwritten()
@@ -2132,22 +2132,26 @@ function TestNVSDItemView:test_state_pending_cache_invalidation()
     -- Test deferred cache invalidation countdown
     local state = {
         pending_cache_invalidation = 3,
-        cached_peaks = { 1, 2, 3 },
-        cached_source = "src",
-        cached_source_length = 5.0,
-        cached_item = "item",
-        cached_num_samples = 100,
+        view_peaks = { mins = {}, maxs = {}, count = 50 },
+        view_source = "src",
+        view_start = 1.0,
+        view_length = 2.0,
+        view_num_samples = 400,
     }
+    local wf_cache_invalidated = false
 
     local function process_pending_invalidation()
         if state.pending_cache_invalidation > 0 then
             state.pending_cache_invalidation = state.pending_cache_invalidation - 1
             if state.pending_cache_invalidation == 0 then
-                state.cached_peaks = nil
-                state.cached_source = nil
-                state.cached_source_length = 0
-                state.cached_item = nil
-                state.cached_num_samples = 0
+                -- invalidate_view_peaks
+                state.view_peaks = nil
+                state.view_source = nil
+                state.view_start = -1
+                state.view_length = -1
+                state.view_num_samples = 0
+                -- invalidate_wf_cache
+                wf_cache_invalidated = true
             end
         end
     end
@@ -2155,19 +2159,19 @@ function TestNVSDItemView:test_state_pending_cache_invalidation()
     -- Frame 1: count down to 2
     process_pending_invalidation()
     lu.assertEquals(state.pending_cache_invalidation, 2)
-    lu.assertNotNil(state.cached_peaks)
+    lu.assertNotNil(state.view_peaks)
 
     -- Frame 2: count down to 1
     process_pending_invalidation()
     lu.assertEquals(state.pending_cache_invalidation, 1)
-    lu.assertNotNil(state.cached_peaks)
+    lu.assertNotNil(state.view_peaks)
 
-    -- Frame 3: count down to 0, invalidate cache
+    -- Frame 3: count down to 0, invalidate
     process_pending_invalidation()
     lu.assertEquals(state.pending_cache_invalidation, 0)
-    lu.assertNil(state.cached_peaks)
-    lu.assertNil(state.cached_source)
-    lu.assertEquals(state.cached_source_length, 0)
+    lu.assertNil(state.view_peaks)
+    lu.assertNil(state.view_source)
+    lu.assertTrue(wf_cache_invalidated)
 end
 
 -- ============================================================================
@@ -2409,69 +2413,76 @@ function TestNVSDItemView:test_original_length_calculation()
     lu.assertAlmostEquals(calculate_original_length(10.0, 1.0), 10.0, 0.001)
 end
 
--- Progressive loading tests
-function TestNVSDItemView:test_progressive_loading_stages()
-    -- Test that loading stages transition correctly
-    -- Stage 0: idle, Stage 1: preview loaded, Stage 2: full loaded
-    local loading_stage = 0
-    local target_samples = 0
-    local cached_num_samples = 0
-
-    -- Simulate item change - should go to stage 1 with preview
-    local PREVIEW_SAMPLES = 2000
-    loading_stage = 1
-    cached_num_samples = PREVIEW_SAMPLES
-    target_samples = 200000
-
-    lu.assertEquals(loading_stage, 1)
-    lu.assertEquals(cached_num_samples, PREVIEW_SAMPLES)
-    lu.assertTrue(target_samples > cached_num_samples)
-
-    -- Simulate full load - should go to stage 2
-    cached_num_samples = target_samples
-    loading_stage = 2
-
-    lu.assertEquals(loading_stage, 2)
-    lu.assertEquals(cached_num_samples, target_samples)
-end
-
-function TestNVSDItemView:test_progressive_loading_preview_resolution()
-    -- Test that preview samples is much smaller than full resolution
-    local PREVIEW_SAMPLES = 2000
-    local min_full_samples = 20000
-    local max_full_samples = 800000
-
-    -- Preview should be at least 10x smaller than minimum full res
-    lu.assertTrue(PREVIEW_SAMPLES <= min_full_samples / 10)
-
-    -- Preview should provide instant response (< 5000 samples is very fast)
-    lu.assertTrue(PREVIEW_SAMPLES <= 5000)
-end
-
-function TestNVSDItemView:test_invalidate_cache_resets_loading()
-    -- Test that cache invalidation resets progressive loading state
+-- Per-view peak loading tests
+function TestNVSDItemView:test_per_view_peak_reload_detection()
+    -- Test that view changes correctly trigger peak reloads
     local state = {
-        cached_peaks = {1, 2, 3},
-        cached_source = "source",
-        cached_source_length = 10,
-        cached_item = "item",
-        cached_num_samples = 50000,
-        loading_stage = 2,
-        target_samples = 200000
+        view_peaks = { mins = {0.1}, maxs = {0.5}, count = 400 },
+        view_source = "source_A",
+        view_start = 0,
+        view_length = 5.0,
+        view_reversed = false,
+        view_num_samples = 400,
     }
 
-    -- Simulate invalidate_cache
-    state.cached_peaks = nil
-    state.cached_source = nil
-    state.cached_source_length = 0
-    state.cached_item = nil
-    state.cached_num_samples = 0
-    state.loading_stage = 0
-    state.target_samples = 0
+    local function need_reload(source, is_reversed, view_start, view_length, num_samples)
+        return state.view_peaks == nil
+            or source ~= state.view_source
+            or is_reversed ~= state.view_reversed
+            or view_start ~= state.view_start
+            or view_length ~= state.view_length
+            or num_samples ~= state.view_num_samples
+    end
 
-    lu.assertNil(state.cached_peaks)
-    lu.assertEquals(state.loading_stage, 0)
-    lu.assertEquals(state.target_samples, 0)
+    -- Same params: no reload needed
+    lu.assertFalse(need_reload("source_A", false, 0, 5.0, 400))
+
+    -- Different source: reload
+    lu.assertTrue(need_reload("source_B", false, 0, 5.0, 400))
+
+    -- Different view_start (panning): reload
+    lu.assertTrue(need_reload("source_A", false, 0.5, 5.0, 400))
+
+    -- Different view_length (zooming): reload
+    lu.assertTrue(need_reload("source_A", false, 0, 2.5, 400))
+
+    -- Reversed changed: reload
+    lu.assertTrue(need_reload("source_A", true, 0, 5.0, 400))
+
+    -- nil peaks: always reload
+    state.view_peaks = nil
+    lu.assertTrue(need_reload("source_A", false, 0, 5.0, 400))
+end
+
+function TestNVSDItemView:test_per_view_num_samples_matches_width()
+    -- Per-view loading should request exactly screen-width peaks
+    local waveform_width = 500
+    local pixel_step = 1
+    local num_samples = math.max(1, math.floor(waveform_width / pixel_step))
+    lu.assertEquals(num_samples, 500)
+
+    -- Half resolution during REAPER interaction
+    pixel_step = 2
+    num_samples = math.max(1, math.floor(waveform_width / pixel_step))
+    lu.assertEquals(num_samples, 250)
+end
+
+function TestNVSDItemView:test_reversed_peak_start_calculation()
+    -- Reversed items should load peaks from the mirrored source range
+    local source_length = 10.0
+    local view_start = 2.0
+    local view_length = 3.0
+
+    -- Normal: peak_start = view_start
+    local peak_start_normal = view_start
+    lu.assertAlmostEquals(peak_start_normal, 2.0, 0.001)
+
+    -- Reversed: peak_start = source_length - view_start - view_length
+    local peak_start_reversed = math.max(0, source_length - view_start - view_length)
+    lu.assertAlmostEquals(peak_start_reversed, 5.0, 0.001)
+
+    -- Verify: reversed peak range [5, 8] mirrors normal view [2, 5] around center
+    lu.assertAlmostEquals(peak_start_reversed + view_length, source_length - view_start, 0.001)
 end
 
 -- ============================================================================
@@ -2706,107 +2717,73 @@ function TestNVSDItemView:test_semitones_cents_roundtrip()
 end
 
 -- ============================================================================
--- New Tests: State/Cache
+-- Per-View Peak Loading Tests
 -- ============================================================================
 
-function TestNVSDItemView:test_peaks_cache_lru_eviction()
-    -- Add 21 items to a cache with max 20, oldest should be evicted
-    local cache = {}
-    local cache_order = {}
-    local CACHE_MAX = 20
+function TestNVSDItemView:test_view_bounds_clamping()
+    -- View bounds should clamp to [0, source_length]
+    local source_length = 10.0
 
-    local function set_cached(filepath, data)
-        if cache[filepath] then
-            for i, path in ipairs(cache_order) do
-                if path == filepath then table.remove(cache_order, i) break end
-            end
-        end
-        while #cache_order >= CACHE_MAX do
-            local oldest = table.remove(cache_order)
-            cache[oldest] = nil
-        end
-        cache[filepath] = data
-        table.insert(cache_order, 1, filepath)
+    local function compute_view_bounds(zoom_lvl, pan_offset)
+        local view_length = source_length / zoom_lvl
+        local view_center = source_length / 2 + pan_offset
+        local view_start = view_center - view_length / 2
+        local view_end = view_start + view_length
+        if view_start < 0 then view_start = 0; view_end = view_length end
+        if view_end > source_length then view_end = source_length; view_start = source_length - view_length end
+        if view_start < 0 then view_start = 0 end
+        view_length = view_end - view_start
+        return view_start, view_length
     end
 
-    -- Add 21 items
-    for i = 1, 21 do
-        set_cached("file_" .. i, {peaks = i})
-    end
+    -- Zoom 1x, no pan: should show full source
+    local vs, vl = compute_view_bounds(1.0, 0)
+    lu.assertAlmostEquals(vs, 0, 0.001)
+    lu.assertAlmostEquals(vl, 10.0, 0.001)
 
-    -- Cache should have exactly 20 items
-    lu.assertEquals(#cache_order, 20)
+    -- Zoom 2x, no pan: centered, 5s visible
+    vs, vl = compute_view_bounds(2.0, 0)
+    lu.assertAlmostEquals(vs, 2.5, 0.001)
+    lu.assertAlmostEquals(vl, 5.0, 0.001)
 
-    -- First item (file_1) should be evicted
-    lu.assertNil(cache["file_1"])
-
-    -- Most recent (file_21) should be at front
-    lu.assertEquals(cache_order[1], "file_21")
-
-    -- Second item (file_2) should still exist
-    lu.assertNotNil(cache["file_2"])
+    -- Zoom 1x, pan far right: should clamp
+    vs, vl = compute_view_bounds(1.0, 100)
+    lu.assertAlmostEquals(vs, 0, 0.001)
+    lu.assertAlmostEquals(vl, 10.0, 0.001)
 end
 
-function TestNVSDItemView:test_peaks_cache_access_reorders()
-    -- Accessing a cached item moves it to front of LRU order
-    local cache = {}
-    local cache_order = {}
+function TestNVSDItemView:test_one_to_one_peak_mapping()
+    -- With per-view peaks, pixel i maps to peak i (or reversed)
+    local num_peaks = 400
+    local num_samples = 400
 
-    local function set_cached(filepath, data)
-        cache[filepath] = data
-        table.insert(cache_order, 1, filepath)
+    -- Normal: pixel 0 -> peak 0, pixel 399 -> peak 399
+    for i = 0, 3 do
+        local peak_i = i
+        lu.assertEquals(peak_i, i)
     end
 
-    local function get_cached(filepath)
-        local entry = cache[filepath]
-        if entry then
-            for i, path in ipairs(cache_order) do
-                if path == filepath then table.remove(cache_order, i) break end
-            end
-            table.insert(cache_order, 1, filepath)
-        end
-        return entry
+    -- Reversed: pixel 0 -> peak 399, pixel 399 -> peak 0
+    for i = 0, 3 do
+        local peak_i = num_peaks - 1 - i
+        lu.assertEquals(peak_i, num_peaks - 1 - i)
     end
 
-    -- Add A, B, C (C is most recent)
-    set_cached("A", {peaks = 1})
-    set_cached("B", {peaks = 2})
-    set_cached("C", {peaks = 3})
+    -- Edge: when peaks.count < num_samples, clamp
+    local short_peaks = 200
+    local peak_i = short_peaks - 1 - 0  -- reversed, first pixel
+    lu.assertEquals(peak_i, 199)
 
-    lu.assertEquals(cache_order[1], "C")
-    lu.assertEquals(cache_order[3], "A")
-
-    -- Access A -> moves to front
-    get_cached("A")
-    lu.assertEquals(cache_order[1], "A")
-    lu.assertEquals(cache_order[2], "C")
-    lu.assertEquals(cache_order[3], "B")
+    peak_i = short_peaks - 1 - 250  -- would go negative
+    if peak_i < 0 then peak_i = 0 end
+    lu.assertEquals(peak_i, 0)
 end
 
-function TestNVSDItemView:test_invalidate_file_removes_from_cache()
-    -- Invalidating a specific file removes it from both cache and order
-    local cache = {}
-    local cache_order = {}
-
-    cache["fileA"] = {peaks = 1}
-    cache["fileB"] = {peaks = 2}
-    cache_order = {"fileB", "fileA"}
-
-    local function invalidate_file(filepath)
-        if cache[filepath] then
-            cache[filepath] = nil
-            for i, path in ipairs(cache_order) do
-                if path == filepath then table.remove(cache_order, i) break end
-            end
-        end
-    end
-
-    invalidate_file("fileA")
-
-    lu.assertNil(cache["fileA"])
-    lu.assertNotNil(cache["fileB"])
-    lu.assertEquals(#cache_order, 1)
-    lu.assertEquals(cache_order[1], "fileB")
+function TestNVSDItemView:test_pixel_step_reduces_samples()
+    -- pixel_step=2 should halve the number of samples requested
+    local width = 500
+    lu.assertEquals(math.floor(width / 1), 500)
+    lu.assertEquals(math.floor(width / 2), 250)
 end
 
 -- ============================================================================

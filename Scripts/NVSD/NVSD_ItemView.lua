@@ -180,15 +180,6 @@ local function loop()
     local mouse_just_released = not mouse_is_down and state.was_mouse_down
     state.was_mouse_down = mouse_is_down
 
-    -- Cooldown after mouse release: prevents I/O during the brief gap between
-    -- click release and the next interaction (avoids blocking during rapid clicks/drags)
-    if mouse_just_released then
-      state.load_cooldown = 5  -- ~83ms at 60fps — enough to clear any rapid re-click
-    end
-    if state.load_cooldown > 0 then
-      state.load_cooldown = state.load_cooldown - 1
-    end
-
     -- Priority 1: On mouse press, check if over an item and make it sticky
     -- Only update sticky on initial click, not while dragging (prevents jumping to other items)
     if mouse_just_pressed then
@@ -246,33 +237,6 @@ local function loop()
     if not item then
       state.last_panned_item = nil
       state.last_zoomed_item = nil
-    end
-
-    -- Check if we have cached peaks for this item's source file
-    -- If cached, we can show instantly even during mouse-down
-    local item_file_path = nil
-    local has_cached_file = false
-    if item then
-      local take = reaper.GetActiveTake(item)
-      if take and not reaper.TakeIsMIDI(take) then
-        local source = reaper.GetMediaItemTake_Source(take)
-        if source then
-          -- Get root source
-          local parent = reaper.GetMediaSourceParent(source)
-          while parent do
-            source = parent
-            parent = reaper.GetMediaSourceParent(source)
-          end
-          item_file_path = reaper.GetMediaSourceFileName(source, "")
-          has_cached_file = item_file_path and state.get_cached_peaks(item_file_path) ~= nil
-        end
-      end
-    end
-
-    -- Skip processing while mouse is down on uncached item
-    -- But allow instant display if we have cached peaks for this file
-    if item and mouse_is_down and item ~= state.cached_item and not has_cached_file then
-      item = nil  -- Defer until mouse release (only for uncached files)
     end
 
     if item then
@@ -403,126 +367,22 @@ local function loop()
             if retval then is_reversed = reverse end
           end
 
-          -- Peaks caching - very high resolution for deep zoom, LOD handles zoomed-out
-          -- Need ~5000 peaks/sec for crisp display at max zoom (500x)
-          local min_for_transients = math.floor(source_length * 5000)  -- 5000 peaks/sec
-          local min_for_display = math.floor(waveform_width * 50)
-          local desired_samples = math.max(20000, math.min(800000, math.max(min_for_transients, min_for_display)))
-
-          -- Handle deferred cache invalidation
+          -- Handle deferred cache invalidation (reverse needs a frame for REAPER to apply)
           if state.pending_cache_invalidation > 0 then
             state.pending_cache_invalidation = state.pending_cache_invalidation - 1
             if state.pending_cache_invalidation == 0 then
-              state.invalidate_cache()
+              state.invalidate_view_peaks()
+              drawing.invalidate_wf_cache()
             end
           end
 
-          -- Check if we need to refresh the cache
-          local source_changed = source ~= state.cached_source or source_length ~= state.cached_source_length
-          local item_changed = item ~= state.cached_item
-          local reversed_changed = is_reversed ~= state.cached_reversed
-
           -- Check if user is dragging in REAPER (mouse button held outside our control)
-          -- Use JS_Mouse_GetState (system-wide) instead of ImGui_IsMouseDown (ImGui window only)
           local we_are_dragging = state.dragging_start or state.dragging_end or state.is_panning
                                   or state.is_ruler_dragging or state.is_any_control_dragging()
           local user_dragging_in_reaper = mouse_is_down and not we_are_dragging
 
-          -- Get file path for caching
+          -- Get file path (used by info bar)
           local file_path = reaper.GetMediaSourceFileName(source, "")
-
-          -- Check multi-file cache first
-          local file_cache_entry = file_path and state.get_cached_peaks(file_path)
-
-          -- Deferred loading: Don't load peaks while user is dragging in REAPER
-          -- This keeps REAPER responsive during edge drags, etc.
-          local just_changed = false
-          if item_changed or source_changed or reversed_changed then
-            state.cached_item = item
-            state.cached_source = source
-            state.cached_source_length = source_length
-            state.cached_reversed = is_reversed
-            state.target_samples = desired_samples
-            just_changed = true
-
-            -- Check if we have this file in cache
-            if file_cache_entry and not is_reversed then
-              -- Use cached peaks instantly!
-              state.cached_peaks = file_cache_entry.peaks
-              state.cached_lod = file_cache_entry.lod
-              state.cached_num_channels = file_cache_entry.num_channels
-              state.cached_num_samples = file_cache_entry.num_samples
-              state.peaks_error = nil
-              state.loading_stage = 2
-              just_changed = false  -- Cache hit, no deferral needed
-            else
-              -- Need to load — defer to next frame to avoid blocking on click
-              state.loading_stage = 0
-              state.cached_peaks = nil
-              state.cached_lod = nil
-            end
-          end
-
-          -- Progressive peak loading (3 stages across frames to prevent blocking)
-          -- Stage 0→1: Fast preview (~4K samples, <5ms) for instant waveform display
-          -- Stage 1→2: Full resolution peaks (spreads I/O to next frame)
-          -- Stage 2+:  Build LOD for fast zoom-out rendering (next frame after that)
-          -- Skip loading on the frame the item changed (avoids blocking the click)
-          if not user_dragging_in_reaper and state.load_cooldown == 0 and not just_changed then
-            if state.loading_stage == 0 and state.cached_peaks == nil then
-              -- Stage 1: Fast preview for instant display
-              local preview_count = math.min(desired_samples, math.max(math.floor(waveform_width * 2), 4000))
-              local peaks_result, num_ch_or_error = utils.get_peaks(source, preview_count)
-              if peaks_result then
-                state.cached_peaks = peaks_result
-                state.cached_num_channels = num_ch_or_error
-                state.cached_num_samples = preview_count
-                state.cached_lod = nil
-                state.peaks_error = nil
-                -- Skip to stage 2 if preview already covers full resolution
-                state.loading_stage = preview_count >= desired_samples and 2 or 1
-              else
-                state.peaks_error = num_ch_or_error
-              end
-
-            elseif state.loading_stage == 1 then
-              -- Stage 2: Full resolution peaks
-              local peaks_result, num_ch_or_error = utils.get_peaks(source, desired_samples)
-              if peaks_result then
-                state.cached_peaks = peaks_result
-                state.cached_num_channels = num_ch_or_error
-                state.cached_num_samples = desired_samples
-                state.cached_lod = nil  -- LOD built next frame
-                state.loading_stage = 2
-                -- Store in file cache (LOD added next frame)
-                if file_path and not is_reversed then
-                  state.set_cached_peaks(file_path, peaks_result, nil, num_ch_or_error, source_length, desired_samples)
-                end
-              end
-
-            elseif state.loading_stage == 2 and not state.cached_lod and state.cached_peaks then
-              -- Stage 3: Build LOD for fast zoom-out rendering
-              state.cached_lod = utils.build_lod_peaks(state.cached_peaks, state.cached_num_channels)
-              state.peaks_error = nil
-              -- Update file cache with LOD
-              if file_path and not is_reversed then
-                local entry = state.get_cached_peaks(file_path)
-                if entry then
-                  entry.lod = state.cached_lod
-                end
-              end
-
-            elseif state.loading_stage == 2 and state.cached_lod and desired_samples ~= state.cached_num_samples then
-              -- Resolution changed (window resize): reload
-              local peaks_result, num_ch_or_error = utils.get_peaks(source, desired_samples)
-              if peaks_result then
-                state.cached_peaks = peaks_result
-                state.cached_num_channels = num_ch_or_error
-                state.cached_num_samples = desired_samples
-                state.cached_lod = utils.build_lod_peaks(peaks_result, num_ch_or_error)
-              end
-            end
-          end
 
           -- Reset zoom and pan when item changes - show full source
           if item ~= state.last_zoomed_item or item ~= state.last_panned_item then
@@ -530,6 +390,43 @@ local function loop()
             state.pan_offset = 0
             state.last_panned_item = item
             state.last_zoomed_item = item
+          end
+
+          -- Compute view bounds
+          local view_length = source_length / state.zoom_level
+          local view_center = source_length / 2 + state.pan_offset
+          local view_start = view_center - view_length / 2
+          local view_end = view_start + view_length
+          if view_start < 0 then view_start = 0; view_end = view_length end
+          if view_end > source_length then view_end = source_length; view_start = source_length - view_length end
+          if view_start < 0 then view_start = 0 end
+          view_length = view_end - view_start
+
+          -- Per-view peak loading: load exactly screen-width peaks for the visible range.
+          -- PCM_Source_GetPeaks uses pre-indexed .reapeaks files → <1ms regardless of file size.
+          local pixel_step = user_dragging_in_reaper and 2 or 1
+          local num_view_samples = math.max(1, math.floor(waveform_width / pixel_step))
+
+          local need_reload = state.view_peaks == nil
+              or source ~= state.view_source
+              or is_reversed ~= state.view_reversed
+              or view_start ~= state.view_start
+              or view_length ~= state.view_length
+              or num_view_samples ~= state.view_num_samples
+
+          if need_reload and view_length > 0 then
+            -- For reversed display, load peaks from the mirrored source range
+            local peak_start = is_reversed and math.max(0, source_length - view_start - view_length) or view_start
+            local peaks_result, num_ch = utils.get_peaks_for_range(source, peak_start, view_length, num_view_samples)
+            if peaks_result then
+              state.view_peaks = peaks_result
+              state.view_num_channels = num_ch
+              state.view_source = source
+              state.view_start = view_start
+              state.view_length = view_length
+              state.view_reversed = is_reversed
+              state.view_num_samples = num_view_samples
+            end
           end
 
           -- Draw waveform
@@ -544,9 +441,9 @@ local function loop()
             view_item_length = source_item_length
           end
 
-          local start_px, end_px, view_start, view_length = drawing.draw_waveform(draw_list, wave_x, wave_y,
+          local start_px, end_px = drawing.draw_waveform(draw_list, wave_x, wave_y,
             waveform_width, waveform_height,
-            state.cached_peaks, view_offset, view_item_length, source_length, state.pan_offset, state.zoom_level, ruler_y, item_vol, is_reversed, state.cached_num_channels, config, state.cached_lod, user_dragging_in_reaper)
+            state.view_peaks, view_offset, view_item_length, source_length, view_start, view_length, ruler_y, item_vol, is_reversed, state.view_num_channels, config, pixel_step)
 
           -- Unified coordinate conversion (used by all subsequent code)
           local function time_to_px(t)

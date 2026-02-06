@@ -10,6 +10,7 @@ dist/
 Thumbs.db
 
 # Dev-only files
+.claude/
 CLAUDE.md
 sync.sh
 package.sh

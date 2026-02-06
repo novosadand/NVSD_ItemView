@@ -339,34 +339,20 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   return mouse_over_filename, gear_clicked
 end
 
--- Draw waveform with looping support
-function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offset, source_item_length, source_length, pan_offset_time, zoom_lvl, ruler_y, visual_gain, is_reversed, num_channels, config, lod, reduce_resolution)
-  if not peaks or peaks.count == 0 or source_length <= 0 then return 0, 0, 0, source_length end
+-- Draw waveform with per-view peaks (1:1 peak-to-pixel mapping)
+-- peaks: per-view peaks from get_peaks_for_range (each peak maps to one pixel column)
+-- view_start/view_length: pre-computed visible time range
+-- pixel_step: 1 for full resolution, 2 for half (during REAPER interaction)
+function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offset, source_item_length, source_length, view_start, view_length, ruler_y, visual_gain, is_reversed, num_channels, config, pixel_step)
+  if not peaks or peaks.count == 0 or source_length <= 0 then return 0, 0 end
 
-  pan_offset_time = pan_offset_time or 0
-  zoom_lvl = zoom_lvl or 1.0
   visual_gain = visual_gain or 1.0
   is_reversed = is_reversed or false
   num_channels = num_channels or 1
+  pixel_step = pixel_step or 1
 
   local item_end = start_offset + source_item_length
-
-  -- View bounds: always within original source (0 to source_length)
-  local view_length = source_length / zoom_lvl
-  local view_center = source_length / 2 + pan_offset_time
-  local view_start = view_center - view_length / 2
   local view_end = view_start + view_length
-
-  -- Clamp view to source bounds
-  if view_start < 0 then
-    view_start = 0
-    view_end = view_length
-  end
-  if view_end > source_length then
-    view_end = source_length
-    view_start = source_length - view_length
-  end
-  if view_start < 0 then view_start = 0 end  -- In case view_length > source_length
 
   reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, config.COLOR_WAVEFORM_BG)
 
@@ -389,34 +375,15 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
 
   local half_height = channel_height / 2 * 0.85
 
-  -- Half resolution during REAPER interaction (halves Phase 3 draw calls)
-  local pixel_step = reduce_resolution and 2 or 1
   local num_samples = math.floor(width / pixel_step)
-  if num_samples < 1 then return 0, 0, 0, source_length end
+  if num_samples < 1 then return 0, 0 end
   local time_per_pixel = view_length / num_samples
 
-  -- Select appropriate LOD level based on how many peaks would cover each pixel
-  local peaks_per_pixel = (peaks.count / source_length) * time_per_pixel
-  local active_peaks, lod_scale = peaks, 1
-  if lod and peaks_per_pixel > 2 then
-    -- Use coarser LOD when zoomed out (many peaks per pixel)
-    local level = 1
-    if peaks_per_pixel > 128 and lod[5] then level = 5
-    elseif peaks_per_pixel > 32 and lod[4] then level = 4
-    elseif peaks_per_pixel > 8 and lod[3] then level = 3
-    elseif peaks_per_pixel > 2 and lod[2] then level = 2
-    end
-    if lod[level] then
-      active_peaks = lod[level]
-      lod_scale = 4 ^ (level - 1)
-    end
-  end
-
-  local num_peaks = active_peaks.count
-  local active_ch = active_peaks.channels
-  local active_mins = active_peaks.mins
-  local active_maxs = active_peaks.maxs
-  local peaks_per_second = num_peaks / source_length
+  -- Per-view peaks: direct access (no LOD needed — peaks are already at screen resolution)
+  local num_peaks = peaks.count
+  local peak_ch = peaks.channels
+  local peak_mins = peaks.mins
+  local peak_maxs = peaks.maxs
 
   -- Cache draw functions locally (reduces Lua→C lookup overhead per call)
   local DL_QuadFilled = reaper.ImGui_DrawList_AddQuadFilled
@@ -424,7 +391,6 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
   local DL_PathLineTo = reaper.ImGui_DrawList_PathLineTo
   local DL_PathStroke = reaper.ImGui_DrawList_PathStroke
   local has_path = DL_PathLineTo ~= nil
-  local math_floor = math.floor
 
   -- Derive waveform colors from config (with alpha for fill)
   local OUTLINE_ACTIVE = config.COLOR_WAVEFORM
@@ -439,7 +405,6 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
 
   -- Check waveform computation cache (skip Phase 1+2 if inputs unchanged)
   if wf_cache.valid
-      and wf_cache.peaks == peaks
       and wf_cache.view_start == view_start
       and wf_cache.view_length == view_length
       and wf_cache.start_offset == start_offset
@@ -462,7 +427,7 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
   else
     -- Cache miss: compute Phase 1+2
 
-    -- Phase 1: Pre-compute all column data (separates math from drawing)
+    -- Phase 1: 1:1 peak-to-pixel mapping (peaks loaded for visible range)
     col_tops = {}   -- col_tops[ch][i] = top_y for pixel i
     col_bots = {}   -- col_bots[ch][i] = bot_y for pixel i
     col_colors = {} -- col_colors[i] = 1(active) / 2(inactive) / 3(looped)
@@ -471,51 +436,13 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
       col_bots[ch] = {}
     end
 
-    local peak_mins = {}
-    local peak_maxs = {}
-    for ch = 1, num_channels do
-      peak_mins[ch] = 0
-      peak_maxs[ch] = 0
-    end
-
-    local last_idx_start, last_idx_end = -1, -1
-
     for i = 0, num_samples - 1 do
       local t = view_start + i * time_per_pixel
-      local t_next = t + time_per_pixel
 
-      -- Inline peak index calculation (robust modulo for negative values)
-      local wrapped_start = ((t % source_length) + source_length) % source_length
-      if is_reversed then wrapped_start = source_length - wrapped_start end
-      local idx_start = math_floor(wrapped_start * peaks_per_second) + 1
-      if idx_start < 1 then idx_start = 1 elseif idx_start > num_peaks then idx_start = num_peaks end
-
-      local wrapped_end = ((t_next % source_length) + source_length) % source_length
-      if is_reversed then wrapped_end = source_length - wrapped_end end
-      local idx_end = math_floor(wrapped_end * peaks_per_second) + 1
-      if idx_end < 1 then idx_end = 1 elseif idx_end > num_peaks then idx_end = num_peaks end
-
-      if idx_end < idx_start then idx_start, idx_end = idx_end, idx_start end
-
-      -- Only recalculate if range changed
-      if idx_start ~= last_idx_start or idx_end ~= last_idx_end then
-        last_idx_start, last_idx_end = idx_start, idx_end
-        for ch = 1, num_channels do
-          local ch_min, ch_max = math.huge, -math.huge
-          for idx = idx_start, idx_end do
-            local flat_idx = (idx - 1) * active_ch + ch
-            local v_min = active_mins[flat_idx]
-            local v_max = active_maxs[flat_idx]
-            if v_min and v_min < ch_min then ch_min = v_min end
-            if v_max and v_max > ch_max then ch_max = v_max end
-          end
-          -- Fallback if no valid peaks found
-          if ch_min == math.huge then ch_min = 0 end
-          if ch_max == -math.huge then ch_max = 0 end
-          peak_mins[ch] = ch_min
-          peak_maxs[ch] = ch_max
-        end
-      end
+      -- 1:1 peak index (reversed items: iterate peaks backwards)
+      local peak_i = is_reversed and (num_peaks - 1 - i) or i
+      if peak_i < 0 then peak_i = 0 end
+      if peak_i >= num_peaks then peak_i = num_peaks - 1 end
 
       -- Color type
       local in_active = t >= start_offset and t <= item_end
@@ -525,11 +452,15 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
         col_colors[i] = 2
       end
 
-      -- Y positions per channel
+      -- Y positions per channel (direct peak read, no range scanning)
       for ch = 1, num_channels do
+        local flat_idx = peak_i * peak_ch + ch
+        local v_min = peak_mins[flat_idx] or 0
+        local v_max = peak_maxs[flat_idx] or 0
+
         local center_y = y + (ch - 1) * channel_height + channel_height * 0.5
-        local raw_max = peak_maxs[ch] * visual_gain
-        local raw_min = peak_mins[ch] * visual_gain
+        local raw_max = v_max * visual_gain
+        local raw_min = v_min * visual_gain
         if raw_max > 1 then raw_max = 1 elseif raw_max < -1 then raw_max = -1 end
         if raw_min > 1 then raw_min = 1 elseif raw_min < -1 then raw_min = -1 end
         local scaled_max = power_curve(raw_max)
@@ -563,7 +494,6 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
 
     -- Store in cache for next frame
     wf_cache.valid = true
-    wf_cache.peaks = peaks
     wf_cache.view_start = view_start
     wf_cache.view_length = view_length
     wf_cache.start_offset = start_offset
@@ -683,7 +613,7 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
       config.COLOR_BORDER, 0, 0, 2)
   end
 
-  return start_px, end_px, view_start, view_length
+  return start_px, end_px
 end
 
 -- Draw draggable marker
