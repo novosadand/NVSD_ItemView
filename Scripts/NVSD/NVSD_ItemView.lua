@@ -196,7 +196,7 @@ local function loop()
     if mouse_just_pressed then
       local mouse_screen_x, mouse_screen_y = reaper.GetMousePosition()
       local item_under_mouse, take_under_mouse = reaper.GetItemFromPoint(mouse_screen_x, mouse_screen_y, false)
-      if item_under_mouse then
+      if item_under_mouse and reaper.ValidatePtr(item_under_mouse, "MediaItem*") then
         state.sticky_item = item_under_mouse
         state.sticky_item_valid = true
         state.sticky_validation_counter = 0
@@ -248,6 +248,13 @@ local function loop()
     if not item then
       state.last_panned_item = nil
       state.last_zoomed_item = nil
+    end
+
+    -- Validate item pointer (may go stale during autosave, project load, or undo)
+    if item and not reaper.ValidatePtr(item, "MediaItem*") then
+      item = nil
+      state.sticky_item = nil
+      state.sticky_item_valid = false
     end
 
     if item then
@@ -326,7 +333,7 @@ local function loop()
         end
       end
 
-      if take and not reaper.TakeIsMIDI(take) then
+      if take and reaper.ValidatePtr(take, "MediaItem_Take*") and not reaper.TakeIsMIDI(take) then
         local take_source = reaper.GetMediaItemTake_Source(take)
 
         -- Get the root source and calculate total offset through section sources
@@ -345,7 +352,7 @@ local function loop()
           end
         end
 
-        if source then
+        if source and reaper.ValidatePtr(source, "PCM_source*") then
           local item_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
           local item_position = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
           local take_offset = reaper.GetMediaItemTakeInfo_Value(take, "D_STARTOFFS")
