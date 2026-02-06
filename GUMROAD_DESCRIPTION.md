@@ -10,90 +10,56 @@ Clip editor for REAPER — see the full waveform, drag to edit
 
 ## Main Description
 
-Select an item, see the entire source waveform, drag markers to change what plays. Gain, pitch, reverse, WARP — all in one dockable window.
+Switching to Reaper from Ableton was one of the best desicions of my game audio career. Even though I still love Ableton Live for producing music. But I was missing one thing in Reaper a LOT! Ableton's Clip View. So I finally made something similar for Reaper myself. Introducing: ItemView!
 
-No more offset math. No more blind trimming.
+You guessed it: it's like Clip View, but for items! I tried to stay true to the original Ableton's version as much as possible including the same shortcuts, mute/disable button, clickable name of the sample, how the pitch knob and volume faders behave, and also the zooming and panning in the waveform.
+
+There is a small wheel for settings in the upper right corner where you can change the color scheme and see the shortcuts.
+
+You can dock it anywhere ofc, but for the authentic Ableton feel, I recommend the bottom docker~
+
+Also: it's FREE! .. but if you want to buy me a coffee, you're very welcome, thank you!
 
 ---
 
 ## Features
 
-- **Full source waveform** — see the entire audio file, not just the item's portion. Gray overlays show unused regions.
-- **Drag-to-edit markers** — blue markers at start/end. Drag to resize, Alt+drag to slide both together.
-- **Gain slider** — +24dB to silence, with dB readout.
-- **Pitch knob** — ±48 semitones with separate semitones/cents fine control. Choose your stretch algorithm.
-- **WARP mode** — toggle "preserve pitch when changing rate" without opening item properties.
-- **Reverse & Clear** — one-click reverse. Clear resets pitch, rate, and length to defaults.
-- **Loop support** — drag markers past source boundaries to create loops with visual indicators.
-- **Smart zoom** — Ctrl+scroll to zoom, middle-mouse to pan. View auto-adjusts to keep markers visible.
-- **8 color themes** — Default, Modern, Ableton Dark, Pro Tools, High Contrast, Warm, Cool, Monochrome. Live preview.
-- **Multi-channel** — stereo and surround files display as stacked channels.
-- **Mouse 4/5 quick-set** — instantly snap start or end marker to cursor position.
-- **Dockable** — right-click title bar to dock anywhere in REAPER's layout.
-- **Undo/redo** — Ctrl+Z / Ctrl+Y, customizable in settings.
-
----
-
-## Requirements
-
-| | |
-|---|---|
-| **REAPER** | 6.0+ |
-| **Required** | ReaImGui (free, via ReaPack) |
-| **Recommended** | SWS Extension (free) |
-| **Optional** | js_ReaScriptAPI (free) |
+- See the entire source audio
+- Drag horizontal markers to resize the item or Alt+drag to slide both together
+- Gain, pitch (±48 semitones), WARP, reverse
+- Ctrl+scroll to zoom, middle-mouse to pan
+- 8 color themes
+- Dockable
 
 ---
 
 ## Installation
 
-Install via ReaPack (automatic updates included):
-
-1. In REAPER: Extensions > ReaPack > Import repositories
-2. Paste this URL: `https://raw.githubusercontent.com/novosadand/NVSD_ItemView/master/index.xml`
-3. Extensions > ReaPack > Browse packages
-4. Search "NVSD ItemView" > Install
-5. Restart REAPER
-
-The script appears in your Actions list. Assign a shortcut and you're set.
-
----
-
-## Pricing
-
-**$0+** — suggested $5
-
-This script is 100% free. If it saves you time, consider supporting development.
-
----
-
-## Updates
-
-Updates are delivered automatically through ReaPack.
+Requires ReaPack for installation. Updates are automatic.
 
 ---
 
 ## Links
 
-Website: https://andrejnovosad.com
-Bug reports & feature requests: https://github.com/novosadand/NVSD_ItemView/issues
-Email: novosad.and@gmail.com
+Questions, issues, found bugs or tips how to improve it? Please report via https://github.com/novosadand/NVSD_ItemView/issues
+
+Or just send me an email novosad.and@gmail.com
+
+https://andrejnovosad.com/
 
 ---
 
-# Short Description (for Gumroad summary)
+# Internal Notes (not posted to Gumroad)
+
+## Short Description (for Gumroad summary)
 
 Clip editor for REAPER. See the full source waveform, drag markers to edit boundaries, adjust gain & pitch — all in one dockable window. Free via ReaPack. REAPER 6.0+.
 
----
-
-# Tags (for Gumroad)
+## Tags
 
 REAPER, audio editing, DAW, music production, Lua script, ReaScript, clip view, waveform editor, sound design, sample editing
 
----
-
-# Gumroad Settings
+## Settings
 
 - **Price:** $0+ with $5 suggested
 - **Call to action:** "Get NVSD ItemView"
