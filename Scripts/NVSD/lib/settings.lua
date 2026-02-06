@@ -351,6 +351,7 @@ end
 
 -- Serialize shortcut to string
 local function shortcut_to_string(shortcut)
+  if shortcut.key == "" then return "" end
   local parts = {}
   if shortcut.ctrl then table.insert(parts, "ctrl") end
   if shortcut.shift then table.insert(parts, "shift") end
@@ -455,6 +456,7 @@ end
 
 -- Format shortcut for display
 function settings.format_shortcut(shortcut)
+  if shortcut.key == "" then return "" end
   local parts = {}
   if shortcut.ctrl then table.insert(parts, "Ctrl") end
   if shortcut.shift then table.insert(parts, "Shift") end

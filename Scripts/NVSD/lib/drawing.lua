@@ -302,12 +302,7 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
 
   local meta_text = table.concat(meta_parts, " · ")
 
-  local file_name_width
-  if reaper.ImGui_CalcTextSize then
-    file_name_width = reaper.ImGui_CalcTextSize(ctx, file_name)
-  else
-    file_name_width = #file_name * 6
-  end
+  local file_name_width = reaper.ImGui_CalcTextSize(ctx, file_name)
   local file_name_end_x = text_x + file_name_width
 
   local mouse_over_filename = file_name ~= "" and
@@ -428,12 +423,13 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
     -- Cache miss: compute Phase 1+2
 
     -- Phase 1: 1:1 peak-to-pixel mapping (peaks loaded for visible range)
-    col_tops = {}   -- col_tops[ch][i] = top_y for pixel i
-    col_bots = {}   -- col_bots[ch][i] = bot_y for pixel i
-    col_colors = {} -- col_colors[i] = 1(active) / 2(inactive) / 3(looped)
+    -- Reuse tables from previous cache if available, else create new
+    col_tops = wf_cache.col_tops or {}   -- col_tops[ch][i] = top_y for pixel i
+    col_bots = wf_cache.col_bots or {}   -- col_bots[ch][i] = bot_y for pixel i
+    col_colors = wf_cache.col_colors or {} -- col_colors[i] = 1(active) / 2(inactive) / 3(looped)
     for ch = 1, num_channels do
-      col_tops[ch] = {}
-      col_bots[ch] = {}
+      col_tops[ch] = col_tops[ch] or {}
+      col_bots[ch] = col_bots[ch] or {}
     end
 
     for i = 0, num_samples - 1 do

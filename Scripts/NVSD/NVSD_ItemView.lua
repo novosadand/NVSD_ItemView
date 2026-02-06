@@ -46,6 +46,11 @@ local function get_file_size(path)
 end
 
 local initial_file_size = get_file_size(script_path)
+local lib_files = {"config", "state", "utils", "drawing", "controls", "settings", "settings_ui"}
+local initial_lib_sizes = {}
+for _, name in ipairs(lib_files) do
+  initial_lib_sizes[name] = get_file_size(script_dir .. "/lib/" .. name .. ".lua")
+end
 local reload_check_counter = 0
 local should_reload = false
 
@@ -68,6 +73,12 @@ local function check_for_changes()
   local current_size = get_file_size(script_path)
   if current_size ~= 0 and current_size ~= initial_file_size then
     return true
+  end
+  for _, name in ipairs(lib_files) do
+    local current = get_file_size(script_dir .. "/lib/" .. name .. ".lua")
+    if current ~= 0 and current ~= initial_lib_sizes[name] then
+      return true
+    end
   end
   return false
 end
@@ -417,6 +428,7 @@ local function loop()
           if view_end > source_length then view_end = source_length; view_start = source_length - view_length end
           if view_start < 0 then view_start = 0 end
           view_length = view_end - view_start
+          if view_length <= 0 then view_length = 0.001 end
 
           -- Per-view peak loading: load exactly screen-width peaks for the visible range.
           -- PCM_Source_GetPeaks uses pre-indexed .reapeaks files → <1ms regardless of file size.

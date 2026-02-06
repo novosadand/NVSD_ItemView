@@ -199,6 +199,7 @@ function utils.get_peaks_for_range(source, start_time, duration, num_samples)
   local peakrate = num_samples / duration
   local buf_size = num_samples * num_channels * 2
   local buf = reaper.new_array(buf_size)
+  if not buf then return nil, "failed to allocate peak buffer" end
   local api_start = math.max(0, start_time)
 
   local ret = reaper.PCM_Source_GetPeaks(source, peakrate, api_start, num_channels, num_samples, 0, buf)

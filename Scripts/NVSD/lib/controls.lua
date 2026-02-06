@@ -44,7 +44,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     warp_bg_color = mouse_in_warp and 0x505050FF or COLOR_BTN_OFF
   end
   reaper.ImGui_DrawList_AddRectFilled(draw_list, warp_btn_x, warp_btn_y, warp_btn_x + warp_btn_width, warp_btn_y + btn_height, warp_bg_color, 3)
-  local warp_text_w = 28
+  local warp_text_w = reaper.ImGui_CalcTextSize(ctx, "WARP")
   local warp_text_x = warp_btn_x + (warp_btn_width - warp_text_w) / 2
   local warp_text_y = warp_btn_y + (btn_height - text_height) / 2
   reaper.ImGui_DrawList_AddText(draw_list, warp_text_x, warp_text_y, COLOR_BTN_TEXT, "WARP")
@@ -53,7 +53,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     state.warp_dropdown_open = false
     if take then
       reaper.Undo_BeginBlock()
-      local item = reaper.GetMediaItemTake_Item(take)
+      local take_item = reaper.GetMediaItemTake_Item(take)
 
       if not state.warp_mode then
         -- Turning WARP ON: transfer pitch from playrate into D_PITCH
@@ -63,7 +63,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       else
         -- Turning WARP OFF: transfer D_PITCH into playrate, adjust length
         local old_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
-        local old_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+        local old_length = reaper.GetMediaItemInfo_Value(take_item, "D_LENGTH")
         local new_playrate = utils.semitones_to_playrate(current_pitch)
 
         reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", 0)
@@ -72,7 +72,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
         if new_playrate > 0 then
           local new_length = old_length * (old_playrate / new_playrate)
-          reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_length)
+          reaper.SetMediaItemInfo_Value(take_item, "D_LENGTH", new_length)
         end
       end
 
@@ -191,7 +191,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
   local clear_bg_color = mouse_in_clear and 0x505050FF or COLOR_BTN_OFF
   reaper.ImGui_DrawList_AddRectFilled(draw_list, clear_btn_x, clear_btn_y, clear_btn_x + clear_btn_width, clear_btn_y + clear_btn_height, clear_bg_color, 3)
-  local clear_text_w = 35
+  local clear_text_w = reaper.ImGui_CalcTextSize(ctx, "Clear")
   local clear_text_x = clear_btn_x + (clear_btn_width - clear_text_w) / 2
   local clear_text_y = clear_btn_y + (clear_btn_height - text_height) / 2
   reaper.ImGui_DrawList_AddText(draw_list, clear_text_x, clear_text_y, COLOR_BTN_TEXT, "Clear")
@@ -232,7 +232,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
   local rev_bg_color = mouse_in_rev and 0x505050FF or COLOR_BTN_OFF
   reaper.ImGui_DrawList_AddRectFilled(draw_list, rev_btn_x, row2_y, rev_btn_x + rev_btn_width, row2_y + btn_height, rev_bg_color, 3)
-  local rev_text_w = 49
+  local rev_text_w = reaper.ImGui_CalcTextSize(ctx, "Reverse")
   local rev_text_x = rev_btn_x + (rev_btn_width - rev_text_w) / 2
   local rev_text_y = row2_y + (btn_height - text_height) / 2
   reaper.ImGui_DrawList_AddText(draw_list, rev_text_x, rev_text_y, COLOR_BTN_TEXT, "Reverse")
@@ -267,7 +267,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
   local edit_bg_color = mouse_in_edit and 0x505050FF or COLOR_BTN_OFF
   reaper.ImGui_DrawList_AddRectFilled(draw_list, edit_btn_x, row2_y, edit_btn_x + edit_btn_width, row2_y + btn_height, edit_bg_color, 3)
-  local edit_text_w = 28
+  local edit_text_w = reaper.ImGui_CalcTextSize(ctx, "Edit")
   local edit_text_x = edit_btn_x + (edit_btn_width - edit_text_w) / 2
   local edit_text_y = row2_y + (btn_height - text_height) / 2
   reaper.ImGui_DrawList_AddText(draw_list, edit_text_x, edit_text_y, COLOR_BTN_TEXT, "Edit")
@@ -401,10 +401,9 @@ function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, pa
   local slider_center_x = slider_x + config.GAIN_SLIDER_WIDTH / 2
   reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - 14, panel_y + 2, 0xAAAAAAFF, "Gain")
   local db_text = utils.format_db(item_db)
-  local db_text_w = #db_text * 7
+  local db_text_w = reaper.ImGui_CalcTextSize(ctx, db_text)
   reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - db_text_w / 2, slider_bottom + 6, 0xAAAAAAFF, db_text)
 
-  return slider_pos, slider_height, slider_bottom
 end
 
 -- Set pitch on take based on warp mode
@@ -418,16 +417,16 @@ local function set_take_pitch(take, semitones, state, utils)
     end
     reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", pitch_value)
   else
-    local item = reaper.GetMediaItemTake_Item(take)
+    local take_item = reaper.GetMediaItemTake_Item(take)
     local old_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
-    local old_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+    local old_length = reaper.GetMediaItemInfo_Value(take_item, "D_LENGTH")
 
     local new_playrate = utils.semitones_to_playrate(semitones)
     reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", new_playrate)
 
     if new_playrate > 0 then
       local new_length = old_length * (old_playrate / new_playrate)
-      reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_length)
+      reaper.SetMediaItemInfo_Value(take_item, "D_LENGTH", new_length)
     end
   end
 end

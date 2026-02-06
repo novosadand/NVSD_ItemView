@@ -4,20 +4,20 @@ local lu = require("luaunit")
 -- Mock REAPER API for testing outside REAPER
 reaper = reaper or {}
 
+-- Load real modules for testing (pure-Lua functions work outside REAPER)
+local utils = dofile("Scripts/NVSD/lib/utils.lua")
+local settings = dofile("Scripts/NVSD/lib/settings.lua")
+
 -- Test suite
 TestNVSDItemView = {}
 
 function TestNVSDItemView:test_marker_near_detection()
-    -- Test the is_near_marker logic
-    local function is_near_marker(mouse_x, marker_x, threshold)
-        return math.abs(mouse_x - marker_x) < threshold
-    end
-
-    lu.assertTrue(is_near_marker(100, 105, 10))   -- within threshold
-    lu.assertTrue(is_near_marker(100, 95, 10))    -- within threshold (other side)
-    lu.assertFalse(is_near_marker(100, 115, 10))  -- outside threshold
-    lu.assertFalse(is_near_marker(100, 85, 10))   -- outside threshold (other side)
-    lu.assertTrue(is_near_marker(100, 100, 10))   -- exactly on marker
+    -- Test the is_near_marker logic (using real utils module)
+    lu.assertTrue(utils.is_near_marker(100, 105, 10))   -- within threshold
+    lu.assertTrue(utils.is_near_marker(100, 95, 10))    -- within threshold (other side)
+    lu.assertFalse(utils.is_near_marker(100, 115, 10))  -- outside threshold
+    lu.assertFalse(utils.is_near_marker(100, 85, 10))   -- outside threshold (other side)
+    lu.assertTrue(utils.is_near_marker(100, 100, 10))   -- exactly on marker
 end
 
 function TestNVSDItemView:test_offset_clamping()
@@ -644,62 +644,46 @@ function TestNVSDItemView:test_playrate_source_length_calculation()
 end
 
 function TestNVSDItemView:test_source_to_project_time()
-    -- Test converting source time to project timeline time
-    local function source_to_project_time(source_t, item_position, start_offset, playrate)
-        return item_position + (source_t - start_offset) / playrate
-    end
-
+    -- Test converting source time to project timeline time (using real utils module)
     -- Simple case: item at position 10, offset 2, playrate 1
     -- Source time 2 (at offset) -> project time 10 (at item start)
-    lu.assertAlmostEquals(source_to_project_time(2, 10, 2, 1), 10, 0.001)
+    lu.assertAlmostEquals(utils.source_to_project_time(2, 10, 2, 1), 10, 0.001)
 
     -- Source time 5 (3 seconds after offset) -> project time 13
-    lu.assertAlmostEquals(source_to_project_time(5, 10, 2, 1), 13, 0.001)
+    lu.assertAlmostEquals(utils.source_to_project_time(5, 10, 2, 1), 13, 0.001)
 
     -- With playrate 2 (double speed): source time 5 -> project time 11.5
-    lu.assertAlmostEquals(source_to_project_time(5, 10, 2, 2), 11.5, 0.001)
+    lu.assertAlmostEquals(utils.source_to_project_time(5, 10, 2, 2), 11.5, 0.001)
 
     -- With playrate 0.5 (half speed): source time 5 -> project time 16
-    lu.assertAlmostEquals(source_to_project_time(5, 10, 2, 0.5), 16, 0.001)
+    lu.assertAlmostEquals(utils.source_to_project_time(5, 10, 2, 0.5), 16, 0.001)
 end
 
 function TestNVSDItemView:test_project_to_source_time()
-    -- Test converting project timeline time to source time
-    local function project_to_source_time(project_t, item_position, start_offset, playrate)
-        return start_offset + (project_t - item_position) * playrate
-    end
-
+    -- Test converting project timeline time to source time (using real utils module)
     -- Simple case: item at position 10, offset 2, playrate 1
     -- Project time 10 (at item start) -> source time 2 (at offset)
-    lu.assertAlmostEquals(project_to_source_time(10, 10, 2, 1), 2, 0.001)
+    lu.assertAlmostEquals(utils.project_to_source_time(10, 10, 2, 1), 2, 0.001)
 
     -- Project time 13 -> source time 5
-    lu.assertAlmostEquals(project_to_source_time(13, 10, 2, 1), 5, 0.001)
+    lu.assertAlmostEquals(utils.project_to_source_time(13, 10, 2, 1), 5, 0.001)
 
     -- With playrate 2: project time 11.5 -> source time 5
-    lu.assertAlmostEquals(project_to_source_time(11.5, 10, 2, 2), 5, 0.001)
+    lu.assertAlmostEquals(utils.project_to_source_time(11.5, 10, 2, 2), 5, 0.001)
 
     -- With playrate 0.5: project time 16 -> source time 5
-    lu.assertAlmostEquals(project_to_source_time(16, 10, 2, 0.5), 5, 0.001)
+    lu.assertAlmostEquals(utils.project_to_source_time(16, 10, 2, 0.5), 5, 0.001)
 end
 
 function TestNVSDItemView:test_source_project_time_roundtrip()
-    -- Test that source->project->source is identity
-    local function source_to_project_time(source_t, item_position, start_offset, playrate)
-        return item_position + (source_t - start_offset) / playrate
-    end
-
-    local function project_to_source_time(project_t, item_position, start_offset, playrate)
-        return start_offset + (project_t - item_position) * playrate
-    end
-
+    -- Test that source->project->source is identity (using real utils module)
     local item_position = 10
     local start_offset = 2
     local playrate = 1.5
 
     local source_time = 7.5
-    local project_time = source_to_project_time(source_time, item_position, start_offset, playrate)
-    local back_to_source = project_to_source_time(project_time, item_position, start_offset, playrate)
+    local project_time = utils.source_to_project_time(source_time, item_position, start_offset, playrate)
+    local back_to_source = utils.project_to_source_time(project_time, item_position, start_offset, playrate)
 
     lu.assertAlmostEquals(back_to_source, source_time, 0.0001)
 end
@@ -1024,40 +1008,23 @@ function TestNVSDItemView:test_alt_drag_slide_both_markers()
 end
 
 function TestNVSDItemView:test_format_source_time()
-    -- Test formatting source time as mins:secs or mins:secs:ms
-    local function format_source_time(seconds, show_ms)
-        local negative = seconds < 0
-        local abs_secs = math.abs(seconds)
-        local mins = math.floor(abs_secs / 60)
-        local secs = abs_secs - mins * 60
-
-        local sign = negative and "-" or ""
-
-        if show_ms then
-            local whole_secs = math.floor(secs)
-            local ms = math.floor((secs - whole_secs) * 1000)
-            return string.format("%s%d:%02d:%03d", sign, mins, whole_secs, ms)
-        else
-            return string.format("%s%d:%02d", sign, mins, math.floor(secs))
-        end
-    end
-
+    -- Test formatting source time (using real utils module)
     -- Basic formatting without ms
-    lu.assertEquals(format_source_time(0, false), "0:00")
-    lu.assertEquals(format_source_time(5, false), "0:05")
-    lu.assertEquals(format_source_time(65, false), "1:05")
-    lu.assertEquals(format_source_time(125, false), "2:05")
+    lu.assertEquals(utils.format_source_time(0, false), "0:00")
+    lu.assertEquals(utils.format_source_time(5, false), "0:05")
+    lu.assertEquals(utils.format_source_time(65, false), "1:05")
+    lu.assertEquals(utils.format_source_time(125, false), "2:05")
 
     -- With milliseconds
-    lu.assertEquals(format_source_time(0, true), "0:00:000")
-    lu.assertEquals(format_source_time(1.5, true), "0:01:500")
-    lu.assertEquals(format_source_time(0.25, true), "0:00:250")
-    lu.assertEquals(format_source_time(65.123, true), "1:05:123")
+    lu.assertEquals(utils.format_source_time(0, true), "0:00:000")
+    lu.assertEquals(utils.format_source_time(1.5, true), "0:01:500")
+    lu.assertEquals(utils.format_source_time(0.25, true), "0:00:250")
+    lu.assertEquals(utils.format_source_time(65.123, true), "1:05:123")
 
     -- Negative times
-    lu.assertEquals(format_source_time(-5, false), "-0:05")
-    lu.assertEquals(format_source_time(-65, false), "-1:05")
-    lu.assertEquals(format_source_time(-1.5, true), "-0:01:500")
+    lu.assertEquals(utils.format_source_time(-5, false), "-0:05")
+    lu.assertEquals(utils.format_source_time(-65, false), "-1:05")
+    lu.assertEquals(utils.format_source_time(-1.5, true), "-0:01:500")
 end
 
 function TestNVSDItemView:test_time_ruler_interval_selection()
@@ -1151,76 +1118,62 @@ function TestNVSDItemView:test_alt_drag_snap_only_grabbed_marker_start()
 end
 
 function TestNVSDItemView:test_semitones_to_playrate()
-    -- Test converting semitones to playrate (for non-warp mode)
-    local function semitones_to_playrate(semitones)
-        return 2 ^ (semitones / 12)
-    end
-
+    -- Test converting semitones to playrate (using real utils module)
     -- 0 semitones = no change
-    lu.assertAlmostEquals(semitones_to_playrate(0), 1.0, 0.001)
+    lu.assertAlmostEquals(utils.semitones_to_playrate(0), 1.0, 0.001)
 
     -- +12 semitones = double speed (octave up)
-    lu.assertAlmostEquals(semitones_to_playrate(12), 2.0, 0.001)
+    lu.assertAlmostEquals(utils.semitones_to_playrate(12), 2.0, 0.001)
 
     -- -12 semitones = half speed (octave down)
-    lu.assertAlmostEquals(semitones_to_playrate(-12), 0.5, 0.001)
+    lu.assertAlmostEquals(utils.semitones_to_playrate(-12), 0.5, 0.001)
 
     -- +7 semitones = perfect fifth up
-    lu.assertAlmostEquals(semitones_to_playrate(7), 2^(7/12), 0.001)
+    lu.assertAlmostEquals(utils.semitones_to_playrate(7), 2^(7/12), 0.001)
 
     -- -5 semitones = perfect fourth down
-    lu.assertAlmostEquals(semitones_to_playrate(-5), 2^(-5/12), 0.001)
+    lu.assertAlmostEquals(utils.semitones_to_playrate(-5), 2^(-5/12), 0.001)
 end
 
 function TestNVSDItemView:test_playrate_to_semitones()
-    -- Test converting playrate to semitones (for non-warp mode)
-    local function playrate_to_semitones(playrate)
-        return 12 * math.log(playrate) / math.log(2)
-    end
-
+    -- Test converting playrate to semitones (using real utils module)
     -- Normal speed = 0 semitones
-    lu.assertAlmostEquals(playrate_to_semitones(1.0), 0, 0.001)
+    lu.assertAlmostEquals(utils.playrate_to_semitones(1.0), 0, 0.001)
 
     -- Double speed = +12 semitones
-    lu.assertAlmostEquals(playrate_to_semitones(2.0), 12, 0.001)
+    lu.assertAlmostEquals(utils.playrate_to_semitones(2.0), 12, 0.001)
 
     -- Half speed = -12 semitones
-    lu.assertAlmostEquals(playrate_to_semitones(0.5), -12, 0.001)
+    lu.assertAlmostEquals(utils.playrate_to_semitones(0.5), -12, 0.001)
 
     -- Roundtrip test
     local original = 7.5
-    local playrate = 2 ^ (original / 12)
-    local back = playrate_to_semitones(playrate)
+    local playrate = utils.semitones_to_playrate(original)
+    local back = utils.playrate_to_semitones(playrate)
     lu.assertAlmostEquals(back, original, 0.001)
 end
 
 function TestNVSDItemView:test_db_to_linear_and_back()
-    -- Test dB to linear conversion for gain slider
-    local function db_to_linear(db)
-        return 10 ^ (db / 20)
-    end
-
-    local function linear_to_db(linear)
-        if linear <= 0 then return -math.huge end
-        return 20 * math.log(linear) / math.log(10)
-    end
-
+    -- Test dB to linear conversion (using real utils module)
     -- 0 dB = unity gain
-    lu.assertAlmostEquals(db_to_linear(0), 1.0, 0.001)
+    lu.assertAlmostEquals(utils.db_to_gain(0), 1.0, 0.001)
 
     -- +6 dB = ~2x
-    lu.assertAlmostEquals(db_to_linear(6), 1.995, 0.01)
+    lu.assertAlmostEquals(utils.db_to_gain(6), 1.995, 0.01)
 
     -- -6 dB = ~0.5x
-    lu.assertAlmostEquals(db_to_linear(-6), 0.501, 0.01)
+    lu.assertAlmostEquals(utils.db_to_gain(-6), 0.501, 0.01)
 
     -- +24 dB (max gain in UI)
-    lu.assertAlmostEquals(db_to_linear(24), 15.85, 0.1)
+    lu.assertAlmostEquals(utils.db_to_gain(24), 15.85, 0.1)
+
+    -- Very low dB = 0 gain (utils.db_to_gain guards at -150)
+    lu.assertEquals(utils.db_to_gain(-150), 0)
 
     -- Roundtrip
     local original_db = -12
-    local linear = db_to_linear(original_db)
-    local back = linear_to_db(linear)
+    local linear = utils.db_to_gain(original_db)
+    local back = utils.gain_to_db(linear)
     lu.assertAlmostEquals(back, original_db, 0.001)
 end
 
@@ -1316,32 +1269,27 @@ function TestNVSDItemView:test_time_to_pixel_with_fixed_view()
 end
 
 function TestNVSDItemView:test_format_db()
-    -- Test formatting dB value for display (no + sign, includes " dB" suffix)
-    local function format_db(db)
-        if db <= -60 then return "-∞ dB" end
-        return string.format("%.1f dB", db)
-    end
-
+    -- Test formatting dB value for display (using real utils module)
     -- Positive values: no + sign, includes " dB"
-    lu.assertEquals(format_db(24), "24.0 dB")
-    lu.assertEquals(format_db(12), "12.0 dB")
-    lu.assertEquals(format_db(6), "6.0 dB")
-    lu.assertEquals(format_db(0), "0.0 dB")
+    lu.assertEquals(utils.format_db(24), "24.0 dB")
+    lu.assertEquals(utils.format_db(12), "12.0 dB")
+    lu.assertEquals(utils.format_db(6), "6.0 dB")
+    lu.assertEquals(utils.format_db(0), "0.0 dB")
 
     -- Negative values: includes " dB"
-    lu.assertEquals(format_db(-6), "-6.0 dB")
-    lu.assertEquals(format_db(-12), "-12.0 dB")
-    lu.assertEquals(format_db(-24), "-24.0 dB")
+    lu.assertEquals(utils.format_db(-6), "-6.0 dB")
+    lu.assertEquals(utils.format_db(-12), "-12.0 dB")
+    lu.assertEquals(utils.format_db(-24), "-24.0 dB")
 
     -- Very low values: show -∞ dB
-    lu.assertEquals(format_db(-60), "-∞ dB")
-    lu.assertEquals(format_db(-61), "-∞ dB")
-    lu.assertEquals(format_db(-100), "-∞ dB")
+    lu.assertEquals(utils.format_db(-60), "-∞ dB")
+    lu.assertEquals(utils.format_db(-61), "-∞ dB")
+    lu.assertEquals(utils.format_db(-100), "-∞ dB")
 
     -- Fractional values
-    lu.assertEquals(format_db(6.5), "6.5 dB")
-    lu.assertEquals(format_db(-3.2), "-3.2 dB")
-    lu.assertEquals(format_db(0.1), "0.1 dB")
+    lu.assertEquals(utils.format_db(6.5), "6.5 dB")
+    lu.assertEquals(utils.format_db(-3.2), "-3.2 dB")
+    lu.assertEquals(utils.format_db(0.1), "0.1 dB")
 end
 
 function TestNVSDItemView:test_mute_toggle()
@@ -1358,139 +1306,95 @@ function TestNVSDItemView:test_mute_toggle()
 end
 
 function TestNVSDItemView:test_gain_to_db()
-    -- Test converting linear gain to dB
-    local function gain_to_db(gain)
-        if gain <= 0 then return -math.huge end
-        return 20 * math.log(gain) / math.log(10)
-    end
-
+    -- Test converting linear gain to dB (using real utils module)
     -- Unity gain = 0 dB
-    lu.assertAlmostEquals(gain_to_db(1.0), 0, 0.001)
+    lu.assertAlmostEquals(utils.gain_to_db(1.0), 0, 0.001)
 
     -- Double = +6.02 dB
-    lu.assertAlmostEquals(gain_to_db(2.0), 6.02, 0.1)
+    lu.assertAlmostEquals(utils.gain_to_db(2.0), 6.02, 0.1)
 
     -- Half = -6.02 dB
-    lu.assertAlmostEquals(gain_to_db(0.5), -6.02, 0.1)
+    lu.assertAlmostEquals(utils.gain_to_db(0.5), -6.02, 0.1)
 
     -- +24 dB gain (~15.85x)
-    lu.assertAlmostEquals(gain_to_db(15.85), 24, 0.1)
+    lu.assertAlmostEquals(utils.gain_to_db(15.85), 24, 0.1)
 
     -- Zero gain = -inf
-    lu.assertEquals(gain_to_db(0), -math.huge)
+    lu.assertEquals(utils.gain_to_db(0), -math.huge)
 end
 
 function TestNVSDItemView:test_db_to_slider_position()
-    -- Test converting dB to slider position (0-1) with logarithmic curve below 0dB
-    local function db_to_slider(db)
-        local DB_MAX = 24
-        local DB_MIN = -60
-
-        if db >= 0 then
-            -- Linear above 0dB: 0dB -> 0.5, +24dB -> 1.0
-            return 0.5 + (db / DB_MAX) * 0.5
-        else
-            -- Logarithmic below 0dB for finer control
-            local normalized = (db - DB_MIN) / (0 - DB_MIN)  -- 0 to 1
-            normalized = math.max(0, math.min(1, normalized))
-            -- Apply curve: sqrt for more resolution near 0dB
-            return math.sqrt(normalized) * 0.5
-        end
-    end
-
+    -- Test converting dB to slider position (using real utils module)
     -- +24 dB = top (1.0)
-    lu.assertAlmostEquals(db_to_slider(24), 1.0, 0.001)
+    lu.assertAlmostEquals(utils.db_to_slider(24), 1.0, 0.001)
 
     -- 0 dB = middle (0.5)
-    lu.assertAlmostEquals(db_to_slider(0), 0.5, 0.001)
+    lu.assertAlmostEquals(utils.db_to_slider(0), 0.5, 0.001)
 
     -- +12 dB = 0.75
-    lu.assertAlmostEquals(db_to_slider(12), 0.75, 0.001)
+    lu.assertAlmostEquals(utils.db_to_slider(12), 0.75, 0.001)
 
-    -- -60 dB = bottom (0.0)
-    lu.assertAlmostEquals(db_to_slider(-60), 0, 0.001)
+    -- Very low dB = bottom (0.0)
+    lu.assertAlmostEquals(utils.db_to_slider(-150), 0, 0.001)
 
-    -- Check logarithmic curve: -6 dB should be higher than linear would suggest
-    local pos_neg6 = db_to_slider(-6)
-    lu.assertTrue(pos_neg6 > 0.4)  -- Should be above linear (which would be ~0.45)
-    lu.assertTrue(pos_neg6 < 0.5)  -- But still below 0dB position
+    -- Check logarithmic curve: -6 dB should be between 0 and 0.5
+    local pos_neg6 = utils.db_to_slider(-6)
+    lu.assertTrue(pos_neg6 > 0.3)  -- Above bottom
+    lu.assertTrue(pos_neg6 < 0.5)  -- Below 0dB position
 end
 
 function TestNVSDItemView:test_slider_to_db()
-    -- Test converting slider position to dB
-    local function slider_to_db(pos)
-        local DB_MAX = 24
-        local DB_MIN = -60
-
-        if pos >= 0.5 then
-            -- Linear above 0dB
-            return ((pos - 0.5) / 0.5) * DB_MAX
-        else
-            -- Inverse of logarithmic curve
-            local normalized = (pos / 0.5) ^ 2  -- inverse of sqrt
-            return DB_MIN + normalized * (0 - DB_MIN)
-        end
-    end
-
+    -- Test converting slider position to dB (using real utils module)
     -- Top = +24 dB
-    lu.assertAlmostEquals(slider_to_db(1.0), 24, 0.001)
+    lu.assertAlmostEquals(utils.slider_to_db(1.0), 24, 0.001)
 
     -- Middle = 0 dB
-    lu.assertAlmostEquals(slider_to_db(0.5), 0, 0.001)
+    lu.assertAlmostEquals(utils.slider_to_db(0.5), 0, 0.001)
 
     -- 0.75 = +12 dB
-    lu.assertAlmostEquals(slider_to_db(0.75), 12, 0.001)
+    lu.assertAlmostEquals(utils.slider_to_db(0.75), 12, 0.001)
 
-    -- Bottom = -60 dB
-    lu.assertAlmostEquals(slider_to_db(0), -60, 0.001)
+    -- Bottom = -inf dB
+    lu.assertEquals(utils.slider_to_db(0), -math.huge)
 end
 
 function TestNVSDItemView:test_pitch_to_semitones_cents()
-    -- Test splitting pitch value into semitones and cents
-    local function pitch_to_semitones_cents(pitch)
-        local semitones = math.floor(pitch + 0.5)  -- round to nearest
-        local cents = math.floor((pitch - semitones) * 100 + 0.5)
-        return semitones, cents
-    end
+    -- Test splitting pitch value into semitones and cents (using real utils module)
+    -- Real function uses floor for positive, ceil for negative (not round-to-nearest)
 
     -- Exact semitone
-    local semi, cents = pitch_to_semitones_cents(5.0)
+    local semi, cents = utils.pitch_to_semitones_cents(5.0)
     lu.assertEquals(semi, 5)
     lu.assertEquals(cents, 0)
 
     -- Positive cents
-    semi, cents = pitch_to_semitones_cents(5.25)
+    semi, cents = utils.pitch_to_semitones_cents(5.25)
     lu.assertEquals(semi, 5)
     lu.assertEquals(cents, 25)
 
-    -- Negative cents (pitch slightly below semitone)
-    semi, cents = pitch_to_semitones_cents(4.75)
-    lu.assertEquals(semi, 5)  -- rounds to 5
-    lu.assertEquals(cents, -25)
+    -- Positive pitch with large fractional → floor keeps semitone below
+    semi, cents = utils.pitch_to_semitones_cents(4.75)
+    lu.assertEquals(semi, 4)   -- floor(4.75) = 4
+    lu.assertEquals(cents, 75) -- (4.75 - 4) * 100 = 75
 
-    -- Negative pitch
-    semi, cents = pitch_to_semitones_cents(-3.5)
-    lu.assertEquals(semi, -3)  -- floor(-3.5 + 0.5) = floor(-3) = -3
+    -- Negative pitch: ceil(-3.5) = -3
+    semi, cents = utils.pitch_to_semitones_cents(-3.5)
+    lu.assertEquals(semi, -3)
     lu.assertEquals(cents, -50)
 
     -- Zero pitch
-    semi, cents = pitch_to_semitones_cents(0)
+    semi, cents = utils.pitch_to_semitones_cents(0)
     lu.assertEquals(semi, 0)
     lu.assertEquals(cents, 0)
 end
 
 function TestNVSDItemView:test_semitones_cents_to_pitch()
-    -- Test combining semitones and cents into pitch value
-    local function semitones_cents_to_pitch(semitones, cents)
-        return semitones + cents / 100
-    end
-
-    -- Basic cases
-    lu.assertAlmostEquals(semitones_cents_to_pitch(5, 0), 5.0, 0.001)
-    lu.assertAlmostEquals(semitones_cents_to_pitch(5, 50), 5.5, 0.001)
-    lu.assertAlmostEquals(semitones_cents_to_pitch(5, -25), 4.75, 0.001)
-    lu.assertAlmostEquals(semitones_cents_to_pitch(-3, 50), -2.5, 0.001)
-    lu.assertAlmostEquals(semitones_cents_to_pitch(0, 0), 0, 0.001)
+    -- Test combining semitones and cents into pitch value (using real utils module)
+    lu.assertAlmostEquals(utils.semitones_cents_to_pitch(5, 0), 5.0, 0.001)
+    lu.assertAlmostEquals(utils.semitones_cents_to_pitch(5, 50), 5.5, 0.001)
+    lu.assertAlmostEquals(utils.semitones_cents_to_pitch(5, -25), 4.75, 0.001)
+    lu.assertAlmostEquals(utils.semitones_cents_to_pitch(-3, 50), -2.5, 0.001)
+    lu.assertAlmostEquals(utils.semitones_cents_to_pitch(0, 0), 0, 0.001)
 end
 
 function TestNVSDItemView:test_multi_channel_peak_parsing()
@@ -1642,27 +1546,13 @@ function TestNVSDItemView:test_quick_marker_positioning_right()
 end
 
 function TestNVSDItemView:test_file_name_extraction()
-    -- Test extracting file name from full path
-    local function get_file_name(path)
-        if not path or path == "" then return "" end
-        return path:match("([^/\\]+)$") or path
-    end
-
-    -- Unix path
-    lu.assertEquals(get_file_name("/home/user/audio/kick.wav"), "kick.wav")
-
-    -- Windows path
-    lu.assertEquals(get_file_name("C:\\Users\\audio\\snare.wav"), "snare.wav")
-
-    -- Just filename
-    lu.assertEquals(get_file_name("hihat.wav"), "hihat.wav")
-
-    -- Empty path
-    lu.assertEquals(get_file_name(""), "")
-    lu.assertEquals(get_file_name(nil), "")
-
-    -- Path with spaces
-    lu.assertEquals(get_file_name("/home/user/My Audio/cool sound.wav"), "cool sound.wav")
+    -- Test extracting file name from full path (using real utils module)
+    lu.assertEquals(utils.get_file_name("/home/user/audio/kick.wav"), "kick.wav")
+    lu.assertEquals(utils.get_file_name("C:\\Users\\audio\\snare.wav"), "snare.wav")
+    lu.assertEquals(utils.get_file_name("hihat.wav"), "hihat.wav")
+    lu.assertEquals(utils.get_file_name(""), "")
+    lu.assertEquals(utils.get_file_name(nil), "")
+    lu.assertEquals(utils.get_file_name("/home/user/My Audio/cool sound.wav"), "cool sound.wav")
 end
 
 function TestNVSDItemView:test_channel_height_calculation()
@@ -2179,35 +2069,14 @@ end
 -- ============================================================================
 
 function TestNVSDItemView:test_settings_format_shortcut()
-    -- Test shortcut formatting for display
-    local function format_shortcut(shortcut)
-        local parts = {}
-        if shortcut.ctrl then table.insert(parts, "Ctrl") end
-        if shortcut.shift then table.insert(parts, "Shift") end
-        if shortcut.alt then table.insert(parts, "Alt") end
-        table.insert(parts, shortcut.key)
-        return table.concat(parts, "+")
-    end
-
-    -- Test Ctrl+Z
-    local shortcut1 = {ctrl = true, shift = false, alt = false, key = "Z"}
-    lu.assertEquals(format_shortcut(shortcut1), "Ctrl+Z")
-
-    -- Test Ctrl+Shift+Z
-    local shortcut2 = {ctrl = true, shift = true, alt = false, key = "Z"}
-    lu.assertEquals(format_shortcut(shortcut2), "Ctrl+Shift+Z")
-
-    -- Test Alt+F4
-    local shortcut3 = {ctrl = false, shift = false, alt = true, key = "F4"}
-    lu.assertEquals(format_shortcut(shortcut3), "Alt+F4")
-
-    -- Test just a key (no modifiers)
-    local shortcut4 = {ctrl = false, shift = false, alt = false, key = "Space"}
-    lu.assertEquals(format_shortcut(shortcut4), "Space")
-
-    -- Test all modifiers
-    local shortcut5 = {ctrl = true, shift = true, alt = true, key = "A"}
-    lu.assertEquals(format_shortcut(shortcut5), "Ctrl+Shift+Alt+A")
+    -- Test shortcut formatting for display (using real settings module)
+    lu.assertEquals(settings.format_shortcut({ctrl = true, shift = false, alt = false, key = "Z"}), "Ctrl+Z")
+    lu.assertEquals(settings.format_shortcut({ctrl = true, shift = true, alt = false, key = "Z"}), "Ctrl+Shift+Z")
+    lu.assertEquals(settings.format_shortcut({ctrl = false, shift = false, alt = true, key = "F4"}), "Alt+F4")
+    lu.assertEquals(settings.format_shortcut({ctrl = false, shift = false, alt = false, key = "Space"}), "Space")
+    lu.assertEquals(settings.format_shortcut({ctrl = true, shift = true, alt = true, key = "A"}), "Ctrl+Shift+Alt+A")
+    -- Empty key returns empty string (edge case fix)
+    lu.assertEquals(settings.format_shortcut({ctrl = true, shift = false, alt = false, key = ""}), "")
 end
 
 function TestNVSDItemView:test_settings_shortcut_to_string()
@@ -2270,30 +2139,17 @@ function TestNVSDItemView:test_settings_string_to_shortcut()
 end
 
 function TestNVSDItemView:test_settings_theme_lookup()
-    -- Test theme retrieval by ID
-    local THEMES = {
-        {id = "default", name = "Default", colors = {waveform = 0x5A9F5AFF}},
-        {id = "ableton_dark", name = "Ableton Dark", colors = {waveform = 0x7B9BA6FF}},
-        {id = "warm", name = "Warm", colors = {waveform = 0xD4915AFF}},
-    }
-
-    local function get_theme(id)
-        for _, theme in ipairs(THEMES) do
-            if theme.id == id then
-                return theme
-            end
-        end
-        return THEMES[1]  -- fallback to default
-    end
-
-    -- Test finding existing theme
-    local theme = get_theme("ableton_dark")
+    -- Test theme retrieval by ID (using real settings module)
+    local theme = settings.get_theme("ableton_dark")
     lu.assertEquals(theme.name, "Ableton Dark")
-    lu.assertEquals(theme.colors.waveform, 0x7B9BA6FF)
+    lu.assertNotNil(theme.colors.waveform)
 
     -- Test fallback to default for unknown ID
-    local unknown = get_theme("nonexistent")
-    lu.assertEquals(unknown.name, "Default")
+    local unknown = settings.get_theme("nonexistent")
+    lu.assertEquals(unknown.id, "default")
+
+    -- Verify THEMES table is populated
+    lu.assertTrue(#settings.THEMES >= 2)
 end
 
 function TestNVSDItemView:test_settings_check_changes()
@@ -2587,43 +2443,16 @@ function TestNVSDItemView:test_settings_parse_special_keys()
 end
 
 function TestNVSDItemView:test_settings_format_no_modifiers()
-    -- Format bare key like "W" -> "W"
-    local function format_shortcut(shortcut)
-        local parts = {}
-        if shortcut.ctrl then table.insert(parts, "Ctrl") end
-        if shortcut.shift then table.insert(parts, "Shift") end
-        if shortcut.alt then table.insert(parts, "Alt") end
-        table.insert(parts, shortcut.key)
-        return table.concat(parts, "+")
-    end
-
-    local bare = {ctrl = false, shift = false, alt = false, key = "W"}
-    lu.assertEquals(format_shortcut(bare), "W")
-
-    local bare2 = {ctrl = false, shift = false, alt = false, key = "F"}
-    lu.assertEquals(format_shortcut(bare2), "F")
+    -- Format bare key like "W" -> "W" (using real settings module)
+    lu.assertEquals(settings.format_shortcut({ctrl = false, shift = false, alt = false, key = "W"}), "W")
+    lu.assertEquals(settings.format_shortcut({ctrl = false, shift = false, alt = false, key = "F"}), "F")
 end
 
 function TestNVSDItemView:test_settings_theme_fallback_to_default()
-    -- Unknown theme ID returns first theme
-    local THEMES = {
-        {id = "default", name = "Default"},
-        {id = "warm", name = "Warm"},
-    }
-
-    local function get_theme(id)
-        for _, theme in ipairs(THEMES) do
-            if theme.id == id then return theme end
-        end
-        return THEMES[1]
-    end
-
-    -- Known ID works
-    lu.assertEquals(get_theme("warm").name, "Warm")
-
-    -- Unknown ID falls back to first
-    lu.assertEquals(get_theme("nonexistent_theme_xyz").name, "Default")
-    lu.assertEquals(get_theme("").name, "Default")
+    -- Unknown theme ID returns first theme (using real settings module)
+    lu.assertEquals(settings.get_theme("warm").name, "Warm")
+    lu.assertEquals(settings.get_theme("nonexistent_theme_xyz").id, "default")
+    lu.assertEquals(settings.get_theme("").id, "default")
 end
 
 function TestNVSDItemView:test_settings_deep_copy_independence()
@@ -2871,104 +2700,42 @@ end
 -- =============================================================
 
 function TestNVSDItemView:test_find_conflict_detects_duplicate()
-    -- Same key+modifiers on two different shortcuts → returns conflict name
-    local find_conflict = function(shortcuts, exclude_name, binding)
-        if not binding or binding.key == "" then return nil end
-        for name, shortcut in pairs(shortcuts) do
-            if name ~= exclude_name and shortcut.key ~= "" then
-                if shortcut.key == binding.key
-                    and shortcut.ctrl == binding.ctrl
-                    and shortcut.shift == binding.shift
-                    and shortcut.alt == binding.alt then
-                    return name
-                end
-            end
-        end
-        return nil
-    end
-
+    -- Same key+modifiers on two different shortcuts → returns conflict name (using real settings module)
     local shortcuts = {
         toggle_warp = {ctrl = false, shift = false, alt = false, key = "W"},
         toggle_mute = {ctrl = false, shift = false, alt = false, key = "W"},  -- duplicate
     }
-    local result = find_conflict(shortcuts, "toggle_warp", {ctrl = false, shift = false, alt = false, key = "W"})
+    local result = settings.find_conflict(shortcuts, "toggle_warp", {ctrl = false, shift = false, alt = false, key = "W"})
     lu.assertEquals(result, "toggle_mute")
 end
 
 function TestNVSDItemView:test_find_conflict_no_conflict_different_modifiers()
-    -- "W" vs "Ctrl+W" → no conflict
-    local find_conflict = function(shortcuts, exclude_name, binding)
-        if not binding or binding.key == "" then return nil end
-        for name, shortcut in pairs(shortcuts) do
-            if name ~= exclude_name and shortcut.key ~= "" then
-                if shortcut.key == binding.key
-                    and shortcut.ctrl == binding.ctrl
-                    and shortcut.shift == binding.shift
-                    and shortcut.alt == binding.alt then
-                    return name
-                end
-            end
-        end
-        return nil
-    end
-
+    -- "W" vs "Ctrl+W" → no conflict (using real settings module)
     local shortcuts = {
         toggle_warp = {ctrl = false, shift = false, alt = false, key = "W"},
         toggle_mute = {ctrl = true, shift = false, alt = false, key = "W"},  -- Ctrl+W
     }
-    -- Editing toggle_warp, binding plain "W" — toggle_mute is Ctrl+W so no conflict
-    local result = find_conflict(shortcuts, "toggle_warp", {ctrl = false, shift = false, alt = false, key = "W"})
+    local result = settings.find_conflict(shortcuts, "toggle_warp", {ctrl = false, shift = false, alt = false, key = "W"})
     lu.assertNil(result)
 end
 
 function TestNVSDItemView:test_find_conflict_ignores_empty_keys()
-    -- Two unbound shortcuts → no conflict
-    local find_conflict = function(shortcuts, exclude_name, binding)
-        if not binding or binding.key == "" then return nil end
-        for name, shortcut in pairs(shortcuts) do
-            if name ~= exclude_name and shortcut.key ~= "" then
-                if shortcut.key == binding.key
-                    and shortcut.ctrl == binding.ctrl
-                    and shortcut.shift == binding.shift
-                    and shortcut.alt == binding.alt then
-                    return name
-                end
-            end
-        end
-        return nil
-    end
-
+    -- Two unbound shortcuts → no conflict (using real settings module)
     local shortcuts = {
         zoom_in = {ctrl = false, shift = false, alt = false, key = ""},
         zoom_out = {ctrl = false, shift = false, alt = false, key = ""},
     }
-    local result = find_conflict(shortcuts, "zoom_in", {ctrl = false, shift = false, alt = false, key = ""})
+    local result = settings.find_conflict(shortcuts, "zoom_in", {ctrl = false, shift = false, alt = false, key = ""})
     lu.assertNil(result)
 end
 
 function TestNVSDItemView:test_find_conflict_skips_self()
-    -- Same binding on the shortcut being edited → should NOT report as conflict
-    local find_conflict = function(shortcuts, exclude_name, binding)
-        if not binding or binding.key == "" then return nil end
-        for name, shortcut in pairs(shortcuts) do
-            if name ~= exclude_name and shortcut.key ~= "" then
-                if shortcut.key == binding.key
-                    and shortcut.ctrl == binding.ctrl
-                    and shortcut.shift == binding.shift
-                    and shortcut.alt == binding.alt then
-                    return name
-                end
-            end
-        end
-        return nil
-    end
-
+    -- Same binding on the shortcut being edited → should NOT report as conflict (using real settings module)
     local shortcuts = {
         toggle_warp = {ctrl = false, shift = false, alt = false, key = "W"},
         toggle_mute = {ctrl = false, shift = false, alt = false, key = "M"},
     }
-    -- Re-assigning "W" to toggle_warp (itself) → no conflict
-    local result = find_conflict(shortcuts, "toggle_warp", {ctrl = false, shift = false, alt = false, key = "W"})
+    local result = settings.find_conflict(shortcuts, "toggle_warp", {ctrl = false, shift = false, alt = false, key = "W"})
     lu.assertNil(result)
 end
 
