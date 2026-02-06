@@ -14,15 +14,15 @@ Built-in gain, pitch, WARP, reverse, and 8 color themes.\line
       </metadata>
       <version name="1.0.0" author="NVSD" time="2026-02-06T00:00:00Z">
         <changelog><![CDATA[Initial release]]></changelog>
-        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/1d2a0c99ebd46775b9b5c77a95087b30c600025f/Scripts/NVSD/NVSD_ItemView.lua</source>
-        <source>https://github.com/novosadand/NVSD_ItemView/raw/1d2a0c99ebd46775b9b5c77a95087b30c600025f/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
-        <source>https://github.com/novosadand/NVSD_ItemView/raw/1d2a0c99ebd46775b9b5c77a95087b30c600025f/Scripts/NVSD/lib/config.lua</source>
-        <source>https://github.com/novosadand/NVSD_ItemView/raw/1d2a0c99ebd46775b9b5c77a95087b30c600025f/Scripts/NVSD/lib/state.lua</source>
-        <source>https://github.com/novosadand/NVSD_ItemView/raw/1d2a0c99ebd46775b9b5c77a95087b30c600025f/Scripts/NVSD/lib/utils.lua</source>
-        <source>https://github.com/novosadand/NVSD_ItemView/raw/1d2a0c99ebd46775b9b5c77a95087b30c600025f/Scripts/NVSD/lib/drawing.lua</source>
-        <source>https://github.com/novosadand/NVSD_ItemView/raw/1d2a0c99ebd46775b9b5c77a95087b30c600025f/Scripts/NVSD/lib/controls.lua</source>
-        <source>https://github.com/novosadand/NVSD_ItemView/raw/1d2a0c99ebd46775b9b5c77a95087b30c600025f/Scripts/NVSD/lib/settings.lua</source>
-        <source>https://github.com/novosadand/NVSD_ItemView/raw/1d2a0c99ebd46775b9b5c77a95087b30c600025f/Scripts/NVSD/lib/settings_ui.lua</source>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/3ae996b21f09e8323005dbe02c80a458c940d0fc/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/3ae996b21f09e8323005dbe02c80a458c940d0fc/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/3ae996b21f09e8323005dbe02c80a458c940d0fc/Scripts/NVSD/lib/config.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/3ae996b21f09e8323005dbe02c80a458c940d0fc/Scripts/NVSD/lib/state.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/3ae996b21f09e8323005dbe02c80a458c940d0fc/Scripts/NVSD/lib/utils.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/3ae996b21f09e8323005dbe02c80a458c940d0fc/Scripts/NVSD/lib/drawing.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/3ae996b21f09e8323005dbe02c80a458c940d0fc/Scripts/NVSD/lib/controls.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/3ae996b21f09e8323005dbe02c80a458c940d0fc/Scripts/NVSD/lib/settings.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/3ae996b21f09e8323005dbe02c80a458c940d0fc/Scripts/NVSD/lib/settings_ui.lua</source>
       </version>
     </reapack>
   </category>
