@@ -253,7 +253,9 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       -- Restore selection outside undo block
       reaper.SelectAllMediaItems(0, false)
       for _, sel_item in ipairs(saved_items) do
-        reaper.SetMediaItemSelected(sel_item, true)
+        if reaper.ValidatePtr(sel_item, "MediaItem*") then
+          reaper.SetMediaItemSelected(sel_item, true)
+        end
       end
       state.pending_cache_invalidation = 3
     end
@@ -287,7 +289,9 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       -- Restore selection outside undo block
       reaper.SelectAllMediaItems(0, false)
       for _, sel_item in ipairs(saved_items) do
-        reaper.SetMediaItemSelected(sel_item, true)
+        if reaper.ValidatePtr(sel_item, "MediaItem*") then
+          reaper.SetMediaItemSelected(sel_item, true)
+        end
       end
     end
   end

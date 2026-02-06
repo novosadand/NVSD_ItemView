@@ -152,10 +152,10 @@ function utils.get_wav_bit_depth(file_path)
 
   while true do
     local chunk_id = f:read(4)
-    if not chunk_id then f:close() bit_depth_cache[file_path] = false return nil end
+    if not chunk_id or #chunk_id < 4 then f:close() bit_depth_cache[file_path] = false return nil end
 
     local chunk_size_bytes = f:read(4)
-    if not chunk_size_bytes then f:close() bit_depth_cache[file_path] = false return nil end
+    if not chunk_size_bytes or #chunk_size_bytes < 4 then f:close() bit_depth_cache[file_path] = false return nil end
 
     local chunk_size = string.byte(chunk_size_bytes, 1) +
                        string.byte(chunk_size_bytes, 2) * 256 +

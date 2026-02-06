@@ -296,7 +296,9 @@ local function loop()
           reaper.Undo_EndBlock("NVSD_ItemView: Reverse", -1)
           reaper.SelectAllMediaItems(0, false)
           for _, sel_item in ipairs(saved_items) do
-            reaper.SetMediaItemSelected(sel_item, true)
+            if reaper.ValidatePtr(sel_item, "MediaItem*") then
+              reaper.SetMediaItemSelected(sel_item, true)
+            end
           end
           state.pending_cache_invalidation = 3
         end
@@ -328,7 +330,9 @@ local function loop()
           reaper.Undo_EndBlock("NVSD_ItemView: Open in External Editor", -1)
           reaper.SelectAllMediaItems(0, false)
           for _, sel_item in ipairs(saved_items) do
-            reaper.SetMediaItemSelected(sel_item, true)
+            if reaper.ValidatePtr(sel_item, "MediaItem*") then
+              reaper.SetMediaItemSelected(sel_item, true)
+            end
           end
         end
       end
