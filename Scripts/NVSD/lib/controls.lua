@@ -53,9 +53,29 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     state.warp_dropdown_open = false
     if take then
       reaper.Undo_BeginBlock()
-      -- Toggle B_PPITCH (preserve pitch when changing rate)
-      local new_value = state.warp_mode and 0 or 1
-      reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", new_value)
+      local item = reaper.GetMediaItemTake_Item(take)
+
+      if not state.warp_mode then
+        -- Turning WARP ON: transfer pitch from playrate into D_PITCH
+        local pitch_from_playrate = utils.playrate_to_semitones(current_playrate)
+        reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", pitch_from_playrate)
+        reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 1)
+      else
+        -- Turning WARP OFF: transfer D_PITCH into playrate, adjust length
+        local old_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
+        local old_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+        local new_playrate = utils.semitones_to_playrate(current_pitch)
+
+        reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", 0)
+        reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", new_playrate)
+        reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 0)
+
+        if new_playrate > 0 then
+          local new_length = old_length * (old_playrate / new_playrate)
+          reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_length)
+        end
+      end
+
       reaper.UpdateArrange()
       reaper.Undo_EndBlock("NVSD_ItemView: Toggle WARP", -1)
     end
