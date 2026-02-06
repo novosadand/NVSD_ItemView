@@ -345,17 +345,37 @@ function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, pa
   end
 
   if reaper.ImGui_IsMouseReleased(ctx, 0) and state.is_dragging("gain") then
+    reaper.UpdateArrange()
     state.end_drag("gain")
   end
 
   if state.is_dragging("gain") and reaper.ImGui_IsMouseDown(ctx, 0) then
     local delta_y = state.get_drag_delta(ctx, "gain", mouse_y, slider_pos, 0.15)
     local delta_pos = delta_y / slider_height
-    local new_pos = math.max(0, math.min(1, state.drag_controls.gain.start_value + delta_pos))
+    local new_pos = state.drag_controls.gain.start_value + delta_pos
+
+    -- Clamp and rebase at bounds to prevent dead zones
+    if new_pos > 1 then
+      new_pos = 1
+      state.drag_controls.gain.start_value = 1
+      if state.has_js_extension then
+        state.drag_cumulative_delta_y = 0
+      else
+        state.drag_controls.gain.start_y = mouse_y
+      end
+    elseif new_pos < 0 then
+      new_pos = 0
+      state.drag_controls.gain.start_value = 0
+      if state.has_js_extension then
+        state.drag_cumulative_delta_y = 0
+      else
+        state.drag_controls.gain.start_y = mouse_y
+      end
+    end
+
     local new_db = utils.slider_to_db(new_pos)
     local new_gain = utils.db_to_gain(new_db)
     reaper.SetMediaItemInfo_Value(item, "D_VOL", new_gain)
-    reaper.UpdateArrange()
   end
 
   local slider_center_x = slider_x + config.GAIN_SLIDER_WIDTH / 2

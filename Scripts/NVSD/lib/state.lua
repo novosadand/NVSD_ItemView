@@ -118,6 +118,13 @@ function state.is_any_control_dragging()
       or state.drag_controls.semitones.active or state.drag_controls.cents.active
 end
 
+-- Check if a knob-type drag is active (needs cursor locking)
+-- Gain slider is excluded: it uses direct mouse tracking instead
+function state.is_knob_dragging()
+  return state.drag_controls.pitch.active
+      or state.drag_controls.semitones.active or state.drag_controls.cents.active
+end
+
 -- Get drag delta (in pixels), handling shift modifier for fine control
 function state.get_drag_delta(ctx, name, mouse_y, current_value, fine_sensitivity)
   local ctrl = state.drag_controls[name]

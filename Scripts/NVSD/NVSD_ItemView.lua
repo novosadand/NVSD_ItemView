@@ -430,12 +430,14 @@ local function loop()
 
           -- Deferred loading: Don't load peaks while user is dragging in REAPER
           -- This keeps REAPER responsive during edge drags, etc.
+          local just_changed = false
           if item_changed or source_changed or reversed_changed then
             state.cached_item = item
             state.cached_source = source
             state.cached_source_length = source_length
             state.cached_reversed = is_reversed
             state.target_samples = desired_samples
+            just_changed = true
 
             -- Check if we have this file in cache
             if file_cache_entry and not is_reversed then
@@ -446,8 +448,9 @@ local function loop()
               state.cached_num_samples = file_cache_entry.num_samples
               state.peaks_error = nil
               state.loading_stage = 2
+              just_changed = false  -- Cache hit, no deferral needed
             else
-              -- Need to load
+              -- Need to load — defer to next frame to avoid blocking on click
               state.loading_stage = 0
               state.cached_peaks = nil
               state.cached_lod = nil
@@ -458,7 +461,8 @@ local function loop()
           -- Stage 0→1: Fast preview (~4K samples, <5ms) for instant waveform display
           -- Stage 1→2: Full resolution peaks (spreads I/O to next frame)
           -- Stage 2+:  Build LOD for fast zoom-out rendering (next frame after that)
-          if not user_dragging_in_reaper and state.load_cooldown == 0 then
+          -- Skip loading on the frame the item changed (avoids blocking the click)
+          if not user_dragging_in_reaper and state.load_cooldown == 0 and not just_changed then
             if state.loading_stage == 0 and state.cached_peaks == nil then
               -- Stage 1: Fast preview for instant display
               local preview_count = math.min(desired_samples, math.max(math.floor(waveform_width * 2), 4000))

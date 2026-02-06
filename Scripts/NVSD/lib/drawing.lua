@@ -376,15 +376,13 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
   local active_maxs = active_peaks.maxs
   local peaks_per_second = num_peaks / source_length
 
-  -- Pre-allocate reusable tables (avoid GC pressure)
-  local prev_data = {}
-  local peak_mins = {}
-  local peak_maxs = {}
-  for ch = 1, num_channels do
-    prev_data[ch] = {px = nil, top = nil, bot = nil}
-    peak_mins[ch] = 0
-    peak_maxs[ch] = 0
-  end
+  -- Cache draw functions locally (reduces Lua→C lookup overhead per call)
+  local DL_QuadFilled = reaper.ImGui_DrawList_AddQuadFilled
+  local DL_AddLine = reaper.ImGui_DrawList_AddLine
+  local DL_PathLineTo = reaper.ImGui_DrawList_PathLineTo
+  local DL_PathStroke = reaper.ImGui_DrawList_PathStroke
+  local has_path = DL_PathLineTo ~= nil
+  local math_floor = math.floor
 
   -- Derive waveform colors from config (with alpha for fill)
   local function color_with_alpha(color, alpha)
@@ -395,7 +393,7 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
     local g = ((color >> 16) & 0xFF) * factor
     local b = ((color >> 8) & 0xFF) * factor
     local a = color & 0xFF
-    return (math.floor(r) << 24) | (math.floor(g) << 16) | (math.floor(b) << 8) | a
+    return (math_floor(r) << 24) | (math_floor(g) << 16) | (math_floor(b) << 8) | a
   end
 
   local OUTLINE_ACTIVE = config.COLOR_WAVEFORM
@@ -405,34 +403,46 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
   local OUTLINE_LOOPED = darken_color(config.COLOR_WAVEFORM, 0.75)
   local FILL_LOOPED = color_with_alpha(darken_color(config.COLOR_WAVEFORM, 0.6), 0xCC)
 
-  -- Cache last index range to skip recalculation for same range
+  -- Phase 1: Pre-compute all column data (separates math from drawing)
+  local col_tops = {}   -- col_tops[ch][i] = top_y for pixel i
+  local col_bots = {}   -- col_bots[ch][i] = bot_y for pixel i
+  local col_colors = {} -- col_colors[i] = 1(active) / 2(inactive) / 3(looped)
+  for ch = 1, num_channels do
+    col_tops[ch] = {}
+    col_bots[ch] = {}
+  end
+
+  local peak_mins = {}
+  local peak_maxs = {}
+  for ch = 1, num_channels do
+    peak_mins[ch] = 0
+    peak_maxs[ch] = 0
+  end
+
   local last_idx_start, last_idx_end = -1, -1
 
   for i = 0, num_samples - 1 do
-    local px = x + i
     local t = view_start + i * time_per_pixel
     local t_next = t + time_per_pixel
 
-    -- Inline peak index calculation (avoid function call overhead)
+    -- Inline peak index calculation
     local wrapped_start = t % source_length
     if wrapped_start < 0 then wrapped_start = wrapped_start + source_length end
     if is_reversed then wrapped_start = source_length - wrapped_start end
-    local idx_start = math.floor(wrapped_start * peaks_per_second) + 1
+    local idx_start = math_floor(wrapped_start * peaks_per_second) + 1
     if idx_start < 1 then idx_start = 1 elseif idx_start > num_peaks then idx_start = num_peaks end
 
     local wrapped_end = t_next % source_length
     if wrapped_end < 0 then wrapped_end = wrapped_end + source_length end
     if is_reversed then wrapped_end = source_length - wrapped_end end
-    local idx_end = math.floor(wrapped_end * peaks_per_second) + 1
+    local idx_end = math_floor(wrapped_end * peaks_per_second) + 1
     if idx_end < 1 then idx_end = 1 elseif idx_end > num_peaks then idx_end = num_peaks end
 
     if idx_end < idx_start then idx_start, idx_end = idx_end, idx_start end
 
-    -- Only recalculate if range changed (common case: same range for adjacent pixels)
+    -- Only recalculate if range changed
     if idx_start ~= last_idx_start or idx_end ~= last_idx_end then
       last_idx_start, last_idx_end = idx_start, idx_end
-
-      -- Aggregate min/max inline using flat arrays
       for ch = 1, num_channels do
         local ch_min, ch_max = 1, -1
         for idx = idx_start, idx_end do
@@ -447,55 +457,98 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
       end
     end
 
-    -- Determine colors based on position
+    -- Color type
     local in_active = t >= start_offset and t <= item_end
-    local fill_color, outline_color
     if in_active then
-      if t < 0 or t >= source_length then
-        fill_color, outline_color = FILL_LOOPED, OUTLINE_LOOPED
-      else
-        fill_color, outline_color = FILL_ACTIVE, OUTLINE_ACTIVE
-      end
+      col_colors[i] = (t < 0 or t >= source_length) and 3 or 1
     else
-      fill_color, outline_color = FILL_INACTIVE, OUTLINE_INACTIVE
+      col_colors[i] = 2
     end
 
+    -- Y positions per channel
     for ch = 1, num_channels do
-      local ch_y = y + (ch - 1) * channel_height
-      local center_y = ch_y + channel_height / 2
-
+      local center_y = y + (ch - 1) * channel_height + channel_height * 0.5
       local raw_max = peak_maxs[ch] * visual_gain
       local raw_min = peak_mins[ch] * visual_gain
       if raw_max > 1 then raw_max = 1 elseif raw_max < -1 then raw_max = -1 end
       if raw_min > 1 then raw_min = 1 elseif raw_min < -1 then raw_min = -1 end
-
-      -- Apply power curve to boost quiet signals (0.7 = between linear and sqrt)
       local scaled_max = power_curve(raw_max)
       local scaled_min = power_curve(raw_min)
-
       local top_y = center_y - (scaled_max * half_height)
       local bot_y = center_y - (scaled_min * half_height)
-
       if bot_y - top_y < 1 then
         top_y = center_y - 0.5
         bot_y = center_y + 0.5
       end
+      col_tops[ch][i] = top_y
+      col_bots[ch][i] = bot_y
+    end
+  end
 
-      local prev = prev_data[ch]
-      if prev.px then
-        reaper.ImGui_DrawList_AddQuadFilled(draw_list,
-          prev.px, prev.top,
-          px, top_y,
-          px, bot_y,
-          prev.px, prev.bot,
+  -- Phase 2: Build color segments (runs of same color type)
+  local segments = {}
+  local n_segs = 0
+  local seg_start = 0
+  local seg_color = col_colors[0]
+  for i = 1, num_samples - 1 do
+    if col_colors[i] ~= seg_color then
+      n_segs = n_segs + 1
+      segments[n_segs] = {seg_start, i - 1, seg_color}
+      seg_start = i
+      seg_color = col_colors[i]
+    end
+  end
+  n_segs = n_segs + 1
+  segments[n_segs] = {seg_start, num_samples - 1, seg_color}
+
+  local fill_lut = {[1] = FILL_ACTIVE, [2] = FILL_INACTIVE, [3] = FILL_LOOPED}
+  local outline_lut = {[1] = OUTLINE_ACTIVE, [2] = OUTLINE_INACTIVE, [3] = OUTLINE_LOOPED}
+
+  -- Phase 3: Render each segment with batched outlines
+  for si = 1, n_segs do
+    local s_start = segments[si][1]
+    local s_stop = segments[si][2]
+    local fill_color = fill_lut[segments[si][3]]
+    local outline_color = outline_lut[segments[si][3]]
+
+    -- First fill pixel needs predecessor (pixel before segment start)
+    local fill_from = (s_start == 0) and 1 or s_start
+
+    for ch = 1, num_channels do
+      local tops = col_tops[ch]
+      local bots = col_bots[ch]
+
+      -- Fill: per-pixel quads connecting adjacent columns
+      for i = fill_from, s_stop do
+        local px = x + i
+        DL_QuadFilled(draw_list,
+          px - 1, tops[i - 1],
+          px, tops[i],
+          px, bots[i],
+          px - 1, bots[i - 1],
           fill_color)
-        reaper.ImGui_DrawList_AddLine(draw_list, prev.px, prev.top, px, top_y, outline_color, 1)
-        reaper.ImGui_DrawList_AddLine(draw_list, prev.px, prev.bot, px, bot_y, outline_color, 1)
       end
 
-      prev.px = px
-      prev.top = top_y
-      prev.bot = bot_y
+      -- Outlines: batched via path API (reduces GPU draw commands)
+      if has_path and s_stop > s_start then
+        -- Top outline
+        for i = s_start, s_stop do
+          DL_PathLineTo(draw_list, x + i, tops[i])
+        end
+        DL_PathStroke(draw_list, outline_color, 0, 1)
+        -- Bottom outline
+        for i = s_start, s_stop do
+          DL_PathLineTo(draw_list, x + i, bots[i])
+        end
+        DL_PathStroke(draw_list, outline_color, 0, 1)
+      else
+        -- Fallback: individual lines
+        for i = fill_from, s_stop do
+          local px = x + i
+          DL_AddLine(draw_list, px - 1, tops[i - 1], px, tops[i], outline_color, 1)
+          DL_AddLine(draw_list, px - 1, bots[i - 1], px, bots[i], outline_color, 1)
+        end
+      end
     end
   end
 
