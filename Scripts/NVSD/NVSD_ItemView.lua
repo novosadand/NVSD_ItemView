@@ -1,6 +1,6 @@
 -- @description NVSD ItemView - Ableton-style clip view for REAPER items
 -- @author NVSD
--- @version 1.1.0
+-- @version 1.0.0
 -- @changelog
 --   Initial release
 -- @about
