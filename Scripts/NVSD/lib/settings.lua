@@ -179,7 +179,7 @@ settings.THEMES = {
       btn_on = 0xE8A449FF,
       btn_off = 0x454545FF,
       btn_hover = 0xF8B459FF,
-      btn_text = 0x1A1A1AFF,
+      btn_text = 0xFFFFFFFF,
     }
   },
   {
@@ -206,7 +206,7 @@ settings.THEMES = {
       btn_on = 0xC9A227FF,
       btn_off = 0x424242FF,
       btn_hover = 0xD9B237FF,
-      btn_text = 0x1A1A1AFF,
+      btn_text = 0xFFFFFFFF,
     }
   },
   {
@@ -233,7 +233,7 @@ settings.THEMES = {
       btn_on = 0x00BFFFFF,
       btn_off = 0x505050FF,
       btn_hover = 0x40DFFFFF,
-      btn_text = 0x000000FF,
+      btn_text = 0xFFFFFFFF,
     }
   },
   {
@@ -314,7 +314,7 @@ settings.THEMES = {
       btn_on = 0xA0A0A0FF,
       btn_off = 0x404040FF,
       btn_hover = 0xB0B0B0FF,
-      btn_text = 0x1A1A1AFF,
+      btn_text = 0xFFFFFFFF,
     }
   },
 }
