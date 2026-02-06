@@ -103,9 +103,13 @@ local function loop()
   local visible, open = reaper.ImGui_Begin(ctx, "NVSD_ItemView", true, window_flags)
 
   if visible then
+    -- Cache modifier key state once per frame (avoids repeated Lua→C bridge calls)
+    local ctrl_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
+    local shift_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
+    local alt_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
+
     -- Auto-focus window when hovered with Ctrl held (enables scroll-to-zoom without clicking first)
     local is_hovered = reaper.ImGui_IsWindowHovered(ctx, reaper.ImGui_HoveredFlags_ChildWindows())
-    local ctrl_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
     if is_hovered and ctrl_held and not reaper.ImGui_IsWindowFocused(ctx) then
       reaper.ImGui_SetWindowFocus(ctx)
     end
@@ -116,11 +120,9 @@ local function loop()
     end
 
     -- Forward undo/redo to REAPER (universal, not configurable)
-    local ctrl = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
-    local shift = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
-    if ctrl then
+    if ctrl_held then
       if reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Z()) then
-        reaper.Main_OnCommand(shift and 40030 or 40029, 0)  -- Shift: Redo, else Undo
+        reaper.Main_OnCommand(shift_held and 40030 or 40029, 0)  -- Shift: Redo, else Undo
       elseif reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Y()) then
         reaper.Main_OnCommand(40030, 0)  -- Redo
       end
@@ -211,18 +213,21 @@ local function loop()
         state.sticky_validation_counter = state.sticky_validation_counter + 1
         if state.sticky_validation_counter >= 10 then
           state.sticky_validation_counter = 0
-          -- Full validation scan
-          local still_valid = false
           local num_items = reaper.CountMediaItems(0)
-          for i = 0, num_items - 1 do
-            if reaper.GetMediaItem(0, i) == state.sticky_item then
-              still_valid = true
-              break
+          -- Only do full scan when item count changed (deletion/addition)
+          if num_items ~= state.last_item_count then
+            state.last_item_count = num_items
+            local still_valid = false
+            for i = 0, num_items - 1 do
+              if reaper.GetMediaItem(0, i) == state.sticky_item then
+                still_valid = true
+                break
+              end
             end
-          end
-          state.sticky_item_valid = still_valid
-          if not still_valid then
-            state.sticky_item = nil
+            state.sticky_item_valid = still_valid
+            if not still_valid then
+              state.sticky_item = nil
+            end
           end
         end
       end
@@ -360,6 +365,7 @@ local function loop()
           if source_length <= 0 then
             source_length = item_length
           end
+          if source_length <= 0 then source_length = 0.001 end  -- Prevent division by zero
 
           local playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
           if playrate == 0 then playrate = 1 end  -- Guard against division by zero
@@ -551,8 +557,7 @@ local function loop()
             return view_start + ((px - wave_x) / waveform_width) * view_length
           end
 
-          -- Draw file info bar at the top
-          local file_path = reaper.GetMediaSourceFileName(source, "")
+          -- Draw file info bar at the top (file_path already fetched above for caching)
           local _, gear_clicked = drawing.draw_info_bar(draw_list, ctx, wave_x, info_bar_y, waveform_width, config.INFO_BAR_HEIGHT, source, file_path, mouse_x, mouse_y, item, config, utils)
 
           -- Open settings when gear is clicked
@@ -786,7 +791,7 @@ local function loop()
           -- Hide and lock cursor while dragging any control
           if state.is_any_control_dragging() then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
-            if state.has_js_extension then
+            if state.has_js_extension and state.drag_lock_screen_x ~= 0 and state.drag_lock_screen_y ~= 0 then
               local cur_screen_x, cur_screen_y = reaper.GetMousePosition()
               -- Initialize last_screen_y if not set (defensive)
               state.drag_last_screen_y = state.drag_last_screen_y or cur_screen_y
@@ -821,8 +826,7 @@ local function loop()
           local near_start = utils.is_near_marker(mouse_x, start_marker_x, config.MARKER_WIDTH)
           local near_end = utils.is_near_marker(mouse_x, end_marker_x, config.MARKER_WIDTH)
 
-          -- Cursor feedback
-          local alt_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
+          -- Cursor feedback (alt_held cached at top of frame)
           if (state.dragging_start or state.dragging_end) and alt_held then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())
           elseif mouse_in_marker_area and (near_start or near_end) then
@@ -867,8 +871,7 @@ local function loop()
           -- Ctrl+mouse wheel zoom
           local wheel = reaper.ImGui_GetMouseWheel(ctx)
           if wheel ~= 0 and mouse_in_view then
-            local ctrl_down = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
-            if ctrl_down then
+            if ctrl_held then
               local zoom_factor = 1.35
               local new_zoom = wheel > 0 and (state.zoom_level * zoom_factor) or (state.zoom_level / zoom_factor)
               zoom_to_cursor(new_zoom, mouse_x)
@@ -1094,8 +1097,6 @@ local function loop()
           end
 
           local snap_threshold_time = (config.SNAP_THRESHOLD_PX / waveform_width) * view_length
-
-          local alt_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
 
           -- Alt+drag: slide both markers
           if (state.dragging_start or state.dragging_end) and alt_held and reaper.ImGui_IsMouseDown(ctx, 0) then

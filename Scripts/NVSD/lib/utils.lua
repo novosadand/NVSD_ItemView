@@ -143,11 +143,12 @@ function utils.get_wav_bit_depth(file_path)
   end
 
   local riff = f:read(4)
-  if riff ~= "RIFF" then f:close() bit_depth_cache[file_path] = false return nil end
+  if not riff or #riff < 4 or riff ~= "RIFF" then f:close() bit_depth_cache[file_path] = false return nil end
 
-  f:read(4)
+  local size_bytes = f:read(4)
+  if not size_bytes or #size_bytes < 4 then f:close() bit_depth_cache[file_path] = false return nil end
   local wave = f:read(4)
-  if wave ~= "WAVE" then f:close() bit_depth_cache[file_path] = false return nil end
+  if not wave or #wave < 4 or wave ~= "WAVE" then f:close() bit_depth_cache[file_path] = false return nil end
 
   while true do
     local chunk_id = f:read(4)
@@ -259,7 +260,7 @@ function utils.build_lod_peaks(peaks, num_channels)
     for i = 1, new_len do
       local base_sample = (i - 1) * factor  -- 0-based sample index of first in group
       for ch = 1, cur_ch do
-        local ch_min, ch_max = 1, -1
+        local ch_min, ch_max = math.huge, -math.huge
         for j = 0, factor - 1 do
           local src_idx = (base_sample + j) * cur_ch + ch
           local v_min = cur_mins[src_idx]

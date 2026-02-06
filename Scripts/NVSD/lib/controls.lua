@@ -239,22 +239,22 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_rev then
     if item then
-      reaper.Undo_BeginBlock()
       -- Save current selection
       local saved_items = {}
       for i = 0, reaper.CountSelectedMediaItems(0) - 1 do
         saved_items[#saved_items + 1] = reaper.GetSelectedMediaItem(0, i)
       end
+      reaper.Undo_BeginBlock()
       reaper.SelectAllMediaItems(0, false)
       reaper.SetMediaItemSelected(item, true)
       reaper.Main_OnCommand(41051, 0)
-      -- Restore selection
+      reaper.UpdateArrange()
+      reaper.Undo_EndBlock("NVSD_ItemView: Reverse", -1)
+      -- Restore selection outside undo block
       reaper.SelectAllMediaItems(0, false)
       for _, sel_item in ipairs(saved_items) do
         reaper.SetMediaItemSelected(sel_item, true)
       end
-      reaper.UpdateArrange()
-      reaper.Undo_EndBlock("NVSD_ItemView: Reverse", -1)
       state.pending_cache_invalidation = 3
     end
   end
@@ -274,6 +274,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_edit then
     if item then
+      -- Save current selection
       local saved_items = {}
       for i = 0, reaper.CountSelectedMediaItems(0) - 1 do
         saved_items[#saved_items + 1] = reaper.GetSelectedMediaItem(0, i)
@@ -282,11 +283,12 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       reaper.SelectAllMediaItems(0, false)
       reaper.SetMediaItemSelected(item, true)
       reaper.Main_OnCommand(40109, 0)
+      reaper.Undo_EndBlock("NVSD_ItemView: Open in External Editor", -1)
+      -- Restore selection outside undo block
       reaper.SelectAllMediaItems(0, false)
       for _, sel_item in ipairs(saved_items) do
         reaper.SetMediaItemSelected(sel_item, true)
       end
-      reaper.Undo_EndBlock("NVSD_ItemView: Open in External Editor", -1)
     end
   end
 end

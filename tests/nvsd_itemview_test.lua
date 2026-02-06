@@ -2888,3 +2888,196 @@ function TestNVSDItemView:test_settings_ui_save_applies()
     lu.assertEquals(settings.current.theme_id, "ableton_dark")  -- kept
     lu.assertFalse(settings.colors_dirty)  -- not changed back
 end
+
+-- ============================================================================
+-- LOD Peak Tests (build_lod_peaks and select_lod_level)
+-- ============================================================================
+
+-- Load utils.lua directly (these functions are pure Lua, no REAPER API needed)
+local utils = dofile("Scripts/NVSD/lib/utils.lua")
+
+-- Helper: create mock peaks data with known values
+local function make_peaks(count, channels, min_val, max_val)
+    local mins = {}
+    local maxs = {}
+    for i = 1, count * channels do
+        mins[i] = min_val or -(i / (count * channels))  -- Varying negative values
+        maxs[i] = max_val or (i / (count * channels))   -- Varying positive values
+    end
+    return { mins = mins, maxs = maxs, count = count, channels = channels }
+end
+
+function TestNVSDItemView:test_build_lod_peaks_basic_mono()
+    local peaks = make_peaks(1000, 1)
+    local lod = utils.build_lod_peaks(peaks, 1)
+
+    lu.assertNotNil(lod)
+    lu.assertEquals(#lod, 4)  -- L0=1000, L1=250, L2=62, L3=15 (L4 would be 3, below threshold)
+    lu.assertEquals(lod[1].count, 1000)   -- Level 0 = original
+    lu.assertEquals(lod[2].count, 250)    -- Level 1 = 1000/4
+    lu.assertEquals(lod[3].count, 62)     -- Level 2 = 250/4 = 62
+    lu.assertEquals(lod[4].count, 15)     -- Level 3 = 62/4 = 15
+end
+
+function TestNVSDItemView:test_build_lod_peaks_basic_stereo()
+    local peaks = make_peaks(1000, 2)
+    local lod = utils.build_lod_peaks(peaks, 2)
+
+    lu.assertNotNil(lod)
+    -- All levels should preserve channel count
+    for level = 1, #lod do
+        lu.assertEquals(lod[level].channels, 2)
+    end
+end
+
+function TestNVSDItemView:test_build_lod_peaks_preserves_extremes()
+    -- Create peaks where one sample has extreme values
+    local peaks = make_peaks(100, 1, -0.1, 0.1)
+    -- Set one sample to extremes
+    peaks.mins[50] = -0.9
+    peaks.maxs[50] = 0.9
+
+    local lod = utils.build_lod_peaks(peaks, 1)
+    lu.assertNotNil(lod)
+
+    -- Level 1 aggregates groups of 4. Sample 50 is in group 13 (indices 49-52).
+    -- The aggregated min for that group should include -0.9
+    local found_extreme_min = false
+    local found_extreme_max = false
+    for i = 1, lod[2].count do
+        if lod[2].mins[i] <= -0.9 then found_extreme_min = true end
+        if lod[2].maxs[i] >= 0.9 then found_extreme_max = true end
+    end
+    lu.assertTrue(found_extreme_min, "LOD should preserve extreme min values")
+    lu.assertTrue(found_extreme_max, "LOD should preserve extreme max values")
+end
+
+function TestNVSDItemView:test_build_lod_peaks_nil_input()
+    lu.assertNil(utils.build_lod_peaks(nil, 1))
+end
+
+function TestNVSDItemView:test_build_lod_peaks_empty_input()
+    local peaks = { mins = {}, maxs = {}, count = 0, channels = 1 }
+    lu.assertNil(utils.build_lod_peaks(peaks, 1))
+end
+
+function TestNVSDItemView:test_build_lod_peaks_too_small()
+    -- With only 20 peaks, first LOD level would be 5 (below threshold of 10)
+    local peaks = make_peaks(20, 1)
+    local lod = utils.build_lod_peaks(peaks, 1)
+
+    lu.assertNotNil(lod)
+    lu.assertEquals(#lod, 1)  -- Only original level (20/4=5, too small)
+end
+
+function TestNVSDItemView:test_build_lod_peaks_silence()
+    -- All zeros should aggregate to zeros
+    local peaks = make_peaks(100, 1, 0, 0)
+    local lod = utils.build_lod_peaks(peaks, 1)
+
+    lu.assertNotNil(lod)
+    for i = 1, lod[2].count do
+        lu.assertEquals(lod[2].mins[i], 0)
+        lu.assertEquals(lod[2].maxs[i], 0)
+    end
+end
+
+function TestNVSDItemView:test_build_lod_peaks_init_values()
+    -- Verify that math.huge/-math.huge initialization works correctly
+    -- Create peaks with values that would fail with old init (ch_min=1, ch_max=-1)
+    -- All values positive and small: min should be smallest, max should be largest
+    local peaks = { mins = {}, maxs = {}, count = 40, channels = 1 }
+    for i = 1, 40 do
+        peaks.mins[i] = 0.01 * i   -- All positive (0.01 to 0.40)
+        peaks.maxs[i] = 0.01 * i   -- All positive (0.01 to 0.40)
+    end
+
+    local lod = utils.build_lod_peaks(peaks, 1)
+    lu.assertNotNil(lod)
+
+    -- Level 1: group 1 = samples 1-4, mins are 0.01,0.02,0.03,0.04
+    -- With correct init (math.huge), ch_min = 0.01
+    -- With old init (1), ch_min would be 0.01 (still works because 0.01 < 1)
+    lu.assertAlmostEquals(lod[2].mins[1], 0.01, 0.001)
+    lu.assertAlmostEquals(lod[2].maxs[1], 0.04, 0.001)
+end
+
+function TestNVSDItemView:test_build_lod_peaks_sparse_data()
+    -- Test with nil values in peak arrays (sparse tables)
+    local peaks = { mins = {}, maxs = {}, count = 40, channels = 1 }
+    for i = 1, 40 do
+        if i % 3 == 0 then
+            peaks.mins[i] = nil  -- Sparse: some values missing
+            peaks.maxs[i] = nil
+        else
+            peaks.mins[i] = -0.5
+            peaks.maxs[i] = 0.5
+        end
+    end
+
+    local lod = utils.build_lod_peaks(peaks, 1)
+    lu.assertNotNil(lod)
+
+    -- With math.huge init + nil guard + fallback to 0:
+    -- Groups with all-nil samples should get 0, not math.huge/-math.huge
+    for i = 1, lod[2].count do
+        lu.assertTrue(lod[2].mins[i] <= 0, "Min should be <= 0")
+        lu.assertTrue(lod[2].maxs[i] >= 0, "Max should be >= 0")
+    end
+end
+
+-- select_lod_level tests
+
+function TestNVSDItemView:test_select_lod_level_nil_lod()
+    local result, scale = utils.select_lod_level(nil, 10)
+    lu.assertNil(result)
+    lu.assertEquals(scale, 1)
+end
+
+function TestNVSDItemView:test_select_lod_level_low_density()
+    -- Low peaks per pixel should use level 1 (original)
+    local peaks = make_peaks(1000, 1)
+    local lod = utils.build_lod_peaks(peaks, 1)
+
+    local selected, scale = utils.select_lod_level(lod, 1)
+    lu.assertEquals(selected.count, 1000)  -- Original level
+    lu.assertEquals(scale, 1)
+end
+
+function TestNVSDItemView:test_select_lod_level_medium_density()
+    -- 3-8 peaks per pixel should use level 2
+    local peaks = make_peaks(1000, 1)
+    local lod = utils.build_lod_peaks(peaks, 1)
+
+    local selected, scale = utils.select_lod_level(lod, 5)
+    lu.assertEquals(selected.count, 250)  -- Level 2 (4x reduced)
+    lu.assertEquals(scale, 4)
+end
+
+function TestNVSDItemView:test_select_lod_level_high_density()
+    -- >32 peaks per pixel should use level 4
+    local peaks = make_peaks(10000, 1)
+    local lod = utils.build_lod_peaks(peaks, 1)
+
+    local selected, scale = utils.select_lod_level(lod, 50)
+    lu.assertEquals(scale, 64)  -- Level 4 = 4^3
+end
+
+function TestNVSDItemView:test_select_lod_level_very_high_density()
+    -- >128 peaks per pixel should use level 5
+    local peaks = make_peaks(100000, 1)
+    local lod = utils.build_lod_peaks(peaks, 1)
+
+    local selected, scale = utils.select_lod_level(lod, 200)
+    lu.assertEquals(scale, 256)  -- Level 5 = 4^4
+end
+
+function TestNVSDItemView:test_select_lod_level_boundary()
+    -- Exactly at threshold (2) should still use level 1
+    local peaks = make_peaks(1000, 1)
+    local lod = utils.build_lod_peaks(peaks, 1)
+
+    local selected, scale = utils.select_lod_level(lod, 2)
+    lu.assertEquals(selected.count, 1000)
+    lu.assertEquals(scale, 1)
+end

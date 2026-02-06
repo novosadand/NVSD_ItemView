@@ -332,6 +332,7 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
 
   reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, config.COLOR_WAVEFORM_BG)
 
+  if num_channels < 1 then num_channels = 1 end
   local channel_height = height / num_channels
 
   for ch = 1, num_channels do
@@ -351,6 +352,7 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
   local half_height = channel_height / 2 * 0.85
 
   local num_samples = math.floor(width)
+  if num_samples < 1 then return 0, 0, 0, source_length end
   local time_per_pixel = view_length / num_samples
 
   -- Select appropriate LOD level based on how many peaks would cover each pixel
@@ -425,15 +427,13 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
     local t = view_start + i * time_per_pixel
     local t_next = t + time_per_pixel
 
-    -- Inline peak index calculation
-    local wrapped_start = t % source_length
-    if wrapped_start < 0 then wrapped_start = wrapped_start + source_length end
+    -- Inline peak index calculation (robust modulo for negative values)
+    local wrapped_start = ((t % source_length) + source_length) % source_length
     if is_reversed then wrapped_start = source_length - wrapped_start end
     local idx_start = math_floor(wrapped_start * peaks_per_second) + 1
     if idx_start < 1 then idx_start = 1 elseif idx_start > num_peaks then idx_start = num_peaks end
 
-    local wrapped_end = t_next % source_length
-    if wrapped_end < 0 then wrapped_end = wrapped_end + source_length end
+    local wrapped_end = ((t_next % source_length) + source_length) % source_length
     if is_reversed then wrapped_end = source_length - wrapped_end end
     local idx_end = math_floor(wrapped_end * peaks_per_second) + 1
     if idx_end < 1 then idx_end = 1 elseif idx_end > num_peaks then idx_end = num_peaks end
@@ -444,7 +444,7 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
     if idx_start ~= last_idx_start or idx_end ~= last_idx_end then
       last_idx_start, last_idx_end = idx_start, idx_end
       for ch = 1, num_channels do
-        local ch_min, ch_max = 1, -1
+        local ch_min, ch_max = math.huge, -math.huge
         for idx = idx_start, idx_end do
           local flat_idx = (idx - 1) * active_ch + ch
           local v_min = active_mins[flat_idx]
@@ -452,6 +452,9 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
           if v_min and v_min < ch_min then ch_min = v_min end
           if v_max and v_max > ch_max then ch_max = v_max end
         end
+        -- Fallback if no valid peaks found
+        if ch_min == math.huge then ch_min = 0 end
+        if ch_max == -math.huge then ch_max = 0 end
         peak_mins[ch] = ch_min
         peak_maxs[ch] = ch_max
       end

@@ -62,6 +62,7 @@ state.sticky_item = nil
 state.last_selected_item = nil
 state.sticky_validation_counter = 0
 state.sticky_item_valid = false
+state.last_item_count = -1  -- Track item count for sticky validation optimization
 
 -- Cursor lock state
 state.drag_lock_screen_x = 0
