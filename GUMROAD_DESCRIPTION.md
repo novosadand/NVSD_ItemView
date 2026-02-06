@@ -73,9 +73,11 @@ Updates are delivered automatically through ReaPack.
 
 ---
 
-## Support
+## Links
 
-Questions or issues? Email novosad.and@gmail.com
+Website: https://andrejnovosad.com
+Bug reports & feature requests: https://github.com/novosadand/NVSD_ItemView/issues
+Email: novosad.and@gmail.com
 
 ---
 
