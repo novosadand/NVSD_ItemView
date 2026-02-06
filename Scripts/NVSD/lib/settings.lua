@@ -41,6 +41,14 @@ local KEY_NAME_TO_FUNC = {
   Space = "ImGui_Key_Space", Enter = "ImGui_Key_Enter",
   Escape = "ImGui_Key_Escape", Tab = "ImGui_Key_Tab",
   Backspace = "ImGui_Key_Backspace", Delete = "ImGui_Key_Delete",
+  Insert = "ImGui_Key_Insert",
+  Home = "ImGui_Key_Home", End = "ImGui_Key_End",
+  PageUp = "ImGui_Key_PageUp", PageDown = "ImGui_Key_PageDown",
+  ["Num0"] = "ImGui_Key_Keypad0", ["Num1"] = "ImGui_Key_Keypad1",
+  ["Num2"] = "ImGui_Key_Keypad2", ["Num3"] = "ImGui_Key_Keypad3",
+  ["Num4"] = "ImGui_Key_Keypad4", ["Num5"] = "ImGui_Key_Keypad5",
+  ["Num6"] = "ImGui_Key_Keypad6", ["Num7"] = "ImGui_Key_Keypad7",
+  ["Num8"] = "ImGui_Key_Keypad8", ["Num9"] = "ImGui_Key_Keypad9",
 }
 
 -- Cache resolved ImGui key integer values (populated on first use, avoids repeated C calls)
@@ -67,7 +75,8 @@ local BINDABLE_KEYS = {
   "N","O","P","Q","R","S","T","U","V","W","X","Y","Z",
   "0","1","2","3","4","5","6","7","8","9",
   "F1","F2","F3","F4","F5","F6","F7","F8","F9","F10","F11","F12",
-  "Space","Enter","Tab",
+  "Space","Enter","Tab","Insert","Home","End","PageUp","PageDown",
+  "Num0","Num1","Num2","Num3","Num4","Num5","Num6","Num7","Num8","Num9",
 }
 
 -- Check which bindable key was pressed this frame (for capture mode)
