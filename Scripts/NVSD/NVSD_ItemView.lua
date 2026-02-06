@@ -107,8 +107,20 @@ local function loop()
   local ok, err = pcall(function()
 
   -- Track mouse state early (needed to gate expensive operations)
+  -- Only track when REAPER is the active application (not Firefox, etc.)
   local mouse_is_down = false
-  if reaper.JS_Mouse_GetState then
+  local reaper_is_active = true
+  if reaper.JS_Window_GetForeground then
+    local fg = reaper.JS_Window_GetForeground()
+    local main = reaper.GetMainHwnd()
+    if fg and main and fg ~= main then
+      local parent = reaper.JS_Window_GetParent(fg)
+      if parent ~= main then
+        reaper_is_active = false
+      end
+    end
+  end
+  if reaper_is_active and reaper.JS_Mouse_GetState then
     local mouse_state = reaper.JS_Mouse_GetState(1)
     mouse_is_down = (mouse_state & 1) ~= 0
   end
