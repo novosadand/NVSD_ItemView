@@ -22,6 +22,29 @@ local function power_curve(value)
   end
 end
 
+-- Waveform computation cache (avoids recomputing Phase 1+2 when inputs unchanged)
+local wf_cache = { valid = false }
+
+-- Info bar metadata cache (avoids per-frame REAPER API calls)
+local info_cache = { source = false }
+
+-- Invalidate waveform computation cache (call when item changes, peaks reload, etc.)
+function drawing.invalidate_wf_cache()
+  wf_cache.valid = false
+end
+
+-- Color helpers (module-level to avoid per-call closure creation)
+local function color_with_alpha(color, alpha)
+  return ((color >> 8) << 8) | alpha
+end
+local function darken_color(color, factor)
+  local r = ((color >> 24) & 0xFF) * factor
+  local g = ((color >> 16) & 0xFF) * factor
+  local b = ((color >> 8) & 0xFF) * factor
+  local a = color & 0xFF
+  return (math.floor(r) << 24) | (math.floor(g) << 16) | (math.floor(b) << 8) | a
+end
+
 -- Draw dashed vertical line
 function drawing.draw_dashed_line(draw_list, x, y1, y2, color, dash_length, gap_length, line_width)
   dash_length = dash_length or 5
@@ -232,10 +255,25 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   local text_x = current_x + 4
   local text_y = y + 3
 
-  local file_name = utils.get_file_name(file_path)
-  local sample_rate = source and reaper.GetMediaSourceSampleRate(source) or 0
-  local num_channels = source and reaper.GetMediaSourceNumChannels(source) or 0
-  local bit_depth = utils.get_wav_bit_depth(file_path)
+  -- Cache metadata per source (avoids REAPER API calls every frame)
+  local file_name, sample_rate, num_channels, bit_depth
+  if info_cache.source == source and info_cache.file_path == file_path then
+    file_name = info_cache.file_name
+    sample_rate = info_cache.sample_rate
+    num_channels = info_cache.num_channels
+    bit_depth = info_cache.bit_depth
+  else
+    file_name = utils.get_file_name(file_path)
+    sample_rate = source and reaper.GetMediaSourceSampleRate(source) or 0
+    num_channels = source and reaper.GetMediaSourceNumChannels(source) or 0
+    bit_depth = utils.get_wav_bit_depth(file_path)
+    info_cache.source = source
+    info_cache.file_path = file_path
+    info_cache.file_name = file_name
+    info_cache.sample_rate = sample_rate
+    info_cache.num_channels = num_channels
+    info_cache.bit_depth = bit_depth
+  end
 
   local meta_parts = {}
 
@@ -302,7 +340,7 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
 end
 
 -- Draw waveform with looping support
-function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offset, source_item_length, source_length, pan_offset_time, zoom_lvl, ruler_y, visual_gain, is_reversed, num_channels, config, lod)
+function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offset, source_item_length, source_length, pan_offset_time, zoom_lvl, ruler_y, visual_gain, is_reversed, num_channels, config, lod, reduce_resolution)
   if not peaks or peaks.count == 0 or source_length <= 0 then return 0, 0, 0, source_length end
 
   pan_offset_time = pan_offset_time or 0
@@ -351,7 +389,9 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
 
   local half_height = channel_height / 2 * 0.85
 
-  local num_samples = math.floor(width)
+  -- Half resolution during REAPER interaction (halves Phase 3 draw calls)
+  local pixel_step = reduce_resolution and 2 or 1
+  local num_samples = math.floor(width / pixel_step)
   if num_samples < 1 then return 0, 0, 0, source_length end
   local time_per_pixel = view_length / num_samples
 
@@ -387,17 +427,6 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
   local math_floor = math.floor
 
   -- Derive waveform colors from config (with alpha for fill)
-  local function color_with_alpha(color, alpha)
-    return ((color >> 8) << 8) | alpha
-  end
-  local function darken_color(color, factor)
-    local r = ((color >> 24) & 0xFF) * factor
-    local g = ((color >> 16) & 0xFF) * factor
-    local b = ((color >> 8) & 0xFF) * factor
-    local a = color & 0xFF
-    return (math_floor(r) << 24) | (math_floor(g) << 16) | (math_floor(b) << 8) | a
-  end
-
   local OUTLINE_ACTIVE = config.COLOR_WAVEFORM
   local FILL_ACTIVE = color_with_alpha(darken_color(config.COLOR_WAVEFORM, 0.85), 0xCC)
   local OUTLINE_INACTIVE = config.COLOR_WAVEFORM_INACTIVE
@@ -405,109 +434,159 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
   local OUTLINE_LOOPED = darken_color(config.COLOR_WAVEFORM, 0.75)
   local FILL_LOOPED = color_with_alpha(darken_color(config.COLOR_WAVEFORM, 0.6), 0xCC)
 
-  -- Phase 1: Pre-compute all column data (separates math from drawing)
-  local col_tops = {}   -- col_tops[ch][i] = top_y for pixel i
-  local col_bots = {}   -- col_bots[ch][i] = bot_y for pixel i
-  local col_colors = {} -- col_colors[i] = 1(active) / 2(inactive) / 3(looped)
-  for ch = 1, num_channels do
-    col_tops[ch] = {}
-    col_bots[ch] = {}
-  end
+  -- Variables for Phase 1+2 output (declared here so cache can populate them)
+  local col_tops, col_bots, col_colors, segments, n_segs
 
-  local peak_mins = {}
-  local peak_maxs = {}
-  for ch = 1, num_channels do
-    peak_mins[ch] = 0
-    peak_maxs[ch] = 0
-  end
+  -- Check waveform computation cache (skip Phase 1+2 if inputs unchanged)
+  if wf_cache.valid
+      and wf_cache.peaks == peaks
+      and wf_cache.view_start == view_start
+      and wf_cache.view_length == view_length
+      and wf_cache.start_offset == start_offset
+      and wf_cache.item_end == item_end
+      and wf_cache.source_length == source_length
+      and wf_cache.visual_gain == visual_gain
+      and wf_cache.is_reversed == is_reversed
+      and wf_cache.num_channels == num_channels
+      and wf_cache.num_samples == num_samples
+      and wf_cache.width == width
+      and wf_cache.height == height
+      and wf_cache.x == x
+      and wf_cache.y == y then
+    -- Cache hit: reuse Phase 1+2 results
+    col_tops = wf_cache.col_tops
+    col_bots = wf_cache.col_bots
+    col_colors = wf_cache.col_colors
+    segments = wf_cache.segments
+    n_segs = wf_cache.n_segs
+  else
+    -- Cache miss: compute Phase 1+2
 
-  local last_idx_start, last_idx_end = -1, -1
-
-  for i = 0, num_samples - 1 do
-    local t = view_start + i * time_per_pixel
-    local t_next = t + time_per_pixel
-
-    -- Inline peak index calculation (robust modulo for negative values)
-    local wrapped_start = ((t % source_length) + source_length) % source_length
-    if is_reversed then wrapped_start = source_length - wrapped_start end
-    local idx_start = math_floor(wrapped_start * peaks_per_second) + 1
-    if idx_start < 1 then idx_start = 1 elseif idx_start > num_peaks then idx_start = num_peaks end
-
-    local wrapped_end = ((t_next % source_length) + source_length) % source_length
-    if is_reversed then wrapped_end = source_length - wrapped_end end
-    local idx_end = math_floor(wrapped_end * peaks_per_second) + 1
-    if idx_end < 1 then idx_end = 1 elseif idx_end > num_peaks then idx_end = num_peaks end
-
-    if idx_end < idx_start then idx_start, idx_end = idx_end, idx_start end
-
-    -- Only recalculate if range changed
-    if idx_start ~= last_idx_start or idx_end ~= last_idx_end then
-      last_idx_start, last_idx_end = idx_start, idx_end
-      for ch = 1, num_channels do
-        local ch_min, ch_max = math.huge, -math.huge
-        for idx = idx_start, idx_end do
-          local flat_idx = (idx - 1) * active_ch + ch
-          local v_min = active_mins[flat_idx]
-          local v_max = active_maxs[flat_idx]
-          if v_min and v_min < ch_min then ch_min = v_min end
-          if v_max and v_max > ch_max then ch_max = v_max end
-        end
-        -- Fallback if no valid peaks found
-        if ch_min == math.huge then ch_min = 0 end
-        if ch_max == -math.huge then ch_max = 0 end
-        peak_mins[ch] = ch_min
-        peak_maxs[ch] = ch_max
-      end
-    end
-
-    -- Color type
-    local in_active = t >= start_offset and t <= item_end
-    if in_active then
-      col_colors[i] = (t < 0 or t >= source_length) and 3 or 1
-    else
-      col_colors[i] = 2
-    end
-
-    -- Y positions per channel
+    -- Phase 1: Pre-compute all column data (separates math from drawing)
+    col_tops = {}   -- col_tops[ch][i] = top_y for pixel i
+    col_bots = {}   -- col_bots[ch][i] = bot_y for pixel i
+    col_colors = {} -- col_colors[i] = 1(active) / 2(inactive) / 3(looped)
     for ch = 1, num_channels do
-      local center_y = y + (ch - 1) * channel_height + channel_height * 0.5
-      local raw_max = peak_maxs[ch] * visual_gain
-      local raw_min = peak_mins[ch] * visual_gain
-      if raw_max > 1 then raw_max = 1 elseif raw_max < -1 then raw_max = -1 end
-      if raw_min > 1 then raw_min = 1 elseif raw_min < -1 then raw_min = -1 end
-      local scaled_max = power_curve(raw_max)
-      local scaled_min = power_curve(raw_min)
-      local top_y = center_y - (scaled_max * half_height)
-      local bot_y = center_y - (scaled_min * half_height)
-      if bot_y - top_y < 1 then
-        top_y = center_y - 0.5
-        bot_y = center_y + 0.5
+      col_tops[ch] = {}
+      col_bots[ch] = {}
+    end
+
+    local peak_mins = {}
+    local peak_maxs = {}
+    for ch = 1, num_channels do
+      peak_mins[ch] = 0
+      peak_maxs[ch] = 0
+    end
+
+    local last_idx_start, last_idx_end = -1, -1
+
+    for i = 0, num_samples - 1 do
+      local t = view_start + i * time_per_pixel
+      local t_next = t + time_per_pixel
+
+      -- Inline peak index calculation (robust modulo for negative values)
+      local wrapped_start = ((t % source_length) + source_length) % source_length
+      if is_reversed then wrapped_start = source_length - wrapped_start end
+      local idx_start = math_floor(wrapped_start * peaks_per_second) + 1
+      if idx_start < 1 then idx_start = 1 elseif idx_start > num_peaks then idx_start = num_peaks end
+
+      local wrapped_end = ((t_next % source_length) + source_length) % source_length
+      if is_reversed then wrapped_end = source_length - wrapped_end end
+      local idx_end = math_floor(wrapped_end * peaks_per_second) + 1
+      if idx_end < 1 then idx_end = 1 elseif idx_end > num_peaks then idx_end = num_peaks end
+
+      if idx_end < idx_start then idx_start, idx_end = idx_end, idx_start end
+
+      -- Only recalculate if range changed
+      if idx_start ~= last_idx_start or idx_end ~= last_idx_end then
+        last_idx_start, last_idx_end = idx_start, idx_end
+        for ch = 1, num_channels do
+          local ch_min, ch_max = math.huge, -math.huge
+          for idx = idx_start, idx_end do
+            local flat_idx = (idx - 1) * active_ch + ch
+            local v_min = active_mins[flat_idx]
+            local v_max = active_maxs[flat_idx]
+            if v_min and v_min < ch_min then ch_min = v_min end
+            if v_max and v_max > ch_max then ch_max = v_max end
+          end
+          -- Fallback if no valid peaks found
+          if ch_min == math.huge then ch_min = 0 end
+          if ch_max == -math.huge then ch_max = 0 end
+          peak_mins[ch] = ch_min
+          peak_maxs[ch] = ch_max
+        end
       end
-      col_tops[ch][i] = top_y
-      col_bots[ch][i] = bot_y
+
+      -- Color type
+      local in_active = t >= start_offset and t <= item_end
+      if in_active then
+        col_colors[i] = (t < 0 or t >= source_length) and 3 or 1
+      else
+        col_colors[i] = 2
+      end
+
+      -- Y positions per channel
+      for ch = 1, num_channels do
+        local center_y = y + (ch - 1) * channel_height + channel_height * 0.5
+        local raw_max = peak_maxs[ch] * visual_gain
+        local raw_min = peak_mins[ch] * visual_gain
+        if raw_max > 1 then raw_max = 1 elseif raw_max < -1 then raw_max = -1 end
+        if raw_min > 1 then raw_min = 1 elseif raw_min < -1 then raw_min = -1 end
+        local scaled_max = power_curve(raw_max)
+        local scaled_min = power_curve(raw_min)
+        local top_y = center_y - (scaled_max * half_height)
+        local bot_y = center_y - (scaled_min * half_height)
+        if bot_y - top_y < 1 then
+          top_y = center_y - 0.5
+          bot_y = center_y + 0.5
+        end
+        col_tops[ch][i] = top_y
+        col_bots[ch][i] = bot_y
+      end
     end
+
+    -- Phase 2: Build color segments (runs of same color type)
+    segments = {}
+    n_segs = 0
+    local seg_start = 0
+    local seg_color = col_colors[0]
+    for i = 1, num_samples - 1 do
+      if col_colors[i] ~= seg_color then
+        n_segs = n_segs + 1
+        segments[n_segs] = {seg_start, i - 1, seg_color}
+        seg_start = i
+        seg_color = col_colors[i]
+      end
+    end
+    n_segs = n_segs + 1
+    segments[n_segs] = {seg_start, num_samples - 1, seg_color}
+
+    -- Store in cache for next frame
+    wf_cache.valid = true
+    wf_cache.peaks = peaks
+    wf_cache.view_start = view_start
+    wf_cache.view_length = view_length
+    wf_cache.start_offset = start_offset
+    wf_cache.item_end = item_end
+    wf_cache.source_length = source_length
+    wf_cache.visual_gain = visual_gain
+    wf_cache.is_reversed = is_reversed
+    wf_cache.num_channels = num_channels
+    wf_cache.num_samples = num_samples
+    wf_cache.width = width
+    wf_cache.height = height
+    wf_cache.x = x
+    wf_cache.y = y
+    wf_cache.col_tops = col_tops
+    wf_cache.col_bots = col_bots
+    wf_cache.col_colors = col_colors
+    wf_cache.segments = segments
+    wf_cache.n_segs = n_segs
   end
 
-  -- Phase 2: Build color segments (runs of same color type)
-  local segments = {}
-  local n_segs = 0
-  local seg_start = 0
-  local seg_color = col_colors[0]
-  for i = 1, num_samples - 1 do
-    if col_colors[i] ~= seg_color then
-      n_segs = n_segs + 1
-      segments[n_segs] = {seg_start, i - 1, seg_color}
-      seg_start = i
-      seg_color = col_colors[i]
-    end
-  end
-  n_segs = n_segs + 1
-  segments[n_segs] = {seg_start, num_samples - 1, seg_color}
-
+  -- Phase 3: Render (always runs — ImGui immediate mode requires redrawing every frame)
   local fill_lut = {[1] = FILL_ACTIVE, [2] = FILL_INACTIVE, [3] = FILL_LOOPED}
   local outline_lut = {[1] = OUTLINE_ACTIVE, [2] = OUTLINE_INACTIVE, [3] = OUTLINE_LOOPED}
-
-  -- Phase 3: Render each segment with batched outlines
   for si = 1, n_segs do
     local s_start = segments[si][1]
     local s_stop = segments[si][2]
@@ -523,12 +602,13 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
 
       -- Fill: per-pixel quads connecting adjacent columns
       for i = fill_from, s_stop do
-        local px = x + i
+        local px_prev = x + (i - 1) * pixel_step
+        local px_curr = x + i * pixel_step
         DL_QuadFilled(draw_list,
-          px - 1, tops[i - 1],
-          px, tops[i],
-          px, bots[i],
-          px - 1, bots[i - 1],
+          px_prev, tops[i - 1],
+          px_curr, tops[i],
+          px_curr, bots[i],
+          px_prev, bots[i - 1],
           fill_color)
       end
 
@@ -536,20 +616,21 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
       if has_path and s_stop > s_start then
         -- Top outline
         for i = s_start, s_stop do
-          DL_PathLineTo(draw_list, x + i, tops[i])
+          DL_PathLineTo(draw_list, x + i * pixel_step, tops[i])
         end
         DL_PathStroke(draw_list, outline_color, 0, 1)
         -- Bottom outline
         for i = s_start, s_stop do
-          DL_PathLineTo(draw_list, x + i, bots[i])
+          DL_PathLineTo(draw_list, x + i * pixel_step, bots[i])
         end
         DL_PathStroke(draw_list, outline_color, 0, 1)
       else
         -- Fallback: individual lines
         for i = fill_from, s_stop do
-          local px = x + i
-          DL_AddLine(draw_list, px - 1, tops[i - 1], px, tops[i], outline_color, 1)
-          DL_AddLine(draw_list, px - 1, bots[i - 1], px, bots[i], outline_color, 1)
+          local px_prev = x + (i - 1) * pixel_step
+          local px_curr = x + i * pixel_step
+          DL_AddLine(draw_list, px_prev, tops[i - 1], px_curr, tops[i], outline_color, 1)
+          DL_AddLine(draw_list, px_prev, bots[i - 1], px_curr, bots[i], outline_color, 1)
         end
       end
     end

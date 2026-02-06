@@ -3,11 +3,38 @@
 
 local settings_ui = {}
 
+-- Editable keyboard shortcuts (order matches display)
+local EDITABLE_SHORTCUTS = {
+  {name = "toggle_warp",  label = "Toggle WARP mode"},
+  {name = "toggle_mute",  label = "Toggle mute"},
+  {name = "reverse",      label = "Reverse item"},
+  {name = "clear",        label = "Clear pitch/speed"},
+  {name = "open_editor",  label = "Open in external editor"},
+  {name = "reset_zoom",   label = "Reset zoom to fit"},
+  {name = "zoom_in",      label = "Zoom in"},
+  {name = "zoom_out",     label = "Zoom out"},
+}
+
+-- Static mouse actions (not editable, reference only)
+local MOUSE_SHORTCUTS = {
+  {"Ctrl + Scroll",  "Zoom in/out"},
+  {"Middle Drag",    "Pan waveform"},
+  {"Ruler Drag",     "Zoom + Pan"},
+  {"Drag Marker",    "Move start/end point"},
+  {"Alt + Drag",     "Slide both markers"},
+  {"Mouse 4",        "Set start at cursor"},
+  {"Mouse 5",        "Set end at cursor"},
+}
+
 -- UI State
 local ui_state = {
   open = false,
   pending_theme_id = nil,
   original_theme_id = nil,
+  pending_shortcuts = nil,   -- Deep copy of shortcuts, applied only on Save
+  listening_for = nil,       -- Shortcut name being captured, or nil
+  conflict_warning = nil,    -- {shortcut = name, text = "..."} or nil
+  conflict_clear_time = 0,   -- Frame counter for auto-clearing warning
 }
 
 -- Colors matching main window dark theme
@@ -21,12 +48,34 @@ local COLORS = {
   btn_default = 0x404040FF,
   btn_hover = 0x505050FF,
   separator = 0x404040FF,
+  warning = 0xFF4444FF,
+  unbound = 0x666666FF,
 }
+
+-- Deep-copy a shortcuts table
+local function deep_copy_shortcuts(shortcuts)
+  local copy = {}
+  for name, s in pairs(shortcuts) do
+    copy[name] = {ctrl = s.ctrl, shift = s.shift, alt = s.alt, key = s.key}
+  end
+  return copy
+end
 
 -- Initialize pending values from current settings
 local function init_pending(settings)
   ui_state.pending_theme_id = settings.current.theme_id
   ui_state.original_theme_id = settings.current.theme_id
+  ui_state.pending_shortcuts = deep_copy_shortcuts(settings.current.shortcuts)
+  ui_state.listening_for = nil
+  ui_state.conflict_warning = nil
+  ui_state.conflict_clear_time = 0
+  settings.listening = false
+end
+
+-- Stop listening mode
+local function stop_listening(settings)
+  ui_state.listening_for = nil
+  settings.listening = false
 end
 
 function settings_ui.open(settings)
@@ -41,6 +90,10 @@ function settings_ui.close(settings, restore_original)
   end
   ui_state.open = false
   ui_state.original_theme_id = nil
+  ui_state.pending_shortcuts = nil
+  ui_state.listening_for = nil
+  ui_state.conflict_warning = nil
+  settings.listening = false
 end
 
 function settings_ui.is_open()
@@ -58,6 +111,11 @@ end
 
 -- Draw Appearance tab content
 local function draw_appearance_tab(ctx, settings)
+  -- Cancel listening when switching to Appearance tab
+  if ui_state.listening_for then
+    stop_listening(settings)
+  end
+
   reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Theme")
   reaper.ImGui_Spacing(ctx)
 
@@ -84,82 +142,193 @@ local function draw_appearance_tab(ctx, settings)
   end
 end
 
+-- Look up human-readable label for a shortcut name
+local function get_shortcut_label(name)
+  for _, entry in ipairs(EDITABLE_SHORTCUTS) do
+    if entry.name == name then return entry.label end
+  end
+  return name
+end
+
 -- Draw Shortcuts tab content
-local function draw_shortcuts_tab(ctx)
+local function draw_shortcuts_tab(ctx, settings)
+  -- Key capture logic (runs every frame while listening)
+  if ui_state.listening_for then
+    settings.listening = true
+
+    -- Escape: cancel capture
+    if reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Escape()) then
+      stop_listening(settings)
+
+    -- Backspace/Delete: clear binding
+    elseif reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Backspace())
+        or reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Delete()) then
+      ui_state.pending_shortcuts[ui_state.listening_for] = {
+        ctrl = false, shift = false, alt = false, key = ""
+      }
+      stop_listening(settings)
+
+    else
+      -- Check for a bindable key press
+      local pressed = settings.capture_pressed_key(ctx)
+      if pressed then
+        local binding = {
+          ctrl = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl()),
+          shift = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift()),
+          alt = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt()),
+          key = pressed,
+        }
+
+        -- Check for conflict
+        local conflict = settings.find_conflict(
+          ui_state.pending_shortcuts, ui_state.listening_for, binding)
+        if conflict then
+          ui_state.conflict_warning = {
+            shortcut = ui_state.listening_for,
+            text = "Conflicts with " .. get_shortcut_label(conflict),
+          }
+          ui_state.conflict_clear_time = 180  -- ~3 seconds at 60fps
+        end
+
+        -- Apply binding regardless of conflict
+        ui_state.pending_shortcuts[ui_state.listening_for] = binding
+        stop_listening(settings)
+      end
+    end
+  end
+
+  -- Auto-clear conflict warning
+  if ui_state.conflict_warning then
+    ui_state.conflict_clear_time = ui_state.conflict_clear_time - 1
+    if ui_state.conflict_clear_time <= 0 then
+      ui_state.conflict_warning = nil
+    end
+  end
+
+  -- Editable shortcuts header
+  reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Keyboard Shortcuts")
+  reaper.ImGui_Spacing(ctx)
+
   local flags = reaper.ImGui_TableFlags_None()
-  if reaper.ImGui_BeginTable(ctx, "shortcuts", 2, flags) then
+  if reaper.ImGui_BeginTable(ctx, "editable_shortcuts", 3, flags) then
+    reaper.ImGui_TableSetupColumn(ctx, "Action", reaper.ImGui_TableColumnFlags_WidthStretch())
+    reaper.ImGui_TableSetupColumn(ctx, "Binding", reaper.ImGui_TableColumnFlags_WidthFixed(), 120)
+    reaper.ImGui_TableSetupColumn(ctx, "Reset", reaper.ImGui_TableColumnFlags_WidthFixed(), 30)
+
+    for _, entry in ipairs(EDITABLE_SHORTCUTS) do
+      local name = entry.name
+      local shortcut = ui_state.pending_shortcuts[name]
+      if not shortcut then
+        shortcut = {ctrl = false, shift = false, alt = false, key = ""}
+      end
+
+      local is_listening = ui_state.listening_for == name
+      local is_unbound = shortcut.key == ""
+      local default = settings.DEFAULT_SHORTCUTS[name]
+      local is_default = default
+        and shortcut.key == default.key
+        and shortcut.ctrl == default.ctrl
+        and shortcut.shift == default.shift
+        and shortcut.alt == default.alt
+
+      reaper.ImGui_TableNextRow(ctx)
+
+      -- Column 1: Action label
+      reaper.ImGui_TableNextColumn(ctx)
+
+      -- Conflict indicator
+      if ui_state.conflict_warning and ui_state.conflict_warning.shortcut == name then
+        reaper.ImGui_TextColored(ctx, COLORS.warning, "!")
+        if reaper.ImGui_IsItemHovered(ctx) then
+          reaper.ImGui_SetTooltip(ctx, ui_state.conflict_warning.text)
+        end
+        reaper.ImGui_SameLine(ctx)
+      end
+
+      reaper.ImGui_Text(ctx, entry.label)
+
+      -- Column 2: Binding button
+      reaper.ImGui_TableNextColumn(ctx)
+
+      local btn_label
+      local btn_color
+      if is_listening then
+        btn_label = "Press a key..."
+        btn_color = COLORS.accent
+      elseif is_unbound then
+        btn_label = "---"
+        btn_color = COLORS.unbound
+      else
+        btn_label = settings.format_shortcut(shortcut)
+        btn_color = nil
+      end
+
+      -- Push button color if needed
+      local color_pushed = 0
+      if btn_color then
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), btn_color)
+        if btn_color == COLORS.accent then
+          reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), COLORS.accent_hover)
+          color_pushed = 2
+        else
+          reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), COLORS.btn_hover)
+          color_pushed = 2
+        end
+      end
+
+      if reaper.ImGui_Button(ctx, btn_label .. "##bind_" .. name, 120) then
+        if not is_listening then
+          ui_state.listening_for = name
+          settings.listening = true
+        end
+      end
+
+      if color_pushed > 0 then
+        reaper.ImGui_PopStyleColor(ctx, color_pushed)
+      end
+
+      -- Column 3: Reset button (only if non-default)
+      reaper.ImGui_TableNextColumn(ctx)
+      if not is_default then
+        if reaper.ImGui_SmallButton(ctx, "R##reset_" .. name) then
+          if default then
+            ui_state.pending_shortcuts[name] = {
+              ctrl = default.ctrl, shift = default.shift,
+              alt = default.alt, key = default.key,
+            }
+          end
+          -- Clear conflict if it was on this shortcut
+          if ui_state.conflict_warning and ui_state.conflict_warning.shortcut == name then
+            ui_state.conflict_warning = nil
+          end
+        end
+        if reaper.ImGui_IsItemHovered(ctx) then
+          local default_text = default and default.key ~= ""
+            and settings.format_shortcut(default) or "unbound"
+          reaper.ImGui_SetTooltip(ctx, "Reset to default: " .. default_text)
+        end
+      end
+    end
+
+    reaper.ImGui_EndTable(ctx)
+  end
+
+  -- Helper text
+  reaper.ImGui_Spacing(ctx)
+  reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Escape to cancel  /  Backspace to clear")
+
+  -- Mouse reference section
+  reaper.ImGui_Spacing(ctx)
+  reaper.ImGui_Separator(ctx)
+  reaper.ImGui_Spacing(ctx)
+  reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Mouse Actions (not editable)")
+  reaper.ImGui_Spacing(ctx)
+
+  if reaper.ImGui_BeginTable(ctx, "mouse_shortcuts", 2, reaper.ImGui_TableFlags_None()) then
     reaper.ImGui_TableSetupColumn(ctx, "Key", reaper.ImGui_TableColumnFlags_WidthFixed(), 120)
     reaper.ImGui_TableSetupColumn(ctx, "Action", reaper.ImGui_TableColumnFlags_WidthStretch())
 
-    -- Item Actions section
-    reaper.ImGui_TableNextRow(ctx)
-    reaper.ImGui_TableNextColumn(ctx)
-    reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Item Actions")
-    reaper.ImGui_TableNextColumn(ctx)
-    reaper.ImGui_Spacing(ctx)
-
-    local item_actions = {
-      {"W", "Toggle WARP mode"},
-      {"M", "Toggle mute"},
-      {"R", "Reverse item"},
-      {"C", "Clear pitch/speed"},
-      {"E", "Open in external editor"},
-    }
-    for _, entry in ipairs(item_actions) do
-      reaper.ImGui_TableNextRow(ctx)
-      reaper.ImGui_TableNextColumn(ctx)
-      reaper.ImGui_TextColored(ctx, COLORS.accent, "  " .. entry[1])
-      reaper.ImGui_TableNextColumn(ctx)
-      reaper.ImGui_Text(ctx, entry[2])
-    end
-
-    -- Spacing between sections
-    reaper.ImGui_TableNextRow(ctx)
-    reaper.ImGui_TableNextColumn(ctx)
-    reaper.ImGui_Spacing(ctx)
-    reaper.ImGui_TableNextColumn(ctx)
-
-    -- Navigation section
-    reaper.ImGui_TableNextRow(ctx)
-    reaper.ImGui_TableNextColumn(ctx)
-    reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Navigation")
-    reaper.ImGui_TableNextColumn(ctx)
-    reaper.ImGui_Spacing(ctx)
-
-    local nav_items = {
-      {"F", "Reset zoom to fit"},
-      {"Ctrl + Scroll", "Zoom in/out"},
-      {"Middle Drag", "Pan waveform"},
-      {"Ruler Drag", "Zoom + Pan"},
-    }
-    for _, entry in ipairs(nav_items) do
-      reaper.ImGui_TableNextRow(ctx)
-      reaper.ImGui_TableNextColumn(ctx)
-      reaper.ImGui_TextColored(ctx, COLORS.accent, "  " .. entry[1])
-      reaper.ImGui_TableNextColumn(ctx)
-      reaper.ImGui_Text(ctx, entry[2])
-    end
-
-    -- Spacing between sections
-    reaper.ImGui_TableNextRow(ctx)
-    reaper.ImGui_TableNextColumn(ctx)
-    reaper.ImGui_Spacing(ctx)
-    reaper.ImGui_TableNextColumn(ctx)
-
-    -- Markers section
-    reaper.ImGui_TableNextRow(ctx)
-    reaper.ImGui_TableNextColumn(ctx)
-    reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Markers")
-    reaper.ImGui_TableNextColumn(ctx)
-    reaper.ImGui_Spacing(ctx)
-
-    local marker_items = {
-      {"Drag Marker", "Move start/end point"},
-      {"Alt + Drag", "Slide both markers"},
-      {"Mouse 4", "Set start at cursor"},
-      {"Mouse 5", "Set end at cursor"},
-    }
-    for _, entry in ipairs(marker_items) do
+    for _, entry in ipairs(MOUSE_SHORTCUTS) do
       reaper.ImGui_TableNextRow(ctx)
       reaper.ImGui_TableNextColumn(ctx)
       reaper.ImGui_TextColored(ctx, COLORS.accent, "  " .. entry[1])
@@ -175,7 +344,7 @@ end
 function settings_ui.draw(ctx, settings)
   if not ui_state.open then return end
 
-  reaper.ImGui_SetNextWindowSize(ctx, 380, 500, reaper.ImGui_Cond_FirstUseEver())
+  reaper.ImGui_SetNextWindowSize(ctx, 380, 560, reaper.ImGui_Cond_FirstUseEver())
 
   -- Style: dark background matching main window
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_WindowBg(), COLORS.window_bg)
@@ -209,7 +378,7 @@ function settings_ui.draw(ctx, settings)
       end
       if reaper.ImGui_BeginTabItem(ctx, "Shortcuts") then
         reaper.ImGui_Spacing(ctx)
-        draw_shortcuts_tab(ctx)
+        draw_shortcuts_tab(ctx, settings)
         reaper.ImGui_EndTabItem(ctx)
       end
       reaper.ImGui_EndTabBar(ctx)
@@ -224,6 +393,9 @@ function settings_ui.draw(ctx, settings)
     if reaper.ImGui_Button(ctx, "Reset Defaults") then
       settings.reset_all()
       ui_state.pending_theme_id = settings.current.theme_id
+      ui_state.pending_shortcuts = deep_copy_shortcuts(settings.current.shortcuts)
+      stop_listening(settings)
+      ui_state.conflict_warning = nil
     end
 
     -- Right-aligned Cancel + Save & Close
@@ -249,7 +421,7 @@ function settings_ui.draw(ctx, settings)
     if reaper.ImGui_Button(ctx, "Save & Close", save_w) then
       settings.apply({
         theme_id = ui_state.pending_theme_id,
-        shortcuts = settings.current.shortcuts
+        shortcuts = ui_state.pending_shortcuts,
       })
       settings_ui.close(settings, false)
     end

@@ -3,6 +3,9 @@
 
 local settings = {}
 
+-- When true, check_shortcut() returns false (key capture mode)
+settings.listening = false
+
 -- ExtState section name
 local EXT_SECTION = "NVSD_ItemView"
 
@@ -18,31 +21,80 @@ settings.DEFAULT_SHORTCUTS = {
   open_editor = {ctrl = false, shift = false, alt = false, key = "E"},
 }
 
--- Map key names to ImGui key getter functions
+-- Map key names to ImGui key getter function names (created once at module load)
+local KEY_NAME_TO_FUNC = {
+  A = "ImGui_Key_A", B = "ImGui_Key_B", C = "ImGui_Key_C", D = "ImGui_Key_D",
+  E = "ImGui_Key_E", F = "ImGui_Key_F", G = "ImGui_Key_G", H = "ImGui_Key_H",
+  I = "ImGui_Key_I", J = "ImGui_Key_J", K = "ImGui_Key_K", L = "ImGui_Key_L",
+  M = "ImGui_Key_M", N = "ImGui_Key_N", O = "ImGui_Key_O", P = "ImGui_Key_P",
+  Q = "ImGui_Key_Q", R = "ImGui_Key_R", S = "ImGui_Key_S", T = "ImGui_Key_T",
+  U = "ImGui_Key_U", V = "ImGui_Key_V", W = "ImGui_Key_W", X = "ImGui_Key_X",
+  Y = "ImGui_Key_Y", Z = "ImGui_Key_Z",
+  ["0"] = "ImGui_Key_0", ["1"] = "ImGui_Key_1", ["2"] = "ImGui_Key_2",
+  ["3"] = "ImGui_Key_3", ["4"] = "ImGui_Key_4", ["5"] = "ImGui_Key_5",
+  ["6"] = "ImGui_Key_6", ["7"] = "ImGui_Key_7", ["8"] = "ImGui_Key_8",
+  ["9"] = "ImGui_Key_9",
+  F1 = "ImGui_Key_F1", F2 = "ImGui_Key_F2", F3 = "ImGui_Key_F3",
+  F4 = "ImGui_Key_F4", F5 = "ImGui_Key_F5", F6 = "ImGui_Key_F6",
+  F7 = "ImGui_Key_F7", F8 = "ImGui_Key_F8", F9 = "ImGui_Key_F9",
+  F10 = "ImGui_Key_F10", F11 = "ImGui_Key_F11", F12 = "ImGui_Key_F12",
+  Space = "ImGui_Key_Space", Enter = "ImGui_Key_Enter",
+  Escape = "ImGui_Key_Escape", Tab = "ImGui_Key_Tab",
+  Backspace = "ImGui_Key_Backspace", Delete = "ImGui_Key_Delete",
+}
+
+-- Cache resolved ImGui key integer values (populated on first use, avoids repeated C calls)
+local key_cache = {}
+
 local function get_imgui_key(key_name)
-  local key_map = {
-    A = "ImGui_Key_A", B = "ImGui_Key_B", C = "ImGui_Key_C", D = "ImGui_Key_D",
-    E = "ImGui_Key_E", F = "ImGui_Key_F", G = "ImGui_Key_G", H = "ImGui_Key_H",
-    I = "ImGui_Key_I", J = "ImGui_Key_J", K = "ImGui_Key_K", L = "ImGui_Key_L",
-    M = "ImGui_Key_M", N = "ImGui_Key_N", O = "ImGui_Key_O", P = "ImGui_Key_P",
-    Q = "ImGui_Key_Q", R = "ImGui_Key_R", S = "ImGui_Key_S", T = "ImGui_Key_T",
-    U = "ImGui_Key_U", V = "ImGui_Key_V", W = "ImGui_Key_W", X = "ImGui_Key_X",
-    Y = "ImGui_Key_Y", Z = "ImGui_Key_Z",
-    ["0"] = "ImGui_Key_0", ["1"] = "ImGui_Key_1", ["2"] = "ImGui_Key_2",
-    ["3"] = "ImGui_Key_3", ["4"] = "ImGui_Key_4", ["5"] = "ImGui_Key_5",
-    ["6"] = "ImGui_Key_6", ["7"] = "ImGui_Key_7", ["8"] = "ImGui_Key_8",
-    ["9"] = "ImGui_Key_9",
-    F1 = "ImGui_Key_F1", F2 = "ImGui_Key_F2", F3 = "ImGui_Key_F3",
-    F4 = "ImGui_Key_F4", F5 = "ImGui_Key_F5", F6 = "ImGui_Key_F6",
-    F7 = "ImGui_Key_F7", F8 = "ImGui_Key_F8", F9 = "ImGui_Key_F9",
-    F10 = "ImGui_Key_F10", F11 = "ImGui_Key_F11", F12 = "ImGui_Key_F12",
-    Space = "ImGui_Key_Space", Enter = "ImGui_Key_Enter",
-    Escape = "ImGui_Key_Escape", Tab = "ImGui_Key_Tab",
-    Backspace = "ImGui_Key_Backspace", Delete = "ImGui_Key_Delete",
-  }
-  local func_name = key_map[key_name]
+  local cached = key_cache[key_name]
+  if cached then return cached end
+  local func_name = KEY_NAME_TO_FUNC[key_name]
   if func_name and reaper[func_name] then
-    return reaper[func_name]()
+    local val = reaper[func_name]()
+    key_cache[key_name] = val
+    return val
+  end
+  return nil
+end
+
+-- Cached modifier key constants (resolved once on first check_shortcut call)
+local MOD_CTRL, MOD_SHIFT, MOD_ALT
+
+-- All bindable key names (excludes Escape/Backspace/Delete which are capture controls)
+local BINDABLE_KEYS = {
+  "A","B","C","D","E","F","G","H","I","J","K","L","M",
+  "N","O","P","Q","R","S","T","U","V","W","X","Y","Z",
+  "0","1","2","3","4","5","6","7","8","9",
+  "F1","F2","F3","F4","F5","F6","F7","F8","F9","F10","F11","F12",
+  "Space","Enter","Tab",
+}
+
+-- Check which bindable key was pressed this frame (for capture mode)
+-- Returns key name string or nil
+function settings.capture_pressed_key(ctx)
+  for _, key_name in ipairs(BINDABLE_KEYS) do
+    local imgui_key = get_imgui_key(key_name)
+    if imgui_key and reaper.ImGui_IsKeyPressed(ctx, imgui_key) then
+      return key_name
+    end
+  end
+  return nil
+end
+
+-- Check if a binding conflicts with any other shortcut
+-- Returns conflicting shortcut name or nil
+function settings.find_conflict(shortcuts, exclude_name, binding)
+  if not binding or binding.key == "" then return nil end
+  for name, shortcut in pairs(shortcuts) do
+    if name ~= exclude_name and shortcut.key ~= "" then
+      if shortcut.key == binding.key
+        and shortcut.ctrl == binding.ctrl
+        and shortcut.shift == binding.shift
+        and shortcut.alt == binding.alt then
+        return name
+      end
+    end
   end
   return nil
 end
@@ -413,16 +465,21 @@ end
 
 -- Check if a shortcut matches current key state
 function settings.check_shortcut(ctx, name)
+  if settings.listening then return false end
   local shortcut = settings.current.shortcuts[name]
-  if not shortcut then return false end
+  if not shortcut or shortcut.key == "" then return false end
 
-  local ctrl = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
-  local shift = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
-  local alt = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
+  -- Resolve modifier constants once (they never change)
+  if not MOD_CTRL then
+    MOD_CTRL = reaper.ImGui_Mod_Ctrl()
+    MOD_SHIFT = reaper.ImGui_Mod_Shift()
+    MOD_ALT = reaper.ImGui_Mod_Alt()
+  end
 
-  if ctrl ~= shortcut.ctrl then return false end
-  if shift ~= shortcut.shift then return false end
-  if alt ~= shortcut.alt then return false end
+  -- Early-exit on modifier mismatch before checking key (cheapest checks first)
+  if reaper.ImGui_IsKeyDown(ctx, MOD_CTRL) ~= shortcut.ctrl then return false end
+  if reaper.ImGui_IsKeyDown(ctx, MOD_SHIFT) ~= shortcut.shift then return false end
+  if reaper.ImGui_IsKeyDown(ctx, MOD_ALT) ~= shortcut.alt then return false end
 
   local imgui_key = get_imgui_key(shortcut.key)
   if not imgui_key then return false end

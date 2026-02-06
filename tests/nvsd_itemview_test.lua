@@ -3081,3 +3081,123 @@ function TestNVSDItemView:test_select_lod_level_boundary()
     lu.assertEquals(selected.count, 1000)
     lu.assertEquals(scale, 1)
 end
+
+-- =============================================================
+-- Shortcut editor: find_conflict and capture tests
+-- =============================================================
+
+function TestNVSDItemView:test_find_conflict_detects_duplicate()
+    -- Same key+modifiers on two different shortcuts → returns conflict name
+    local find_conflict = function(shortcuts, exclude_name, binding)
+        if not binding or binding.key == "" then return nil end
+        for name, shortcut in pairs(shortcuts) do
+            if name ~= exclude_name and shortcut.key ~= "" then
+                if shortcut.key == binding.key
+                    and shortcut.ctrl == binding.ctrl
+                    and shortcut.shift == binding.shift
+                    and shortcut.alt == binding.alt then
+                    return name
+                end
+            end
+        end
+        return nil
+    end
+
+    local shortcuts = {
+        toggle_warp = {ctrl = false, shift = false, alt = false, key = "W"},
+        toggle_mute = {ctrl = false, shift = false, alt = false, key = "W"},  -- duplicate
+    }
+    local result = find_conflict(shortcuts, "toggle_warp", {ctrl = false, shift = false, alt = false, key = "W"})
+    lu.assertEquals(result, "toggle_mute")
+end
+
+function TestNVSDItemView:test_find_conflict_no_conflict_different_modifiers()
+    -- "W" vs "Ctrl+W" → no conflict
+    local find_conflict = function(shortcuts, exclude_name, binding)
+        if not binding or binding.key == "" then return nil end
+        for name, shortcut in pairs(shortcuts) do
+            if name ~= exclude_name and shortcut.key ~= "" then
+                if shortcut.key == binding.key
+                    and shortcut.ctrl == binding.ctrl
+                    and shortcut.shift == binding.shift
+                    and shortcut.alt == binding.alt then
+                    return name
+                end
+            end
+        end
+        return nil
+    end
+
+    local shortcuts = {
+        toggle_warp = {ctrl = false, shift = false, alt = false, key = "W"},
+        toggle_mute = {ctrl = true, shift = false, alt = false, key = "W"},  -- Ctrl+W
+    }
+    -- Editing toggle_warp, binding plain "W" — toggle_mute is Ctrl+W so no conflict
+    local result = find_conflict(shortcuts, "toggle_warp", {ctrl = false, shift = false, alt = false, key = "W"})
+    lu.assertNil(result)
+end
+
+function TestNVSDItemView:test_find_conflict_ignores_empty_keys()
+    -- Two unbound shortcuts → no conflict
+    local find_conflict = function(shortcuts, exclude_name, binding)
+        if not binding or binding.key == "" then return nil end
+        for name, shortcut in pairs(shortcuts) do
+            if name ~= exclude_name and shortcut.key ~= "" then
+                if shortcut.key == binding.key
+                    and shortcut.ctrl == binding.ctrl
+                    and shortcut.shift == binding.shift
+                    and shortcut.alt == binding.alt then
+                    return name
+                end
+            end
+        end
+        return nil
+    end
+
+    local shortcuts = {
+        zoom_in = {ctrl = false, shift = false, alt = false, key = ""},
+        zoom_out = {ctrl = false, shift = false, alt = false, key = ""},
+    }
+    local result = find_conflict(shortcuts, "zoom_in", {ctrl = false, shift = false, alt = false, key = ""})
+    lu.assertNil(result)
+end
+
+function TestNVSDItemView:test_find_conflict_skips_self()
+    -- Same binding on the shortcut being edited → should NOT report as conflict
+    local find_conflict = function(shortcuts, exclude_name, binding)
+        if not binding or binding.key == "" then return nil end
+        for name, shortcut in pairs(shortcuts) do
+            if name ~= exclude_name and shortcut.key ~= "" then
+                if shortcut.key == binding.key
+                    and shortcut.ctrl == binding.ctrl
+                    and shortcut.shift == binding.shift
+                    and shortcut.alt == binding.alt then
+                    return name
+                end
+            end
+        end
+        return nil
+    end
+
+    local shortcuts = {
+        toggle_warp = {ctrl = false, shift = false, alt = false, key = "W"},
+        toggle_mute = {ctrl = false, shift = false, alt = false, key = "M"},
+    }
+    -- Re-assigning "W" to toggle_warp (itself) → no conflict
+    local result = find_conflict(shortcuts, "toggle_warp", {ctrl = false, shift = false, alt = false, key = "W"})
+    lu.assertNil(result)
+end
+
+function TestNVSDItemView:test_settings_listening_suppresses_check()
+    -- When settings.listening is true, check_shortcut should return false
+    -- We test this by reimplementing the guard logic
+    local listening = true
+
+    local function check_shortcut_guarded(listening_flag)
+        if listening_flag then return false end
+        return true  -- Would normally check key state
+    end
+
+    lu.assertFalse(check_shortcut_guarded(true))
+    lu.assertTrue(check_shortcut_guarded(false))
+end

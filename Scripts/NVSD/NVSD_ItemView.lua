@@ -115,12 +115,12 @@ local function loop()
     end
 
     -- Forward Space to REAPER transport (so playback works without clicking back to timeline)
-    if reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Space()) then
+    if not settings.listening and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Space()) then
       reaper.Main_OnCommand(40044, 0)  -- Transport: Play/Stop
     end
 
     -- Forward undo/redo to REAPER (universal, not configurable)
-    if ctrl_held then
+    if not settings.listening and ctrl_held then
       if reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Z()) then
         reaper.Main_OnCommand(shift_held and 40030 or 40029, 0)  -- Shift: Redo, else Undo
       elseif reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Y()) then
@@ -546,7 +546,7 @@ local function loop()
 
           local start_px, end_px, view_start, view_length = drawing.draw_waveform(draw_list, wave_x, wave_y,
             waveform_width, waveform_height,
-            state.cached_peaks, view_offset, view_item_length, source_length, state.pan_offset, state.zoom_level, ruler_y, item_vol, is_reversed, state.cached_num_channels, config, state.cached_lod)
+            state.cached_peaks, view_offset, view_item_length, source_length, state.pan_offset, state.zoom_level, ruler_y, item_vol, is_reversed, state.cached_num_channels, config, state.cached_lod, user_dragging_in_reaper)
 
           -- Unified coordinate conversion (used by all subsequent code)
           local function time_to_px(t)
