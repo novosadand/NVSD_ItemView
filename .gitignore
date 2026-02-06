@@ -8,3 +8,13 @@ dist/
 *.swo
 .DS_Store
 Thumbs.db
+
+# Dev-only files
+CLAUDE.md
+sync.sh
+package.sh
+docs/
+
+# Marketing assets
+*.psd
+gumroad*

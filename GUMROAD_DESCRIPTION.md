@@ -69,7 +69,7 @@ This script is 100% free. If it saves you time, consider supporting development.
 
 ## Updates
 
-Updates are delivered automatically through ReaPack. Current version is backed by 89 unit tests.
+Updates are delivered automatically through ReaPack.
 
 ---
 

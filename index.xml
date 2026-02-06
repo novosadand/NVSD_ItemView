@@ -12,7 +12,7 @@ Built-in gain, pitch, WARP, reverse, and 8 color themes.\line
         <link rel="website">https://github.com/novosadand/NVSD_ItemView</link>
         <link rel="donation">https://novosadand.gumroad.com</link>
       </metadata>
-      <version name="1.0.0" author="NVSD" time="2025-02-06T00:00:00Z">
+      <version name="1.0.0" author="NVSD" time="2026-02-06T00:00:00Z">
         <changelog><![CDATA[Initial release]]></changelog>
         <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/e1e81682b82e274d26b2fcf3f0d41ee437c4fb81/Scripts/NVSD/NVSD_ItemView.lua</source>
         <source>https://github.com/novosadand/NVSD_ItemView/raw/e1e81682b82e274d26b2fcf3f0d41ee437c4fb81/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>

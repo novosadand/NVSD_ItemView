@@ -40,7 +40,7 @@ STEP 4: Install the Script
 4. Restart REAPER
 5. The script is now in your Actions list!
 
-ReaImGui will be installed automatically as a dependency.
+Note: You also need to install ReaImGui via ReaPack (search "ReaImGui" in Browse packages).
 
 
 STEP 5: (Optional) Assign a Shortcut

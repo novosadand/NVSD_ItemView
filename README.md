@@ -41,11 +41,14 @@ Ableton-style clip view for REAPER audio items. See the full source waveform, dr
 - **Recommended:** [SWS Extension](https://www.sws-extension.org/) (enables edge-drag display)
 - **Optional:** [js_ReaScriptAPI](https://forum.cockos.com/showthread.php?t=212174) (smooth cursor lock)
 
-## Installation
+## Installation (ReaPack)
 
-1. Copy folder to `%APPDATA%\REAPER\Scripts\` (Windows) or `~/Library/Application Support/REAPER/Scripts/` (Mac)
-2. Actions → Load ReaScript → Select `NVSD_ItemView.lua`
-3. Assign a shortcut if desired
+1. In REAPER: Extensions > ReaPack > Import repositories
+2. Paste: `https://raw.githubusercontent.com/novosadand/NVSD_ItemView/master/index.xml`
+3. Extensions > ReaPack > Browse packages
+4. Search "NVSD ItemView" > Right-click > Install
+5. Also install **ReaImGui** from ReaPack if you don't have it
+6. Restart REAPER — the script appears in your Actions list
 
 ## Docking
 
@@ -56,7 +59,7 @@ Right-click the window title bar → Dock window → Choose position (top, botto
 Open settings via:
 - Gear icon (top right of info bar)
 - Right-click anywhere → Settings...
-- Run `NVSD_ItemView_Settings.lua` directly
+- Search "NVSD ItemView Settings" in Actions list
 
 **Color Themes:** Choose from 8 preset themes (Default, Modern, Ableton Dark, Pro Tools, High Contrast, Warm, Cool, Monochrome)
 
