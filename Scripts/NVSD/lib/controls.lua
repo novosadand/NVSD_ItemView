@@ -569,6 +569,7 @@ function controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, p
     state.end_drag("cents")
   elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_cents_box then
     state.start_drag("cents", mouse_y, display_cents, false)
+    state.drag_controls.cents.start_semitones = display_semitones
   end
 
   if reaper.ImGui_IsMouseReleased(ctx, 0) and state.is_dragging("cents") then
@@ -578,7 +579,16 @@ function controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, p
   if state.is_dragging("cents") and reaper.ImGui_IsMouseDown(ctx, 0) then
     local delta_y = state.get_drag_delta(ctx, "cents", mouse_y, display_cents, nil)
     local delta_cents = math.floor(delta_y / 2 + 0.5)
-    local new_pitch = math.max(config.PITCH_MIN, math.min(config.PITCH_MAX, utils.semitones_cents_to_pitch(display_semitones, state.drag_controls.cents.start_value + delta_cents)))
+    local total_cents = state.drag_controls.cents.start_value + delta_cents
+    local frozen_semitones = state.drag_controls.cents.start_semitones or display_semitones
+
+    -- Rollover: when total_cents exceeds ±50, shift into semitones
+    local extra_semitones = math.floor((total_cents + 50) / 100)
+    local final_cents = total_cents - extra_semitones * 100
+    local final_semitones = frozen_semitones + extra_semitones
+
+    local new_pitch = math.max(config.PITCH_MIN, math.min(config.PITCH_MAX,
+      utils.semitones_cents_to_pitch(final_semitones, final_cents)))
     if take then
       set_take_pitch(take, new_pitch, state, utils)
       reaper.UpdateArrange()

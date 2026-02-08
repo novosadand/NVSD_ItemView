@@ -66,21 +66,10 @@ function utils.pitch_to_angle(pitch, pitch_max)
 end
 
 -- Convert pitch float to semitones and cents display values
+-- Uses round-to-nearest for Ableton-style ±50 cents range
 function utils.pitch_to_semitones_cents(pitch)
-  local semitones
-  if pitch >= 0 then
-    semitones = math.floor(pitch)
-  else
-    semitones = math.ceil(pitch)
-  end
+  local semitones = math.floor(pitch + 0.5)
   local cents = math.floor((pitch - semitones) * 100 + 0.5)
-  if cents >= 100 then
-    cents = 0
-    semitones = semitones + 1
-  elseif cents <= -100 then
-    cents = 0
-    semitones = semitones - 1
-  end
   return semitones, cents
 end
 

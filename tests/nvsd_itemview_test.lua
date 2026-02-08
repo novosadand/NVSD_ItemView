@@ -1360,27 +1360,37 @@ end
 
 function TestNVSDItemView:test_pitch_to_semitones_cents()
     -- Test splitting pitch value into semitones and cents (using real utils module)
-    -- Real function uses floor for positive, ceil for negative (not round-to-nearest)
+    -- Uses round-to-nearest for Ableton-style ±50 cents range
 
     -- Exact semitone
     local semi, cents = utils.pitch_to_semitones_cents(5.0)
     lu.assertEquals(semi, 5)
     lu.assertEquals(cents, 0)
 
-    -- Positive cents
+    -- Positive cents (below half-semitone)
     semi, cents = utils.pitch_to_semitones_cents(5.25)
     lu.assertEquals(semi, 5)
     lu.assertEquals(cents, 25)
 
-    -- Positive pitch with large fractional → floor keeps semitone below
+    -- Positive pitch with large fractional: rounds UP to nearest semitone
     semi, cents = utils.pitch_to_semitones_cents(4.75)
-    lu.assertEquals(semi, 4)   -- floor(4.75) = 4
-    lu.assertEquals(cents, 75) -- (4.75 - 4) * 100 = 75
+    lu.assertEquals(semi, 5)    -- floor(4.75 + 0.5) = floor(5.25) = 5
+    lu.assertEquals(cents, -25) -- (4.75 - 5) * 100 = -25
 
-    -- Negative pitch: ceil(-3.5) = -3
+    -- Negative pitch: round(-3.5) = floor(-3.0) = -3
     semi, cents = utils.pitch_to_semitones_cents(-3.5)
     lu.assertEquals(semi, -3)
     lu.assertEquals(cents, -50)
+
+    -- Negative pitch with large fractional: rounds to nearest
+    semi, cents = utils.pitch_to_semitones_cents(-1.3)
+    lu.assertEquals(semi, -1)
+    lu.assertEquals(cents, -30)
+
+    -- Boundary: 0.50 rounds up
+    semi, cents = utils.pitch_to_semitones_cents(0.50)
+    lu.assertEquals(semi, 1)    -- floor(0.50 + 0.5) = floor(1.0) = 1
+    lu.assertEquals(cents, -50) -- (0.50 - 1) * 100 = -50
 
     -- Zero pitch
     semi, cents = utils.pitch_to_semitones_cents(0)
@@ -2500,18 +2510,17 @@ function TestNVSDItemView:test_semitones_drag_preserves_cents()
         return semitones + cents / 100
     end
 
-    -- Start: pitch 2.50 -> semitones=3, cents=-50 (rounded)
-    -- But for this test: pitch=2.50, display_cents at drag start = 50
-    local start_cents = 50
+    -- Start: pitch 2.25 -> semitones=2, cents=25 (round-to-nearest)
+    local start_cents = 25
     local start_semitones = 2
 
-    -- Drag +1 semitone: should be 3 + 50/100 = 3.50
+    -- Drag +1 semitone: should be 3 + 25/100 = 3.25
     local new_pitch = semitones_cents_to_pitch(start_semitones + 1, start_cents)
-    lu.assertAlmostEquals(new_pitch, 3.50, 0.001)
+    lu.assertAlmostEquals(new_pitch, 3.25, 0.001)
 
-    -- Drag -1 semitone: should be 1 + 50/100 = 1.50
+    -- Drag -1 semitone: should be 1 + 25/100 = 1.25
     new_pitch = semitones_cents_to_pitch(start_semitones - 1, start_cents)
-    lu.assertAlmostEquals(new_pitch, 1.50, 0.001)
+    lu.assertAlmostEquals(new_pitch, 1.25, 0.001)
 
     -- Without freezing (using recomputed cents), we'd get drift
     -- This test verifies we use the stored cents, not recomputed ones
@@ -2543,6 +2552,84 @@ function TestNVSDItemView:test_semitones_cents_roundtrip()
     local semi2, cents2 = pitch_to_semitones_cents(new_pitch)
     local roundtrip = semitones_cents_to_pitch(semi2, cents2)
     lu.assertAlmostEquals(roundtrip, new_pitch, 0.001)
+end
+
+function TestNVSDItemView:test_cents_drag_rollover()
+    -- Cents drag should rollover into semitones at ±50 boundary
+    local function semitones_cents_to_pitch(semitones, cents)
+        return semitones + cents / 100
+    end
+
+    -- Simulate: start at 0 semi, 0 cents, drag up past +50
+    local frozen_semitones = 0
+    local start_cents = 0
+
+    -- Drag +60 cents total: should rollover to +1 semi, -40 cents
+    local total_cents = start_cents + 60
+    local extra_semitones = math.floor((total_cents + 50) / 100)
+    local final_cents = total_cents - extra_semitones * 100
+    local final_semitones = frozen_semitones + extra_semitones
+    lu.assertEquals(final_semitones, 1)
+    lu.assertEquals(final_cents, -40)
+    lu.assertAlmostEquals(semitones_cents_to_pitch(final_semitones, final_cents), 0.60, 0.001)
+
+    -- Drag -60 cents total: should rollover to -1 semi, +40 cents
+    total_cents = start_cents - 60
+    extra_semitones = math.floor((total_cents + 50) / 100)
+    final_cents = total_cents - extra_semitones * 100
+    final_semitones = frozen_semitones + extra_semitones
+    lu.assertEquals(final_semitones, -1)
+    lu.assertEquals(final_cents, 40)
+    lu.assertAlmostEquals(semitones_cents_to_pitch(final_semitones, final_cents), -0.60, 0.001)
+
+    -- Drag +150 cents: should rollover to +2 semi, -50 cents
+    total_cents = start_cents + 150
+    extra_semitones = math.floor((total_cents + 50) / 100)
+    final_cents = total_cents - extra_semitones * 100
+    final_semitones = frozen_semitones + extra_semitones
+    lu.assertEquals(final_semitones, 2)
+    lu.assertEquals(final_cents, -50)
+    lu.assertAlmostEquals(semitones_cents_to_pitch(final_semitones, final_cents), 1.50, 0.001)
+
+    -- Stay within range: +30 cents, no rollover
+    total_cents = start_cents + 30
+    extra_semitones = math.floor((total_cents + 50) / 100)
+    final_cents = total_cents - extra_semitones * 100
+    final_semitones = frozen_semitones + extra_semitones
+    lu.assertEquals(final_semitones, 0)
+    lu.assertEquals(final_cents, 30)
+end
+
+function TestNVSDItemView:test_cents_drag_no_acceleration()
+    -- Verify that frozen semitones prevent the acceleration bug.
+    -- The bug: display_semitones shifts mid-drag because it's recomputed from
+    -- current pitch each frame, compounding with unbounded cents.
+    -- Fix: use frozen_semitones captured at drag start.
+
+    local function semitones_cents_to_pitch(semitones, cents)
+        return semitones + cents / 100
+    end
+
+    -- Start at pitch 0.0: semi=0, cents=0
+    local frozen_semitones = 0
+    local start_cents = 0
+
+    -- Frame 1: drag delta = +80 cents
+    local total_cents = start_cents + 80
+    local extra_semitones = math.floor((total_cents + 50) / 100)
+    local final_cents = total_cents - extra_semitones * 100
+    local final_semitones = frozen_semitones + extra_semitones
+    local pitch_frame1 = semitones_cents_to_pitch(final_semitones, final_cents)
+    lu.assertAlmostEquals(pitch_frame1, 0.80, 0.001)
+
+    -- Frame 2: same delta = +80 cents (mouse hasn't moved)
+    -- With frozen semitones, result is identical (no acceleration)
+    total_cents = start_cents + 80
+    extra_semitones = math.floor((total_cents + 50) / 100)
+    final_cents = total_cents - extra_semitones * 100
+    final_semitones = frozen_semitones + extra_semitones
+    local pitch_frame2 = semitones_cents_to_pitch(final_semitones, final_cents)
+    lu.assertAlmostEquals(pitch_frame2, pitch_frame1, 0.001)
 end
 
 -- ============================================================================
