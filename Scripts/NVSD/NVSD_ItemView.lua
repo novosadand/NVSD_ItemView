@@ -62,6 +62,10 @@ end
 
 -- Create ImGui context
 local ctx = reaper.ImGui_CreateContext("NVSD_ItemView")
+-- Attach a font to keep context alive across deferred frames (prevents GC on macOS)
+if reaper.ImGui_CreateFont and reaper.ImGui_Attach then
+  reaper.ImGui_Attach(ctx, reaper.ImGui_CreateFont('sans-serif', 13))
+end
 
 -- Check for file changes (call periodically)
 local function check_for_changes()
@@ -95,12 +99,18 @@ local function loop()
     local fg = reaper.JS_Window_GetForeground()
     local main = reaper.GetMainHwnd()
     if fg and main and fg ~= main then
-      local parent = reaper.JS_Window_GetParent(fg)
-      if parent == main then
-        -- A child dialog of REAPER is in the foreground — skip frame
-        dialog_cooldown = 30  -- ~0.5s at 60fps after dialog closes
-        reaper.defer(loop)
-        return
+      -- Walk up parent chain to detect any REAPER child/grandchild dialog
+      local check = fg
+      for _ = 1, 5 do
+        local parent = reaper.JS_Window_GetParent(check)
+        if not parent then break end
+        if parent == main then
+          -- A child dialog of REAPER is in the foreground — skip frame
+          dialog_cooldown = 30  -- ~0.5s at 60fps after dialog closes
+          reaper.defer(loop)
+          return
+        end
+        check = parent
       end
     end
   end
