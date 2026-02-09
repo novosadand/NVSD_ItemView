@@ -22,6 +22,101 @@ local function power_curve(value)
   end
 end
 
+-- Fade curve equations: each maps x in [0,1] to amplitude [0,1]
+local fade_curves = {
+  [0] = function(x) return x end,                                    -- Linear
+  [1] = function(x) return 1 - (1-x)*(1-x) end,                     -- Fast start
+  [2] = function(x) return x*x end,                                  -- Fast end
+  [3] = function(x) return 1 - (1-x)^4 end,                          -- Fast start steep
+  [4] = function(x) return x^4 end,                                   -- Fast end steep
+  [5] = function(x) return (1 - math.cos(math.pi * x)) * 0.5 end,   -- S-curve cosine
+  [6] = function(x)                                                    -- S-curve steep (flat ends, sharp middle)
+    if x < 0.5 then return 8*x*x*x*x else local t=1-x; return 1-8*t*t*t*t end
+  end,
+}
+
+-- Draw curve-shaped darkening overlay above the fade curve, with curve line on top
+-- fade_top_y: top of fade curve region (bottom edge of handle squares)
+-- The full x-range should include the handle width so the curve reaches the handle corner
+function drawing.draw_fade_overlay(draw_list, fade_start_px, fade_end_px,
+                                    fade_top_y, wave_y, wave_height,
+                                    fade_shape, is_fade_in)
+  local width = fade_end_px - fade_start_px
+  if width < 2 then return end
+
+  local curve_fn = fade_curves[fade_shape] or fade_curves[0]
+  local tint_alpha = 0x30  -- subtle darkening
+  local DL_AddLine = reaper.ImGui_DrawList_AddLine
+  local DL_PathLineTo = reaper.ImGui_DrawList_PathLineTo
+  local DL_PathStroke = reaper.ImGui_DrawList_PathStroke
+
+  -- Curve spans from fade_top_y (vol=0, fully attenuated) to wave_y+wave_height (vol=1, full volume)
+  local curve_range = wave_y + wave_height - fade_top_y
+
+  -- Darken only above the curve (the attenuated region)
+  local step = 2  -- 2px columns for performance
+  for px = 0, math.floor(width), step do
+    local t = px / width
+    if t > 1 then t = 1 end
+    local vol = is_fade_in and curve_fn(t) or (1 - curve_fn(t))
+    local curve_y = fade_top_y + curve_range * (1 - vol)
+    if curve_y > fade_top_y then
+      DL_AddLine(draw_list, fade_start_px + px, fade_top_y, fade_start_px + px, curve_y, tint_alpha, step)
+    end
+  end
+
+  -- Draw curve line on top (white semi-transparent)
+  if DL_PathLineTo and width > 4 then
+    local line_step = math.max(1, math.floor(width / 200))
+    for px = 0, math.floor(width), line_step do
+      local t = px / width
+      if t > 1 then t = 1 end
+      local vol = is_fade_in and curve_fn(t) or (1 - curve_fn(t))
+      local curve_y = fade_top_y + curve_range * (1 - vol)
+      DL_PathLineTo(draw_list, fade_start_px + px, curve_y)
+    end
+    DL_PathStroke(draw_list, 0xFFFFFF80, 0, 1.5)
+  end
+end
+
+-- Draw fade handle (square extending from fade boundary, width may be clipped)
+function drawing.draw_fade_handle(draw_list, x, y, is_hovered, is_dragging, is_fade_in, config, extent)
+  local size = config.FADE_HANDLE_SIZE
+  extent = extent or (size * 2)
+  if extent < 2 then return end  -- too small to draw
+  local fill = (is_hovered or is_dragging) and 0xAAAAAAAA or 0x88888880
+  local border = (is_hovered or is_dragging) and 0xCCCCCCFF or 0x999999AA
+
+  local x1, x2
+  if is_fade_in then
+    x1 = x
+    x2 = x + extent
+  else
+    x1 = x - extent
+    x2 = x
+  end
+
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, x1, y - size, x2, y + size, fill)
+  reaper.ImGui_DrawList_AddRect(draw_list, x1, y - size, x2, y + size, border, 0, 0, 1)
+end
+
+-- Draw fade shape icon (curve line only, no fill or border)
+function drawing.draw_fade_shape_icon(draw_list, x, y, w, h, shape, is_fade_in)
+  local curve_fn = fade_curves[shape] or fade_curves[0]
+  local DL_PathLineTo = reaper.ImGui_DrawList_PathLineTo
+  local DL_PathStroke = reaper.ImGui_DrawList_PathStroke
+
+  if not DL_PathLineTo then return end
+
+  local steps = 40
+  for i = 0, steps do
+    local t = i / steps
+    local vol = is_fade_in and curve_fn(t) or (1 - curve_fn(t))
+    DL_PathLineTo(draw_list, x + t * w, y + h - vol * h)
+  end
+  DL_PathStroke(draw_list, 0xCCCCCCFF, 0, 2.0)
+end
+
 -- Waveform computation cache (avoids recomputing Phase 1+2 when inputs unchanged)
 local wf_cache = { valid = false }
 
@@ -59,10 +154,8 @@ function drawing.draw_dashed_line(draw_list, x, y1, y2, color, dash_length, gap_
 end
 
 -- Draw ruler bar with bar numbers
-function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler_height, wave_height,
-                                      view_start, view_length, item_position, start_offset, playrate, config, utils)
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, x, ruler_y, x + width, ruler_y + ruler_height, config.COLOR_RULER_BG)
-
+-- Compute shared grid geometry (used by both grid lines and ruler)
+local function compute_grid_params(x, width, view_start, view_length, item_position, start_offset, playrate, config, utils)
   local function time_to_px(t)
     return x + ((t - view_start) / view_length) * width
   end
@@ -78,40 +171,176 @@ function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler
   local _, start_measures = reaper.TimeMap2_timeToBeats(0, project_start)
   local first_bar = math.floor(start_measures)
 
-  local bar = first_bar
-  local max_iterations = 1000
-  local iterations = 0
-
-  -- Calculate bar skip interval based on density
-  -- Aim for at least 40px between bar labels
   local min_bar_spacing = 40
-  local avg_bar_duration = 60 / bpm * beats_per_bar  -- seconds per bar
+  local avg_bar_duration = 60 / bpm * beats_per_bar
   local px_per_bar = (avg_bar_duration / view_length) * width
   local bar_skip = math.max(1, math.ceil(min_bar_spacing / px_per_bar))
-
-  -- Align to nice intervals (1, 2, 4, 8, 16, etc.)
   if bar_skip > 1 then
     local power = math.ceil(math.log(bar_skip) / math.log(2))
     bar_skip = 2 ^ power
   end
 
-  while iterations < max_iterations do
+  local px_per_beat = px_per_bar / beats_per_bar
+
+  -- Sub-beat subdivision depth (powers of 2: 2=eighths, 4=sixteenths, 8=32nds, etc.)
+  local finest_sub = 1
+  while (px_per_beat / (finest_sub * 2)) >= 8 do
+    finest_sub = finest_sub * 2
+  end
+  local quarter_step = finest_sub >= 4 and (finest_sub / 4) or nil
+
+  -- Dim a color's RGB channels by a factor (preserves alpha)
+  local function dim_color(color, factor)
+    local a = color % 256
+    local b = math.floor(color / 256) % 256
+    local g = math.floor(color / 65536) % 256
+    local r = math.floor(color / 16777216) % 256
+    r = math.floor(r * factor)
+    g = math.floor(g * factor)
+    b = math.floor(b * factor)
+    return r * 16777216 + g * 65536 + b * 256 + a
+  end
+
+  return {
+    time_to_px = time_to_px,
+    view_start = view_start, view_end = view_end,
+    project_start = project_start, project_end = project_end,
+    beats_per_bar = beats_per_bar, first_bar = first_bar,
+    bar_skip = bar_skip, px_per_beat = px_per_beat,
+    finest_sub = finest_sub, quarter_step = quarter_step,
+    sub_grid_color = dim_color(config.COLOR_GRID_BEAT, 0.7),
+    sub_label_color = dim_color(0x555555FF, 0.75),
+    -- Ruler tick colors: derive from RULER_TICK so they're visible on ruler bg
+    beat_tick_color = config.COLOR_RULER_TICK,
+    sub_tick_color = dim_color(config.COLOR_RULER_TICK, 0.7),
+    dim_color = dim_color,
+  }
+end
+
+-- Draw vertical grid lines through the waveform area (call BEFORE waveform)
+function drawing.draw_grid_lines(draw_list, x, wave_y, width, wave_height,
+                                  view_start, view_length, item_position, start_offset, playrate, config, utils)
+  local g = compute_grid_params(x, width, view_start, view_length, item_position, start_offset, playrate, config, utils)
+  local show_beat_grid = g.px_per_beat >= 8
+
+  local bar = g.first_bar
+  local iterations = 0
+  while iterations < 1000 do
     iterations = iterations + 1
     local bar_project_time = reaper.TimeMap2_beatsToTime(0, 0, bar)
-    if bar_project_time > project_end then break end
+    if bar_project_time > g.project_end then break end
+
+    local bar_source_time = utils.project_to_source_time(bar_project_time, item_position, start_offset, playrate)
+    if bar_source_time >= g.view_start and bar_source_time <= g.view_end then
+      local bar_px = g.time_to_px(bar_source_time)
+      reaper.ImGui_DrawList_AddLine(draw_list, bar_px, wave_y, bar_px, wave_y + wave_height, config.COLOR_GRID_BAR, 1)
+    end
+
+    -- Beat grid lines
+    if show_beat_grid then
+      for beat = 1, g.beats_per_bar - 1 do
+        local beat_project_time = reaper.TimeMap2_beatsToTime(0, beat, bar)
+        if beat_project_time > g.project_end then break end
+        local beat_source_time = utils.project_to_source_time(beat_project_time, item_position, start_offset, playrate)
+        if beat_source_time >= g.view_start and beat_source_time <= g.view_end then
+          reaper.ImGui_DrawList_AddLine(draw_list, g.time_to_px(beat_source_time), wave_y, g.time_to_px(beat_source_time), wave_y + wave_height, config.COLOR_GRID_BEAT, 1)
+        end
+      end
+    end
+
+    -- Sub-beat grid lines
+    if g.finest_sub >= 2 then
+      for beat = 0, g.beats_per_bar - 1 do
+        for sub = 1, g.finest_sub - 1 do
+          local sub_project_time = reaper.TimeMap2_beatsToTime(0, beat + (sub / g.finest_sub), bar)
+          if sub_project_time > g.project_end then break end
+          local sub_source_time = utils.project_to_source_time(sub_project_time, item_position, start_offset, playrate)
+          if sub_source_time >= g.view_start and sub_source_time <= g.view_end then
+            local is_quarter = g.quarter_step and (sub % g.quarter_step == 0)
+            local grid_col = is_quarter and config.COLOR_GRID_BEAT or g.sub_grid_color
+            reaper.ImGui_DrawList_AddLine(draw_list, g.time_to_px(sub_source_time), wave_y, g.time_to_px(sub_source_time), wave_y + wave_height, grid_col, 1)
+          end
+        end
+      end
+    end
+
+    bar = bar + 1
+  end
+end
+
+-- Draw ruler with ticks and labels (call AFTER waveform)
+function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler_height, wave_height,
+                                      view_start, view_length, item_position, start_offset, playrate, config, utils)
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, x, ruler_y, x + width, ruler_y + ruler_height, config.COLOR_RULER_BG)
+
+  local g = compute_grid_params(x, width, view_start, view_length, item_position, start_offset, playrate, config, utils)
+  local show_beat_labels = g.px_per_beat >= 30
+  local show_beat_ticks = g.px_per_beat >= 12
+  -- Sub-beat ruler ticks: only at quarter-beat positions, need decent spacing
+  local show_sub_ticks = g.quarter_step and (g.px_per_beat / 4) >= 20
+  -- Sub-beat labels: only when really zoomed in (each quarter-beat has plenty of room)
+  local show_sub_labels = g.quarter_step and (g.px_per_beat / 4) >= 60
+  local beat_label_color = 0x555555FF
+
+  local bar = g.first_bar
+  local iterations = 0
+  while iterations < 1000 do
+    iterations = iterations + 1
+    local bar_project_time = reaper.TimeMap2_beatsToTime(0, 0, bar)
+    if bar_project_time > g.project_end then break end
 
     local bar_source_time = utils.project_to_source_time(bar_project_time, item_position, start_offset, playrate)
 
-    if bar_source_time >= view_start and bar_source_time <= view_end then
-      local bar_px = time_to_px(bar_source_time)
-      -- Only draw label for every Nth bar when zoomed out
+    if bar_source_time >= g.view_start and bar_source_time <= g.view_end then
+      local bar_px = g.time_to_px(bar_source_time)
       local bar_num = bar + 1
-      if bar_num % bar_skip == 1 or bar_skip == 1 then
+      if bar_num % g.bar_skip == 1 or g.bar_skip == 1 then
         reaper.ImGui_DrawList_AddLine(draw_list, bar_px, ruler_y, bar_px, ruler_y + ruler_height, config.COLOR_RULER_TICK, 1)
         reaper.ImGui_DrawList_AddText(draw_list, bar_px + 3, ruler_y + 3, config.COLOR_RULER_TEXT, tostring(bar_num))
       else
-        -- Draw shorter tick for skipped bars
         reaper.ImGui_DrawList_AddLine(draw_list, bar_px, ruler_y + ruler_height - 4, bar_px, ruler_y + ruler_height, config.COLOR_RULER_TICK, 1)
+      end
+    end
+
+    -- Beat ticks and labels in ruler
+    if show_beat_ticks then
+      for beat = 1, g.beats_per_bar - 1 do
+        local beat_project_time = reaper.TimeMap2_beatsToTime(0, beat, bar)
+        if beat_project_time > g.project_end then break end
+        local beat_source_time = utils.project_to_source_time(beat_project_time, item_position, start_offset, playrate)
+        if beat_source_time >= g.view_start and beat_source_time <= g.view_end then
+          local beat_px = g.time_to_px(beat_source_time)
+          local tick_top = ruler_y + ruler_height - math.floor(ruler_height * 0.5)
+          reaper.ImGui_DrawList_AddLine(draw_list, beat_px, tick_top, beat_px, ruler_y + ruler_height, g.beat_tick_color, 1)
+          if show_beat_labels and (g.bar_skip == 1 or ((bar + 1) % g.bar_skip == 1)) then
+            reaper.ImGui_DrawList_AddText(draw_list, beat_px + 3, ruler_y + 3, beat_label_color, (bar + 1) .. "." .. (beat + 1))
+          end
+        end
+      end
+    end
+
+    -- Sub-beat ticks and labels in ruler (only quarter-beat positions, not every fine subdivision)
+    if g.quarter_step and (show_sub_ticks or show_sub_labels) then
+      local bar_has_labels = g.bar_skip == 1 or ((bar + 1) % g.bar_skip == 1)
+      for beat = 0, g.beats_per_bar - 1 do
+        for q = 1, 3 do
+          local beat_frac = beat + (q / 4)
+          local sub_project_time = reaper.TimeMap2_beatsToTime(0, beat_frac, bar)
+          if sub_project_time > g.project_end then break end
+          local sub_source_time = utils.project_to_source_time(sub_project_time, item_position, start_offset, playrate)
+          if sub_source_time >= g.view_start and sub_source_time <= g.view_end then
+            local sub_px = g.time_to_px(sub_source_time)
+
+            if show_sub_ticks then
+              local tick_h = math.floor(ruler_height * 0.3)
+              reaper.ImGui_DrawList_AddLine(draw_list, sub_px, ruler_y + ruler_height - tick_h, sub_px, ruler_y + ruler_height, g.sub_tick_color, 1)
+            end
+
+            if show_sub_labels and bar_has_labels then
+              reaper.ImGui_DrawList_AddText(draw_list, sub_px + 3, ruler_y + 3, g.sub_label_color, (bar + 1) .. "." .. (beat + 1) .. "." .. (q + 1))
+            end
+          end
+        end
       end
     end
 
@@ -168,7 +397,7 @@ end
 
 -- Draw file info bar at the top
 -- Returns: mouse_over_filename, gear_clicked
-function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file_path, mouse_x, mouse_y, item, config, utils)
+function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file_path, mouse_x, mouse_y, item, config, utils, actual_num_channels)
   reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, config.COLOR_INFO_BAR_BG)
   reaper.ImGui_DrawList_AddLine(draw_list, x, y + height, x + width, y + height, 0x333333FF, 1)
 
@@ -265,7 +494,7 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   else
     file_name = utils.get_file_name(file_path)
     sample_rate = source and reaper.GetMediaSourceSampleRate(source) or 0
-    num_channels = source and reaper.GetMediaSourceNumChannels(source) or 0
+    num_channels = (actual_num_channels and actual_num_channels > 0) and actual_num_channels or (source and reaper.GetMediaSourceNumChannels(source) or 0)
     bit_depth = utils.get_wav_bit_depth(file_path)
     info_cache.source = source
     info_cache.file_path = file_path
@@ -295,6 +524,10 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
       table.insert(meta_parts, "Mono")
     elseif num_channels == 2 then
       table.insert(meta_parts, "Stereo")
+    elseif num_channels == 6 then
+      table.insert(meta_parts, "5.1ch")
+    elseif num_channels == 8 then
+      table.insert(meta_parts, "7.1ch")
     else
       table.insert(meta_parts, string.format("%d Ch", num_channels))
     end
@@ -349,7 +582,7 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
   local item_end = start_offset + source_item_length
   local view_end = view_start + view_length
 
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, config.COLOR_WAVEFORM_BG)
+  -- NOTE: Waveform BG is drawn by the caller before draw_grid_lines, so grid lines appear between bg and waveform
 
   if num_channels < 1 then num_channels = 1 end
   local channel_height = height / num_channels
@@ -397,6 +630,7 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
 
   -- Variables for Phase 1+2 output (declared here so cache can populate them)
   local col_tops, col_bots, col_colors, segments, n_segs
+  local is_waveform_mode
 
   -- Check waveform computation cache (skip Phase 1+2 if inputs unchanged)
   if wf_cache.valid
@@ -419,8 +653,10 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
     col_colors = wf_cache.col_colors
     segments = wf_cache.segments
     n_segs = wf_cache.n_segs
+    is_waveform_mode = wf_cache.is_waveform_mode
   else
     -- Cache miss: compute Phase 1+2
+    is_waveform_mode = peaks.output_mode == 1
 
     -- Phase 1: 1:1 peak-to-pixel mapping (peaks loaded for visible range)
     -- Reuse tables from previous cache if available, else create new
@@ -451,24 +687,34 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
       -- Y positions per channel (direct peak read, no range scanning)
       for ch = 1, num_channels do
         local flat_idx = peak_i * peak_ch + ch
-        local v_min = peak_mins[flat_idx] or 0
-        local v_max = peak_maxs[flat_idx] or 0
-
         local center_y = y + (ch - 1) * channel_height + channel_height * 0.5
-        local raw_max = v_max * visual_gain
-        local raw_min = v_min * visual_gain
-        if raw_max > 1 then raw_max = 1 elseif raw_max < -1 then raw_max = -1 end
-        if raw_min > 1 then raw_min = 1 elseif raw_min < -1 then raw_min = -1 end
-        local scaled_max = power_curve(raw_max)
-        local scaled_min = power_curve(raw_min)
-        local top_y = center_y - (scaled_max * half_height)
-        local bot_y = center_y - (scaled_min * half_height)
-        if bot_y - top_y < 1 then
-          top_y = center_y - 0.5
-          bot_y = center_y + 0.5
+
+        if is_waveform_mode then
+          -- Waveform mode: single sample value (min == max)
+          local v = peak_maxs[flat_idx] or 0
+          local raw = v * visual_gain
+          if raw > 1 then raw = 1 elseif raw < -1 then raw = -1 end
+          col_tops[ch][i] = center_y - (power_curve(raw) * half_height)
+          col_bots[ch][i] = center_y
+        else
+          -- Peaks mode: min/max range
+          local v_min = peak_mins[flat_idx] or 0
+          local v_max = peak_maxs[flat_idx] or 0
+          local raw_max = v_max * visual_gain
+          local raw_min = v_min * visual_gain
+          if raw_max > 1 then raw_max = 1 elseif raw_max < -1 then raw_max = -1 end
+          if raw_min > 1 then raw_min = 1 elseif raw_min < -1 then raw_min = -1 end
+          local scaled_max = power_curve(raw_max)
+          local scaled_min = power_curve(raw_min)
+          local top_y = center_y - (scaled_max * half_height)
+          local bot_y = center_y - (scaled_min * half_height)
+          if bot_y - top_y < 1 then
+            top_y = center_y - 0.5
+            bot_y = center_y + 0.5
+          end
+          col_tops[ch][i] = top_y
+          col_bots[ch][i] = bot_y
         end
-        col_tops[ch][i] = top_y
-        col_bots[ch][i] = bot_y
       end
     end
 
@@ -508,6 +754,7 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
     wf_cache.col_colors = col_colors
     wf_cache.segments = segments
     wf_cache.n_segs = n_segs
+    wf_cache.is_waveform_mode = is_waveform_mode
   end
 
   -- Phase 3: Render (always runs — ImGui immediate mode requires redrawing every frame)
@@ -519,44 +766,61 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
     local fill_color = fill_lut[segments[si][3]]
     local outline_color = outline_lut[segments[si][3]]
 
-    -- First fill pixel needs predecessor (pixel before segment start)
-    local fill_from = (s_start == 0) and 1 or s_start
-
     for ch = 1, num_channels do
       local tops = col_tops[ch]
       local bots = col_bots[ch]
 
-      -- Fill: per-pixel quads connecting adjacent columns
-      for i = fill_from, s_stop do
-        local px_prev = x + (i - 1) * pixel_step
-        local px_curr = x + i * pixel_step
-        DL_QuadFilled(draw_list,
-          px_prev, tops[i - 1],
-          px_curr, tops[i],
-          px_curr, bots[i],
-          px_prev, bots[i - 1],
-          fill_color)
-      end
+      if is_waveform_mode then
+        -- Waveform mode: connected line segments with fill to center
+        local center_y_ch = y + (ch - 1) * channel_height + channel_height * 0.5
 
-      -- Outlines: batched via path API (reduces GPU draw commands)
-      if has_path and s_stop > s_start then
-        -- Top outline
+        -- Fill: vertical lines from sample to center
         for i = s_start, s_stop do
-          DL_PathLineTo(draw_list, x + i * pixel_step, tops[i])
+          local px = x + i * pixel_step
+          DL_AddLine(draw_list, px, tops[i], px, center_y_ch, fill_color, pixel_step)
         end
-        DL_PathStroke(draw_list, outline_color, 0, 1)
-        -- Bottom outline
-        for i = s_start, s_stop do
-          DL_PathLineTo(draw_list, x + i * pixel_step, bots[i])
+
+        -- Outline: connected path through sample points
+        if has_path and s_stop > s_start then
+          for i = s_start, s_stop do
+            DL_PathLineTo(draw_list, x + i * pixel_step, tops[i])
+          end
+          DL_PathStroke(draw_list, outline_color, 0, 1)
+        else
+          for i = s_start + 1, s_stop do
+            DL_AddLine(draw_list, x + (i - 1) * pixel_step, tops[i - 1],
+                       x + i * pixel_step, tops[i], outline_color, 1)
+          end
         end
-        DL_PathStroke(draw_list, outline_color, 0, 1)
       else
-        -- Fallback: individual lines
-        for i = fill_from, s_stop do
-          local px_prev = x + (i - 1) * pixel_step
-          local px_curr = x + i * pixel_step
-          DL_AddLine(draw_list, px_prev, tops[i - 1], px_curr, tops[i], outline_color, 1)
-          DL_AddLine(draw_list, px_prev, bots[i - 1], px_curr, bots[i], outline_color, 1)
+        -- Peaks mode: vertical bars with outlines
+        -- Fill: vertical lines per pixel column
+        for i = s_start, s_stop do
+          local px = x + i * pixel_step
+          DL_AddLine(draw_list, px, tops[i], px, bots[i], fill_color, pixel_step)
+        end
+
+        -- Outlines: batched via path API (reduces GPU draw commands)
+        local draw_from = (s_start == 0) and 1 or s_start
+        if has_path and s_stop > s_start then
+          -- Top outline
+          for i = s_start, s_stop do
+            DL_PathLineTo(draw_list, x + i * pixel_step, tops[i])
+          end
+          DL_PathStroke(draw_list, outline_color, 0, 1)
+          -- Bottom outline
+          for i = s_start, s_stop do
+            DL_PathLineTo(draw_list, x + i * pixel_step, bots[i])
+          end
+          DL_PathStroke(draw_list, outline_color, 0, 1)
+        else
+          -- Fallback: individual lines
+          for i = draw_from, s_stop do
+            local px_prev = x + (i - 1) * pixel_step
+            local px_curr = x + i * pixel_step
+            DL_AddLine(draw_list, px_prev, tops[i - 1], px_curr, tops[i], outline_color, 1)
+            DL_AddLine(draw_list, px_prev, bots[i - 1], px_curr, bots[i], outline_color, 1)
+          end
         end
       end
     end
@@ -618,7 +882,7 @@ function drawing.draw_marker(draw_list, x, y, height, is_start, is_hovered, is_d
 
   reaper.ImGui_DrawList_AddLine(draw_list, x, y, x, y + height, color, 3)
 
-  local handle_size = 10
+  local handle_size = 7
 
   if is_start then
     reaper.ImGui_DrawList_AddTriangleFilled(draw_list,

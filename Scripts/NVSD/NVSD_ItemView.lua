@@ -127,6 +127,8 @@ local function loop()
       state.sticky_item_valid = false
       state.dragging_start = false
       state.dragging_end = false
+      state.dragging_fade_in = false
+      state.dragging_fade_out = false
       state.is_panning = false
       state.is_ruler_dragging = false
       state.undo_block_open = nil
@@ -150,16 +152,33 @@ local function loop()
   if reaper.JS_Window_GetForeground then
     local fg = reaper.JS_Window_GetForeground()
     local main = reaper.GetMainHwnd()
-    if fg and main and fg ~= main then
-      local parent = reaper.JS_Window_GetParent(fg)
-      if parent ~= main then
-        reaper_is_active = false
+    if fg and main then
+      if fg ~= main then
+        local parent = reaper.JS_Window_GetParent(fg)
+        if parent ~= main then
+          reaper_is_active = false
+        end
       end
+    else
+      -- fg or main is nil during transition - treat as inactive
+      reaper_is_active = false
     end
   end
   if reaper_is_active and reaper.JS_Mouse_GetState then
     local mouse_state = reaper.JS_Mouse_GetState(1)
     mouse_is_down = (mouse_state & 1) ~= 0
+  end
+
+  -- Abort all drags/panning when REAPER loses focus to prevent stale ImGui mouse
+  -- state from corrupting positions (ImGui_IsMouseDown/GetMousePos can return
+  -- stale values on the transition frame)
+  if not reaper_is_active then
+    state.dragging_start = false
+    state.dragging_end = false
+    state.dragging_fade_in = false
+    state.dragging_fade_out = false
+    state.is_panning = false
+    state.is_ruler_dragging = false
   end
 
   -- Auto-reload check (skip during mouse-down to avoid disk I/O lag)
@@ -190,17 +209,17 @@ local function loop()
 
     -- Auto-focus window when hovered with Ctrl held (enables scroll-to-zoom without clicking first)
     local is_hovered = reaper.ImGui_IsWindowHovered(ctx, reaper.ImGui_HoveredFlags_ChildWindows())
-    if is_hovered and ctrl_held and not reaper.ImGui_IsWindowFocused(ctx) then
+    if reaper_is_active and is_hovered and ctrl_held and not reaper.ImGui_IsWindowFocused(ctx) then
       reaper.ImGui_SetWindowFocus(ctx)
     end
 
     -- Forward Space to REAPER transport (so playback works without clicking back to timeline)
-    if not settings.listening and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Space()) then
+    if reaper_is_active and not settings.listening and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Space()) then
       reaper.Main_OnCommand(40044, 0)  -- Transport: Play/Stop
     end
 
     -- Forward undo/redo to REAPER (universal, not configurable)
-    if not settings.listening and ctrl_held then
+    if reaper_is_active and not settings.listening and ctrl_held then
       if reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Z()) then
         reaper.Main_OnCommand(shift_held and 40030 or 40029, 0)  -- Shift: Redo, else Undo
       elseif reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Y()) then
@@ -209,11 +228,11 @@ local function loop()
     end
 
     -- Zoom shortcuts
-    if settings.check_shortcut(ctx, "zoom_in") then
+    if reaper_is_active and settings.check_shortcut(ctx, "zoom_in") then
       state.zoom_level = math.min(500.0, state.zoom_level * 1.5)
-    elseif settings.check_shortcut(ctx, "zoom_out") then
+    elseif reaper_is_active and settings.check_shortcut(ctx, "zoom_out") then
       state.zoom_level = math.max(1.0, state.zoom_level / 1.5)
-    elseif settings.check_shortcut(ctx, "reset_zoom") then
+    elseif reaper_is_active and settings.check_shortcut(ctx, "reset_zoom") then
       state.zoom_level = 1.0
       state.pan_offset = 0
     end
@@ -236,6 +255,8 @@ local function loop()
         gain = "NVSD_ItemView: Adjust item volume",
         semitones = "NVSD_ItemView: Adjust semitones",
         cents = "NVSD_ItemView: Adjust cents",
+        fade_in = "NVSD_ItemView: Adjust fade in",
+        fade_out = "NVSD_ItemView: Adjust fade out",
       }
       local msg = undo_messages[state.undo_block_open] or "NVSD_ItemView: Edit"
       reaper.Undo_OnStateChangeEx(msg, -1, -1)
@@ -245,13 +266,15 @@ local function loop()
     -- Get selected item
     local selected_item = reaper.GetSelectedMediaItem(0, 0)
 
-    -- Clear sticky when selection changes
-    if selected_item ~= state.last_selected_item then
+    -- Clear sticky when selection changes (skip when REAPER is unfocused to prevent spurious resets)
+    if reaper_is_active and selected_item ~= state.last_selected_item then
       state.sticky_item = nil
       state.sticky_item_valid = false
       state.sticky_validation_counter = 0
     end
-    state.last_selected_item = selected_item
+    if reaper_is_active then
+      state.last_selected_item = selected_item
+    end
 
     local item = nil
 
@@ -314,13 +337,15 @@ local function loop()
     end
 
     -- Clear zoom/pan state when no item is shown (so next item shows full view)
-    if not item then
+    -- Guard with reaper_is_active to prevent spurious clearing on alt-tab
+    if reaper_is_active and not item then
       state.last_panned_item = nil
       state.last_zoomed_item = nil
     end
 
     -- Validate item pointer (may go stale during autosave, project load, or undo)
-    if item and not reaper.ValidatePtr(item, "MediaItem*") then
+    -- Skip when REAPER is unfocused to prevent spurious invalidation
+    if reaper_is_active and item and not reaper.ValidatePtr(item, "MediaItem*") then
       item = nil
       state.sticky_item = nil
       state.sticky_item_valid = false
@@ -442,6 +467,12 @@ local function loop()
           if playrate == 0 then playrate = 1 end  -- Guard against division by zero
           local item_vol = reaper.GetMediaItemInfo_Value(item, "D_VOL")
 
+          -- Fade values
+          local fade_in_len = reaper.GetMediaItemInfo_Value(item, "D_FADEINLEN")
+          local fade_out_len = reaper.GetMediaItemInfo_Value(item, "D_FADEOUTLEN")
+          local fade_in_shape = math.floor(reaper.GetMediaItemInfo_Value(item, "C_FADEINSHAPE"))
+          local fade_out_shape = math.floor(reaper.GetMediaItemInfo_Value(item, "C_FADEOUTSHAPE"))
+
           -- Get available space for waveform
           local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
           local total_left_width = config.LEFT_COLUMN_WIDTH + config.LEFT_PANEL_WIDTH
@@ -486,13 +517,15 @@ local function loop()
           -- Check if user is dragging in REAPER (mouse button held outside our control)
           local we_are_dragging = state.dragging_start or state.dragging_end or state.is_panning
                                   or state.is_ruler_dragging or state.is_any_control_dragging()
+                                  or state.dragging_fade_in or state.dragging_fade_out
           local user_dragging_in_reaper = mouse_is_down and not we_are_dragging
 
           -- Get file path (used by info bar)
           local file_path = reaper.GetMediaSourceFileName(source, "")
 
           -- Reset zoom and pan when item changes - show full source
-          if item ~= state.last_zoomed_item or item ~= state.last_panned_item then
+          -- Skip when REAPER is unfocused to prevent view jumping on alt-tab
+          if reaper_is_active and (item ~= state.last_zoomed_item or item ~= state.last_panned_item) then
             state.zoom_level = 1.0
             state.pan_offset = 0
             state.last_panned_item = item
@@ -549,6 +582,16 @@ local function loop()
             view_item_length = source_item_length
           end
 
+          -- Grid line params (shared by grid lines and ruler)
+          local grid_offset = (state.dragging_start or state.dragging_end) and state.drag_start_offset or start_offset
+          local grid_playrate = (state.dragging_start or state.dragging_end) and state.drag_start_playrate or playrate
+          local grid_view_start = (state.dragging_start or state.dragging_end) and state.drag_start_view_start or view_start
+
+          -- Waveform background, then grid lines, then waveform on top
+          reaper.ImGui_DrawList_AddRectFilled(draw_list, wave_x, wave_y, wave_x + waveform_width, wave_y + waveform_height, config.COLOR_WAVEFORM_BG)
+          drawing.draw_grid_lines(draw_list, wave_x, wave_y, waveform_width, waveform_height,
+            grid_view_start, view_length, item_position, grid_offset, grid_playrate, config, utils)
+
           local start_px, end_px = drawing.draw_waveform(draw_list, wave_x, wave_y,
             waveform_width, waveform_height,
             state.view_peaks, view_offset, view_item_length, source_length, view_start, view_length, ruler_y, item_vol, is_reversed, state.view_num_channels, config, pixel_step)
@@ -563,28 +606,17 @@ local function loop()
           end
 
           -- Draw file info bar at the top (file_path already fetched above for caching)
-          local _, gear_clicked = drawing.draw_info_bar(draw_list, ctx, wave_x, info_bar_y, waveform_width, config.INFO_BAR_HEIGHT, source, file_path, mouse_x, mouse_y, item, config, utils)
+          local _, gear_clicked = drawing.draw_info_bar(draw_list, ctx, wave_x, info_bar_y, waveform_width, config.INFO_BAR_HEIGHT, source, file_path, mouse_x, mouse_y, item, config, utils, state.view_num_channels)
 
           -- Open settings when gear is clicked
           if gear_clicked then
             settings_ui.open(settings)
           end
 
-          -- Right-click menu
-          if reaper.ImGui_IsMouseClicked(ctx, 1) then
-            local in_window = mouse_x >= cursor_x and mouse_x <= cursor_x + avail_w
+          -- Right-click menu (deferred: fade handle right-click checked after hover detection)
+          local right_clicked = reaper_is_active and reaper.ImGui_IsMouseClicked(ctx, 1)
+          local right_click_in_window = right_clicked and mouse_x >= cursor_x and mouse_x <= cursor_x + avail_w
                               and mouse_y >= cursor_y and mouse_y <= cursor_y + avail_h
-            if in_window then
-              reaper.ImGui_OpenPopup(ctx, "context_menu")
-            end
-          end
-
-          if reaper.ImGui_BeginPopup(ctx, "context_menu") then
-            if reaper.ImGui_MenuItem(ctx, "Settings...") then
-              settings_ui.open(settings)
-            end
-            reaper.ImGui_EndPopup(ctx)
-          end
 
           -- Calculate ACTUAL current marker positions
           local render_start, render_end
@@ -603,10 +635,7 @@ local function loop()
           start_px = actual_start_px
           end_px = actual_end_px
 
-          -- Draw ruler and grid lines
-          local grid_offset = (state.dragging_start or state.dragging_end) and state.drag_start_offset or start_offset
-          local grid_playrate = (state.dragging_start or state.dragging_end) and state.drag_start_playrate or playrate
-          local grid_view_start = (state.dragging_start or state.dragging_end) and state.drag_start_view_start or view_start
+          -- Draw ruler (ticks and labels, on top of waveform)
           drawing.draw_ruler_and_grid(draw_list, wave_x, ruler_y, wave_y, waveform_width, config.RULER_HEIGHT, waveform_height,
             grid_view_start, view_length, item_position, grid_offset, grid_playrate, config, utils)
 
@@ -816,23 +845,71 @@ local function loop()
           local start_marker_x = wave_x + start_px
           local end_marker_x = wave_x + end_px
 
-          -- Mouse interaction areas
-          local mouse_in_waveform = mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
-                                    and mouse_y >= wave_y and mouse_y <= wave_y + waveform_height
-          local mouse_in_ruler = mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
-                                 and mouse_y >= ruler_y and mouse_y <= ruler_y + config.RULER_HEIGHT
-          local mouse_in_time_ruler = mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
-                                 and mouse_y >= time_ruler_y and mouse_y <= time_ruler_y + config.TIME_RULER_HEIGHT
-          local mouse_in_view = mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
-                                and mouse_y >= ruler_y and mouse_y <= time_ruler_y + config.TIME_RULER_HEIGHT
-          local mouse_in_marker_area = mouse_x >= wave_x - config.MARKER_WIDTH and mouse_x <= wave_x + waveform_width + config.MARKER_WIDTH
-                                    and mouse_y >= wave_y and mouse_y <= wave_y + waveform_height
+          -- Mouse interaction areas (all false when REAPER isn't active, prevents stale mouse artifacts)
+          local mouse_in_waveform = reaper_is_active
+              and mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
+              and mouse_y >= wave_y and mouse_y <= wave_y + waveform_height
+          local mouse_in_ruler = reaper_is_active
+              and mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
+              and mouse_y >= ruler_y and mouse_y <= ruler_y + config.RULER_HEIGHT
+          local mouse_in_time_ruler = reaper_is_active
+              and mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
+              and mouse_y >= time_ruler_y and mouse_y <= time_ruler_y + config.TIME_RULER_HEIGHT
+          local mouse_in_view = reaper_is_active
+              and mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
+              and mouse_y >= ruler_y and mouse_y <= time_ruler_y + config.TIME_RULER_HEIGHT
+          -- Skip hover detection when REAPER isn't the active window (prevents stale mouse positions)
+          local mouse_in_marker_area = reaper_is_active
+              and mouse_x >= wave_x - config.MARKER_WIDTH and mouse_x <= wave_x + waveform_width + config.MARKER_WIDTH
+              and mouse_y >= wave_y and mouse_y <= wave_y + waveform_height
 
-          local near_start = utils.is_near_marker(mouse_x, start_marker_x, config.MARKER_WIDTH)
-          local near_end = utils.is_near_marker(mouse_x, end_marker_x, config.MARKER_WIDTH)
+          local near_start = reaper_is_active and utils.is_near_marker(mouse_x, start_marker_x, config.MARKER_WIDTH)
+          local near_end = reaper_is_active and utils.is_near_marker(mouse_x, end_marker_x, config.MARKER_WIDTH)
+
+          -- Fade handle positions (in source time, then to px)
+          local fade_in_source_len = fade_in_len * playrate
+          local fade_out_source_len = fade_out_len * playrate
+          local fade_in_end_x = time_to_px(render_start + fade_in_source_len)
+          local fade_out_start_x = time_to_px(render_end - fade_out_source_len)
+
+          -- Fade grab zones (REAPER-style: grab near top of waveform at fade boundary)
+          -- When no fade exists, boundary is at the marker, so grabbing the marker corner creates a fade.
+          -- When a fade exists, boundary moves with the fade end/start.
+          local fade_grab_w = 8   -- half-width of grab zone in px
+          local fade_grab_h = 25  -- grab zone height from top of waveform
+          local mouse_in_fade_zone = reaper_is_active
+              and mouse_y >= wave_y
+              and mouse_y <= wave_y + fade_grab_h
+          local near_fade_in = not state.dragging_start and not state.dragging_end
+              and mouse_in_fade_zone
+              and mouse_x >= fade_in_end_x - fade_grab_w
+              and mouse_x <= fade_in_end_x + fade_grab_w
+          local near_fade_out = not state.dragging_start and not state.dragging_end
+              and mouse_in_fade_zone
+              and mouse_x >= fade_out_start_x - fade_grab_w
+              and mouse_x <= fade_out_start_x + fade_grab_w
+          -- Disambiguate when both zones overlap (fades close or touching)
+          if near_fade_in and near_fade_out then
+            local dist_fi = math.abs(mouse_x - fade_in_end_x)
+            local dist_fo = math.abs(mouse_x - fade_out_start_x)
+            if dist_fi <= dist_fo then
+              near_fade_out = false
+            else
+              near_fade_in = false
+            end
+          end
+          -- Only update hover state when REAPER is active (preserves visual state on alt-tab)
+          if reaper_is_active then
+            state.fade_in_hovered = near_fade_in
+            state.fade_out_hovered = near_fade_out
+          end
 
           -- Cursor feedback (alt_held cached at top of frame)
-          if (state.dragging_start or state.dragging_end) and alt_held then
+          if state.dragging_fade_in or state.dragging_fade_out then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
+          elseif near_fade_in or near_fade_out then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
+          elseif (state.dragging_start or state.dragging_end) and alt_held then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())
           elseif mouse_in_marker_area and (near_start or near_end) then
             if alt_held then
@@ -844,6 +921,61 @@ local function loop()
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
           elseif state.is_panning then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())
+          end
+
+          -- Right-click: fade shape menus or generic context menu
+          if right_click_in_window then
+            if near_fade_in then
+              reaper.ImGui_OpenPopup(ctx, "fade_in_shape_menu")
+            elseif near_fade_out then
+              reaper.ImGui_OpenPopup(ctx, "fade_out_shape_menu")
+            else
+              reaper.ImGui_OpenPopup(ctx, "context_menu")
+            end
+          end
+
+          if reaper.ImGui_BeginPopup(ctx, "context_menu") then
+            if reaper.ImGui_MenuItem(ctx, "Settings...") then
+              settings_ui.open(settings)
+            end
+            reaper.ImGui_EndPopup(ctx)
+          end
+
+          local icon_w, icon_h = 60, 20
+          local icon_pad = 4
+          local icon_item_w = icon_w + icon_pad * 2
+          local icon_item_h = icon_h + icon_pad * 2
+
+          if reaper.ImGui_BeginPopup(ctx, "fade_in_shape_menu") then
+            local popup_dl = reaper.ImGui_GetWindowDrawList(ctx)
+            for i = 0, 6 do
+              local selected = (fade_in_shape == i)
+              local cx, cy = reaper.ImGui_GetCursorScreenPos(ctx)
+              if reaper.ImGui_Selectable(ctx, "##fadein" .. i, selected, 0, icon_item_w, icon_item_h) then
+                reaper.Undo_BeginBlock()
+                reaper.SetMediaItemInfo_Value(item, "C_FADEINSHAPE", i)
+                reaper.UpdateArrange()
+                reaper.Undo_EndBlock("NVSD_ItemView: Change fade in shape", 4)
+              end
+              drawing.draw_fade_shape_icon(popup_dl, cx + icon_pad, cy + icon_pad, icon_w, icon_h, i, true)
+            end
+            reaper.ImGui_EndPopup(ctx)
+          end
+
+          if reaper.ImGui_BeginPopup(ctx, "fade_out_shape_menu") then
+            local popup_dl = reaper.ImGui_GetWindowDrawList(ctx)
+            for i = 0, 6 do
+              local selected = (fade_out_shape == i)
+              local cx, cy = reaper.ImGui_GetCursorScreenPos(ctx)
+              if reaper.ImGui_Selectable(ctx, "##fadeout" .. i, selected, 0, icon_item_w, icon_item_h) then
+                reaper.Undo_BeginBlock()
+                reaper.SetMediaItemInfo_Value(item, "C_FADEOUTSHAPE", i)
+                reaper.UpdateArrange()
+                reaper.Undo_EndBlock("NVSD_ItemView: Change fade out shape", 4)
+              end
+              drawing.draw_fade_shape_icon(popup_dl, cx + icon_pad, cy + icon_pad, icon_w, icon_h, i, false)
+            end
+            reaper.ImGui_EndPopup(ctx)
           end
 
           -- Zoom helpers - constrained to source bounds (0 to source_length)
@@ -877,7 +1009,7 @@ local function loop()
           local wheel = reaper.ImGui_GetMouseWheel(ctx)
           if wheel ~= 0 and mouse_in_view then
             if ctrl_held then
-              local zoom_factor = 1.35
+              local zoom_factor = 1.15
               local new_zoom = wheel > 0 and (state.zoom_level * zoom_factor) or (state.zoom_level / zoom_factor)
               zoom_to_cursor(new_zoom, mouse_x)
             end
@@ -903,7 +1035,7 @@ local function loop()
             state.is_ruler_dragging = false
           end
 
-          if state.is_ruler_dragging and reaper.ImGui_IsMouseDown(ctx, 0) then
+          if state.is_ruler_dragging and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
             if state.has_js_extension then
               local cur_screen_x, cur_screen_y = reaper.GetMousePosition()
@@ -976,7 +1108,7 @@ local function loop()
             state.is_panning = false
           end
 
-          if state.is_panning and reaper.ImGui_IsMouseDown(ctx, middle_mouse) then
+          if state.is_panning and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, middle_mouse) then
             local mouse_delta_px = mouse_x - state.pan_start_mouse_x
             local delta_time = -(mouse_delta_px / waveform_width) * view_length
             state.pan_offset = state.pan_start_offset + delta_time
@@ -988,8 +1120,30 @@ local function loop()
             state.pan_offset = math.max(min_pan, math.min(max_pan, state.pan_offset))
           end
 
-          -- Start dragging
-          if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_marker_area then
+          -- Start fade handle dragging (upper waveform area: fade handles win over markers)
+          if reaper.ImGui_IsMouseClicked(ctx, 0) and not state.dragging_start and not state.dragging_end then
+            if near_fade_in then
+              state.dragging_fade_in = true
+              state.fade_drag_start_mouse_x = mouse_x
+              state.fade_drag_start_value = fade_in_len
+              state.fade_drag_start_view_length = view_length
+              if not state.undo_block_open then
+                state.undo_block_open = "fade_in"
+              end
+            elseif near_fade_out then
+              state.dragging_fade_out = true
+              state.fade_drag_start_mouse_x = mouse_x
+              state.fade_drag_start_value = fade_out_len
+              state.fade_drag_start_view_length = view_length
+              if not state.undo_block_open then
+                state.undo_block_open = "fade_out"
+              end
+            end
+          end
+
+          -- Start marker dragging (skip if fade drag already started this click)
+          if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_marker_area
+              and not state.dragging_fade_in and not state.dragging_fade_out then
             if near_start then
               state.dragging_start = true
               state.drag_start_offset = start_offset
@@ -1000,6 +1154,8 @@ local function loop()
               state.drag_start_playrate = playrate
               state.drag_current_start = start_offset
               state.drag_current_end = start_offset + source_item_length
+              state.drag_start_fade_in = fade_in_len
+              state.drag_start_fade_out = fade_out_len
               if not state.undo_block_open then
                 state.undo_block_open = "marker_start"
               end
@@ -1013,6 +1169,8 @@ local function loop()
               state.drag_start_playrate = playrate
               state.drag_current_start = start_offset
               state.drag_current_end = start_offset + source_item_length
+              state.drag_start_fade_in = fade_in_len
+              state.drag_start_fade_out = fade_out_len
               if not state.undo_block_open then
                 state.undo_block_open = "marker_end"
               end
@@ -1044,6 +1202,8 @@ local function loop()
             end
             state.dragging_start = false
             state.dragging_end = false
+            state.dragging_fade_in = false
+            state.dragging_fade_out = false
           end
 
           -- Mouse button 4/5 quick marker positioning
@@ -1064,8 +1224,17 @@ local function loop()
                 local new_item_length = new_source_length / playrate
                 local new_take_offset = new_start - section_offset
 
+                -- Fade adjustment: preserve fade-in, shrink fade-out first
+                local fi, fo = fade_in_len, fade_out_len
+                if fi + fo > new_item_length then
+                  fo = math.max(0, new_item_length - fi)
+                  if fo == 0 then fi = math.min(fi, new_item_length) end
+                end
+
                 reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
                 reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_item_length)
+                reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
+                reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
                 reaper.UpdateArrange()
                 reaper.Undo_EndBlock("NVSD_ItemView: Set start marker", -1)
 
@@ -1075,7 +1244,16 @@ local function loop()
                 local new_source_length = new_end - start_offset
                 local new_item_length = new_source_length / playrate
 
+                -- Fade adjustment: preserve fade-out, shrink fade-in first
+                local fi, fo = fade_in_len, fade_out_len
+                if fi + fo > new_item_length then
+                  fi = math.max(0, new_item_length - fo)
+                  if fi == 0 then fo = math.min(fo, new_item_length) end
+                end
+
                 reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_item_length)
+                reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
+                reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
                 reaper.UpdateArrange()
                 reaper.Undo_EndBlock("NVSD_ItemView: Set end marker", -1)
               end
@@ -1106,7 +1284,7 @@ local function loop()
           local snap_threshold_time = (config.SNAP_THRESHOLD_PX / waveform_width) * view_length
 
           -- Alt+drag: slide both markers
-          if (state.dragging_start or state.dragging_end) and alt_held and reaper.ImGui_IsMouseDown(ctx, 0) then
+          if (state.dragging_start or state.dragging_end) and alt_held and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
             local mouse_delta_px = mouse_x - state.drag_start_mouse_x
             local mouse_delta_time = (mouse_delta_px / waveform_width) * state.drag_start_view_length
 
@@ -1157,7 +1335,7 @@ local function loop()
             reaper.UpdateArrange()
 
           -- Dragging start marker
-          elseif state.dragging_start and reaper.ImGui_IsMouseDown(ctx, 0) then
+          elseif state.dragging_start and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
             local original_source_end = state.drag_start_offset + (state.drag_start_length * state.drag_start_playrate)
             local new_start
             if mouse_x >= wave_x and mouse_x <= wave_x + waveform_width then
@@ -1178,12 +1356,24 @@ local function loop()
             state.drag_current_start = new_start
             state.drag_current_end = original_source_end
 
+            -- Fade adjustment: preserve fade-in, shrink fade-out first
+            local fi = state.drag_start_fade_in
+            local fo = state.drag_start_fade_out
+            if fi + fo > new_item_length then
+              fo = math.max(0, new_item_length - fi)
+              if fo == 0 then
+                fi = math.min(fi, new_item_length)
+              end
+            end
+
             reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
             reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_item_length)
+            reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
+            reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
             reaper.UpdateArrange()
 
           -- Dragging end marker
-          elseif state.dragging_end and reaper.ImGui_IsMouseDown(ctx, 0) then
+          elseif state.dragging_end and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
             local new_end
             if mouse_x >= wave_x and mouse_x <= wave_x + waveform_width then
               new_end = px_to_time(mouse_x)
@@ -1203,8 +1393,49 @@ local function loop()
             state.drag_current_start = state.drag_start_offset
             state.drag_current_end = new_end
 
+            -- Fade adjustment: preserve fade-out, shrink fade-in first
+            local fi = state.drag_start_fade_in
+            local fo = state.drag_start_fade_out
+            if fi + fo > new_item_length then
+              fi = math.max(0, new_item_length - fo)
+              if fi == 0 then
+                fo = math.min(fo, new_item_length)
+              end
+            end
+
             reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_item_length)
+            reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
+            reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
             reaper.UpdateArrange()
+          end
+
+          -- Fade handle drag processing
+          if state.dragging_fade_in and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
+            local delta_px = mouse_x - state.fade_drag_start_mouse_x
+            local delta_time = (delta_px / waveform_width) * state.fade_drag_start_view_length
+            local new_fade = math.max(0, state.fade_drag_start_value + delta_time / playrate)
+            new_fade = math.min(new_fade, item_length - fade_out_len)
+            reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", new_fade)
+            reaper.UpdateArrange()
+          elseif state.dragging_fade_out and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
+            local delta_px = state.fade_drag_start_mouse_x - mouse_x  -- reversed: drag left = more fade
+            local delta_time = (delta_px / waveform_width) * state.fade_drag_start_view_length
+            local new_fade = math.max(0, state.fade_drag_start_value + delta_time / playrate)
+            new_fade = math.min(new_fade, item_length - fade_in_len)
+            reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", new_fade)
+            reaper.UpdateArrange()
+          end
+
+          -- Draw fade overlays (before markers, after all position vars are computed)
+          -- Curves map over the actual fade region. When fades touch, curves touch.
+          local fade_top_y = wave_y
+          if fade_in_len > 0 then
+            drawing.draw_fade_overlay(draw_list, start_marker_x, fade_in_end_x,
+              fade_top_y, wave_y, waveform_height, fade_in_shape, true)
+          end
+          if fade_out_len > 0 then
+            drawing.draw_fade_overlay(draw_list, fade_out_start_x, end_marker_x,
+              fade_top_y, wave_y, waveform_height, fade_out_shape, false)
           end
 
           -- Draw markers on top
@@ -1214,6 +1445,8 @@ local function loop()
           if end_marker_x >= wave_x - config.MARKER_WIDTH and end_marker_x <= wave_x + waveform_width + config.MARKER_WIDTH then
             drawing.draw_marker(draw_list, end_marker_x, wave_y, waveform_height, false, near_end, state.dragging_end, config)
           end
+
+          -- (No fade handle squares - REAPER-style grab from waveform corners)
 
           -- Draw playhead on top of everything
           local play_state = reaper.GetPlayState()
@@ -1267,6 +1500,8 @@ local function loop()
     -- Reset all interaction state to prevent stuck drags after error
     state.dragging_start = false
     state.dragging_end = false
+    state.dragging_fade_in = false
+    state.dragging_fade_out = false
     state.is_panning = false
     state.is_ruler_dragging = false
     state.undo_block_open = nil

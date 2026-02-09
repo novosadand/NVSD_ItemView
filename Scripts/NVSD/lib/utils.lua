@@ -196,6 +196,7 @@ function utils.get_peaks_for_range(source, start_time, duration, num_samples)
   if ret == 0 then return nil, "GetPeaks returned 0" end
 
   local actual_samples = math.min(ret & 0xFFFFF, num_samples)
+  local output_mode = (ret >> 20) & 0xF
   local min_block_offset = actual_samples * num_channels
   local total = actual_samples * num_channels
   local mins = {}
@@ -218,7 +219,7 @@ function utils.get_peaks_for_range(source, start_time, duration, num_samples)
     end
   end
 
-  return { mins = mins, maxs = maxs, count = actual_samples, channels = num_channels }, num_channels
+  return { mins = mins, maxs = maxs, count = actual_samples, channels = num_channels, output_mode = output_mode }, num_channels
 end
 
 -- Check if mouse is near marker

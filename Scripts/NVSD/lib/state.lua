@@ -27,6 +27,15 @@ state.drag_current_start = 0
 state.drag_current_end = 0
 state.drag_start_view_start = 0
 
+-- Fade handle state
+state.fade_in_hovered = false
+state.fade_out_hovered = false
+state.dragging_fade_in = false
+state.dragging_fade_out = false
+state.fade_drag_start_mouse_x = 0
+state.fade_drag_start_value = 0     -- original fade length (seconds) at drag start
+state.fade_drag_start_view_length = 0
+
 -- Panning state
 state.is_panning = false
 state.pan_start_mouse_x = 0
