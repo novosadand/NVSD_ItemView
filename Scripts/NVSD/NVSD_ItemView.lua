@@ -100,18 +100,29 @@ local function loop()
     local fg = reaper.JS_Window_GetForeground()
     local main = reaper.GetMainHwnd()
     if fg and main and fg ~= main then
-      -- Walk up parent chain to detect any REAPER child/grandchild dialog
-      local check = fg
-      for _ = 1, 5 do
-        local parent = reaper.JS_Window_GetParent(check)
-        if not parent then break end
-        if parent == main then
-          -- A child dialog of REAPER is in the foreground — skip frame
-          dialog_cooldown = 30  -- ~0.5s at 60fps after dialog closes
-          reaper.defer(loop)
-          return
+      -- Exclude our own ReaImGui windows (they are also children of REAPER's main window)
+      local is_own_window = false
+      if reaper.JS_Window_GetTitle then
+        local title = reaper.JS_Window_GetTitle(fg)
+        if title and (title == "NVSD_ItemView" or title == "NVSD ItemView Settings") then
+          is_own_window = true
         end
-        check = parent
+      end
+
+      if not is_own_window then
+        -- Walk up parent chain to detect any REAPER child/grandchild dialog
+        local check = fg
+        for _ = 1, 5 do
+          local parent = reaper.JS_Window_GetParent(check)
+          if not parent then break end
+          if parent == main then
+            -- A child dialog of REAPER is in the foreground — skip frame
+            dialog_cooldown = 30  -- ~0.5s at 60fps after dialog closes
+            reaper.defer(loop)
+            return
+          end
+          check = parent
+        end
       end
     end
   end
@@ -1255,6 +1266,12 @@ local function loop()
   end
 
   if not ok then
+    -- Recreate context to recover from corrupted ImGui stack (unmatched Begin/End, Push/Pop)
+    ctx = reaper.ImGui_CreateContext("NVSD_ItemView")
+    if reaper.ImGui_CreateFont and reaper.ImGui_Attach then
+      local font = reaper.ImGui_CreateFont('sans-serif', 13)
+      reaper.ImGui_Attach(ctx, font)
+    end
     -- Reset all interaction state to prevent stuck drags after error
     state.dragging_start = false
     state.dragging_end = false
