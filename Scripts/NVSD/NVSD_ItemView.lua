@@ -96,48 +96,19 @@ local function loop()
   -- Skip frame entirely if a modal dialog is open (autosave, save-as, preferences, etc.)
   -- Modal dialogs take over REAPER's message loop; ImGui calls during this can crash at the C level.
   -- Also skip for a cooldown period after the dialog closes to let REAPER's state settle.
-  if reaper.JS_Window_GetForeground then
-    local fg = reaper.JS_Window_GetForeground()
-    local main = reaper.GetMainHwnd()
-    if fg and main and fg ~= main then
-      -- Exclude our own ReaImGui windows (they are also children of REAPER's main window)
-      local is_own_window = false
-      if reaper.JS_Window_GetTitle then
-        local title = reaper.JS_Window_GetTitle(fg)
-        if title and (title == "NVSD_ItemView" or title == "NVSD ItemView Settings") then
-          is_own_window = true
-        end
-      end
-
-      if not is_own_window then
-        local is_reaper_dialog = false
-
-        -- Check parent chain (covers child windows and nested dialogs)
-        local check = fg
-        for _ = 1, 5 do
-          local parent = reaper.JS_Window_GetParent(check)
-          if not parent then break end
-          if parent == main then
-            is_reaper_dialog = true
-            break
-          end
-          check = parent
-        end
-
-        -- Fallback: check owner (covers modal dialogs like autosave/save-as whose
-        -- parent is null but whose owner is REAPER's main window)
-        if not is_reaper_dialog and reaper.JS_Window_GetRelated then
-          local owner = reaper.JS_Window_GetRelated(fg, "OWNER")
-          if owner == main then
-            is_reaper_dialog = true
-          end
-        end
-
-        if is_reaper_dialog then
-          dialog_cooldown = 30  -- ~0.5s at 60fps after dialog closes
-          reaper.defer(loop)
-          return
-        end
+  -- Detect modal dialogs by checking if REAPER's main window is disabled.
+  -- When any modal dialog is active (autosave, save-as, preferences, render, etc.)
+  -- Windows disables the owner window. This is the most reliable detection method
+  -- because it doesn't depend on identifying specific dialog windows.
+  local main = reaper.GetMainHwnd()
+  if main and reaper.JS_Window_GetLong then
+    local style = reaper.JS_Window_GetLong(main, "STYLE")
+    if style then
+      local WS_DISABLED = 0x08000000
+      if (style & WS_DISABLED) ~= 0 then
+        dialog_cooldown = 30  -- ~0.5s at 60fps after dialog closes
+        reaper.defer(loop)
+        return
       end
     end
   end
@@ -146,6 +117,12 @@ local function loop()
     dialog_cooldown = dialog_cooldown - 1
     -- Reset stale state that may have been invalidated by the dialog
     if dialog_cooldown == 0 then
+      -- Recreate context (it becomes invalid when no ImGui frames run during dialog)
+      ctx = reaper.ImGui_CreateContext("NVSD_ItemView")
+      if reaper.ImGui_CreateFont and reaper.ImGui_Attach then
+        local font = reaper.ImGui_CreateFont('sans-serif', 13)
+        reaper.ImGui_Attach(ctx, font)
+      end
       state.sticky_item = nil
       state.sticky_item_valid = false
       state.dragging_start = false
