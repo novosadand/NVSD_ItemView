@@ -1417,20 +1417,30 @@ local function loop()
             reaper.UpdateArrange()
           end
 
-          -- Fade handle drag processing
+          -- Fade handle drag processing (pushing the other fade when they'd overlap)
           if state.dragging_fade_in and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
             local delta_px = mouse_x - state.fade_drag_start_mouse_x
             local delta_time = (delta_px / waveform_width) * state.fade_drag_start_view_length
-            local new_fade = math.max(0, state.fade_drag_start_value + delta_time / playrate)
-            new_fade = math.min(new_fade, item_length - fade_out_len)
-            reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", new_fade)
+            local fi = math.max(0, state.fade_drag_start_value + delta_time / playrate)
+            fi = math.min(fi, item_length)
+            local fo = fade_out_len
+            if fi + fo > item_length then
+              fo = math.max(0, item_length - fi)
+            end
+            reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
+            reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
             reaper.UpdateArrange()
           elseif state.dragging_fade_out and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
             local delta_px = state.fade_drag_start_mouse_x - mouse_x  -- reversed: drag left = more fade
             local delta_time = (delta_px / waveform_width) * state.fade_drag_start_view_length
-            local new_fade = math.max(0, state.fade_drag_start_value + delta_time / playrate)
-            new_fade = math.min(new_fade, item_length - fade_in_len)
-            reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", new_fade)
+            local fo = math.max(0, state.fade_drag_start_value + delta_time / playrate)
+            fo = math.min(fo, item_length)
+            local fi = fade_in_len
+            if fi + fo > item_length then
+              fi = math.max(0, item_length - fo)
+            end
+            reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
+            reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
             reaper.UpdateArrange()
           end
 
