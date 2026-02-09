@@ -110,18 +110,33 @@ local function loop()
       end
 
       if not is_own_window then
-        -- Walk up parent chain to detect any REAPER child/grandchild dialog
+        local is_reaper_dialog = false
+
+        -- Check parent chain (covers child windows and nested dialogs)
         local check = fg
         for _ = 1, 5 do
           local parent = reaper.JS_Window_GetParent(check)
           if not parent then break end
           if parent == main then
-            -- A child dialog of REAPER is in the foreground — skip frame
-            dialog_cooldown = 30  -- ~0.5s at 60fps after dialog closes
-            reaper.defer(loop)
-            return
+            is_reaper_dialog = true
+            break
           end
           check = parent
+        end
+
+        -- Fallback: check owner (covers modal dialogs like autosave/save-as whose
+        -- parent is null but whose owner is REAPER's main window)
+        if not is_reaper_dialog and reaper.JS_Window_GetRelated then
+          local owner = reaper.JS_Window_GetRelated(fg, "OWNER")
+          if owner == main then
+            is_reaper_dialog = true
+          end
+        end
+
+        if is_reaper_dialog then
+          dialog_cooldown = 30  -- ~0.5s at 60fps after dialog closes
+          reaper.defer(loop)
+          return
         end
       end
     end
