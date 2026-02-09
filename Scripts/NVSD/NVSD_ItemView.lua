@@ -873,21 +873,28 @@ local function loop()
           local fade_out_start_x = time_to_px(render_end - fade_out_source_len)
 
           -- Fade grab zones (REAPER-style: grab near top of waveform at fade boundary)
-          -- When no fade exists, boundary is at the marker, so grabbing the marker corner creates a fade.
-          -- When a fade exists, boundary moves with the fade end/start.
-          local fade_grab_w = 8   -- half-width of grab zone in px
-          local fade_grab_h = 25  -- grab zone height from top of waveform
+          -- When no fade exists, boundary is at the marker: grab zone extends inward to create.
+          -- When a fade exists, grab zone is on the curve side (toward the fade region).
+          local fade_grab_w = 22  -- main grab extent
+          local fade_grab_sm = 4  -- small extent on opposite side
+          local fade_grab_h = 20  -- grab zone height from top of waveform
           local mouse_in_fade_zone = reaper_is_active
               and mouse_y >= wave_y
               and mouse_y <= wave_y + fade_grab_h
+          -- Fade-in: no fade = extend right (inward); fade exists = extend left (curve side)
+          local fi_left  = fade_in_len > 0 and fade_grab_w or fade_grab_sm
+          local fi_right = fade_in_len > 0 and fade_grab_sm or fade_grab_w
           local near_fade_in = not state.dragging_start and not state.dragging_end
               and mouse_in_fade_zone
-              and mouse_x >= fade_in_end_x - fade_grab_w
-              and mouse_x <= fade_in_end_x + fade_grab_w
+              and mouse_x >= fade_in_end_x - fi_left
+              and mouse_x <= fade_in_end_x + fi_right
+          -- Fade-out: no fade = extend left (inward); fade exists = extend right (curve side)
+          local fo_left  = fade_out_len > 0 and fade_grab_sm or fade_grab_w
+          local fo_right = fade_out_len > 0 and fade_grab_w or fade_grab_sm
           local near_fade_out = not state.dragging_start and not state.dragging_end
               and mouse_in_fade_zone
-              and mouse_x >= fade_out_start_x - fade_grab_w
-              and mouse_x <= fade_out_start_x + fade_grab_w
+              and mouse_x >= fade_out_start_x - fo_left
+              and mouse_x <= fade_out_start_x + fo_right
           -- Disambiguate when both zones overlap (fades close or touching)
           if near_fade_in and near_fade_out then
             local dist_fi = math.abs(mouse_x - fade_in_end_x)
@@ -905,10 +912,11 @@ local function loop()
           end
 
           -- Cursor feedback (alt_held cached at top of frame)
+          -- Fade grabs use Hand cursor to distinguish from marker's ResizeEW
           if state.dragging_fade_in or state.dragging_fade_out then
-            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
           elseif near_fade_in or near_fade_out then
-            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
           elseif (state.dragging_start or state.dragging_end) and alt_held then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())
           elseif mouse_in_marker_area and (near_start or near_end) then
@@ -1428,14 +1436,17 @@ local function loop()
 
           -- Draw fade overlays (before markers, after all position vars are computed)
           -- Curves map over the actual fade region. When fades touch, curves touch.
-          local fade_top_y = wave_y
+          -- +2 so the curve line (1.5px stroke) doesn't bleed into the ruler above
+          local fade_top_y = wave_y + 2
           if fade_in_len > 0 then
             drawing.draw_fade_overlay(draw_list, start_marker_x, fade_in_end_x,
-              fade_top_y, wave_y, waveform_height, fade_in_shape, true)
+              fade_top_y, wave_y, waveform_height, fade_in_shape, true,
+              state.fade_in_hovered or state.dragging_fade_in)
           end
           if fade_out_len > 0 then
             drawing.draw_fade_overlay(draw_list, fade_out_start_x, end_marker_x,
-              fade_top_y, wave_y, waveform_height, fade_out_shape, false)
+              fade_top_y, wave_y, waveform_height, fade_out_shape, false,
+              state.fade_out_hovered or state.dragging_fade_out)
           end
 
           -- Draw markers on top

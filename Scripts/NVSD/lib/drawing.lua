@@ -36,16 +36,16 @@ local fade_curves = {
 }
 
 -- Draw curve-shaped darkening overlay above the fade curve, with curve line on top
--- fade_top_y: top of fade curve region (bottom edge of handle squares)
--- The full x-range should include the handle width so the curve reaches the handle corner
+-- fade_top_y: top of fade curve region
+-- is_hovered: when true, curve line is drawn brighter and thicker
 function drawing.draw_fade_overlay(draw_list, fade_start_px, fade_end_px,
                                     fade_top_y, wave_y, wave_height,
-                                    fade_shape, is_fade_in)
+                                    fade_shape, is_fade_in, is_hovered)
   local width = fade_end_px - fade_start_px
   if width < 2 then return end
 
   local curve_fn = fade_curves[fade_shape] or fade_curves[0]
-  local tint_alpha = 0x30  -- subtle darkening
+  local tint_alpha = is_hovered and 0x40 or 0x30
   local DL_AddLine = reaper.ImGui_DrawList_AddLine
   local DL_PathLineTo = reaper.ImGui_DrawList_PathLineTo
   local DL_PathStroke = reaper.ImGui_DrawList_PathStroke
@@ -65,7 +65,7 @@ function drawing.draw_fade_overlay(draw_list, fade_start_px, fade_end_px,
     end
   end
 
-  -- Draw curve line on top (white semi-transparent)
+  -- Draw curve line on top (brighter when hovered)
   if DL_PathLineTo and width > 4 then
     local line_step = math.max(1, math.floor(width / 200))
     for px = 0, math.floor(width), line_step do
@@ -75,7 +75,9 @@ function drawing.draw_fade_overlay(draw_list, fade_start_px, fade_end_px,
       local curve_y = fade_top_y + curve_range * (1 - vol)
       DL_PathLineTo(draw_list, fade_start_px + px, curve_y)
     end
-    DL_PathStroke(draw_list, 0xFFFFFF80, 0, 1.5)
+    local line_color = is_hovered and 0xFFFFFFCC or 0xFFFFFF80
+    local line_width = is_hovered and 2.0 or 1.5
+    DL_PathStroke(draw_list, line_color, 0, line_width)
   end
 end
 
