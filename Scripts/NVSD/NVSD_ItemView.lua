@@ -64,7 +64,8 @@ end
 local ctx = reaper.ImGui_CreateContext("NVSD_ItemView")
 -- Attach a font to keep context alive across deferred frames (prevents GC on macOS)
 if reaper.ImGui_CreateFont and reaper.ImGui_Attach then
-  reaper.ImGui_Attach(ctx, reaper.ImGui_CreateFont('sans-serif', 13))
+  local font = reaper.ImGui_CreateFont('sans-serif', 13)
+  reaper.ImGui_Attach(ctx, font)
 end
 
 -- Check for file changes (call periodically)
