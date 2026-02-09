@@ -35,16 +35,38 @@ local fade_curves = {
   end,
 }
 
+-- Apply fade curvature (D_FADEINDIR / D_FADEOUTDIR) to a base curve value
+-- dir: -1 to 1, where 0 = no bend, >0 = bend up (retain volume), <0 = bend down (drop volume)
+local function apply_curvature(val, dir)
+  if dir == 0 or val <= 0 or val >= 1 then return val end
+  return val ^ (2 ^ (-dir * 3))
+end
+
+-- Compute the curve Y position at a given t (0..1) within the fade region.
+-- Returns the pixel Y where the curve line sits.
+function drawing.get_fade_curve_y(t, fade_shape, is_fade_in, fade_dir, fade_top_y, wave_y, wave_height)
+  local curve_fn = fade_curves[fade_shape] or fade_curves[0]
+  local dir = fade_dir or 0
+  if is_fade_in then dir = -dir end
+  local base = is_fade_in and curve_fn(t) or (1 - curve_fn(t))
+  local vol = apply_curvature(base, dir)
+  local curve_range = wave_y + wave_height - fade_top_y
+  return fade_top_y + curve_range * (1 - vol)
+end
+
 -- Draw curve-shaped darkening overlay above the fade curve, with curve line on top
 -- fade_top_y: top of fade curve region
 -- is_hovered: when true, curve line is drawn brighter and thicker
+-- fade_dir: curvature bend from D_FADEINDIR/D_FADEOUTDIR (-1 to 1), default 0
 function drawing.draw_fade_overlay(draw_list, fade_start_px, fade_end_px,
                                     fade_top_y, wave_y, wave_height,
-                                    fade_shape, is_fade_in, is_hovered)
+                                    fade_shape, is_fade_in, is_hovered, fade_dir)
   local width = fade_end_px - fade_start_px
   if width < 2 then return end
 
   local curve_fn = fade_curves[fade_shape] or fade_curves[0]
+  local dir = fade_dir or 0
+  if is_fade_in then dir = -dir end
   local tint_alpha = is_hovered and 0x40 or 0x30
   local DL_AddLine = reaper.ImGui_DrawList_AddLine
   local DL_PathLineTo = reaper.ImGui_DrawList_PathLineTo
@@ -58,7 +80,8 @@ function drawing.draw_fade_overlay(draw_list, fade_start_px, fade_end_px,
   for px = 0, math.floor(width), step do
     local t = px / width
     if t > 1 then t = 1 end
-    local vol = is_fade_in and curve_fn(t) or (1 - curve_fn(t))
+    local base = is_fade_in and curve_fn(t) or (1 - curve_fn(t))
+    local vol = apply_curvature(base, dir)
     local curve_y = fade_top_y + curve_range * (1 - vol)
     if curve_y > fade_top_y then
       DL_AddLine(draw_list, fade_start_px + px, fade_top_y, fade_start_px + px, curve_y, tint_alpha, step)
@@ -71,7 +94,8 @@ function drawing.draw_fade_overlay(draw_list, fade_start_px, fade_end_px,
     for px = 0, math.floor(width), line_step do
       local t = px / width
       if t > 1 then t = 1 end
-      local vol = is_fade_in and curve_fn(t) or (1 - curve_fn(t))
+      local base = is_fade_in and curve_fn(t) or (1 - curve_fn(t))
+      local vol = apply_curvature(base, dir)
       local curve_y = fade_top_y + curve_range * (1 - vol)
       DL_PathLineTo(draw_list, fade_start_px + px, curve_y)
     end
@@ -717,12 +741,13 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
         local center_y = y + (ch - 1) * channel_height + channel_height * 0.5
 
         if is_waveform_mode then
-          -- Waveform mode: single sample value (min == max)
+          -- Waveform mode: single sample value, draw symmetric around center
           local v = peak_maxs[flat_idx] or 0
           local raw = v * visual_gain
           if raw > 1 then raw = 1 elseif raw < -1 then raw = -1 end
-          col_tops[ch][i] = center_y - (power_curve(raw) * half_height)
-          col_bots[ch][i] = center_y
+          local extent = power_curve(math.abs(raw)) * half_height
+          col_tops[ch][i] = center_y - extent
+          col_bots[ch][i] = center_y + extent
         else
           -- Peaks mode: min/max range
           local v_min = peak_mins[flat_idx] or 0
@@ -928,6 +953,22 @@ function drawing.draw_playhead(draw_list, x, y, height, config)
   local tri_size = 6
   reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
     x - tri_size, y, x + tri_size, y, x, y + tri_size, config.COLOR_PLAYHEAD)
+end
+
+-- Draw preview cursor (static position marker where user clicked)
+function drawing.draw_preview_cursor(draw_list, x, y, height)
+  local color = 0xFFFFFF88  -- white, semi-transparent
+  reaper.ImGui_DrawList_AddLine(draw_list, x, y, x, y + height, color, 1)
+  -- Small downward triangle at top
+  local tri_size = 4
+  reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
+    x - tri_size, y, x + tri_size, y, x, y + tri_size, color)
+end
+
+-- Draw preview playhead (moving position during CF_Preview playback)
+function drawing.draw_preview_playhead(draw_list, x, y, height)
+  local color = 0x4A90D9FF  -- accent blue
+  reaper.ImGui_DrawList_AddLine(draw_list, x, y, x, y + height, color, 1.5)
 end
 
 -- Draw a knob
