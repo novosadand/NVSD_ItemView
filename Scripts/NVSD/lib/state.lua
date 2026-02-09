@@ -41,6 +41,7 @@ state.dragging_fade_curve_in = false   -- alt+drag curvature for fade-in
 state.dragging_fade_curve_out = false  -- alt+drag curvature for fade-out
 state.fade_curve_drag_start_value = 0  -- original D_FADEINDIR/D_FADEOUTDIR at drag start
 state.fade_curve_cumulative_y = 0     -- accumulated Y delta (cursor-locked)
+state.fade_curve_was_dragged = false  -- true once cumulative Y exceeds threshold (prevents false remove)
 state.fade_curve_lock_x = nil         -- screen X lock position
 state.fade_curve_lock_y = nil         -- screen Y lock position
 state.fade_curve_last_y = nil         -- last frame screen Y for delta
