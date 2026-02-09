@@ -897,12 +897,31 @@ local function loop()
               and mouse_x <= fade_out_start_x + fo_right
           -- Disambiguate when both zones overlap (fades close or touching)
           if near_fade_in and near_fade_out then
-            local dist_fi = math.abs(mouse_x - fade_in_end_x)
-            local dist_fo = math.abs(mouse_x - fade_out_start_x)
-            if dist_fi <= dist_fo then
-              near_fade_out = false
+            if fade_in_len == 0 and fade_out_len > 0 then
+              -- Fade-in doesn't exist, fade-out does.
+              -- Top 8px at marker corner = create fade-in, rest = adjust fade-out
+              if mouse_y <= wave_y + 8 and math.abs(mouse_x - start_marker_x) <= fade_grab_sm + 2 then
+                near_fade_out = false
+              else
+                near_fade_in = false
+              end
+            elseif fade_out_len == 0 and fade_in_len > 0 then
+              -- Fade-out doesn't exist, fade-in does.
+              -- Top 8px at marker corner = create fade-out, rest = adjust fade-in
+              if mouse_y <= wave_y + 8 and math.abs(mouse_x - end_marker_x) <= fade_grab_sm + 2 then
+                near_fade_in = false
+              else
+                near_fade_out = false
+              end
             else
-              near_fade_in = false
+              -- Both exist or both don't: closest boundary wins
+              local dist_fi = math.abs(mouse_x - fade_in_end_x)
+              local dist_fo = math.abs(mouse_x - fade_out_start_x)
+              if dist_fi <= dist_fo then
+                near_fade_out = false
+              else
+                near_fade_in = false
+              end
             end
           end
           -- Only update hover state when REAPER is active (preserves visual state on alt-tab)
