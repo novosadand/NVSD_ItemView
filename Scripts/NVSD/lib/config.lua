@@ -19,6 +19,7 @@ config.FADE_HANDLE_SIZE = 7
 config.FADE_HANDLE_THRESHOLD = 14  -- hit detection radius in px
 config.LEFT_PANEL_WIDTH = 70
 config.LEFT_COLUMN_WIDTH = 145
+config.FX_COLUMN_WIDTH = 140
 config.GAIN_SLIDER_WIDTH = 16
 
 -- Pitch constants

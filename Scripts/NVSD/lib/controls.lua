@@ -295,6 +295,8 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       end
     end
   end
+
+  return row2_y + btn_height
 end
 
 -- Draw gain slider with tick marks
@@ -594,6 +596,516 @@ function controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, p
       reaper.UpdateArrange()
     end
   end
+end
+
+-- Draw FX toolbar: +/Power button and FX button above the FX beveled box
+-- Returns the bottom Y coordinate so the FX box can start below it
+function controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
+                                   toolbar_x, toolbar_y, toolbar_width,
+                                   take, config, state, drawing)
+  local btn_height = 20
+  local left_btn_width = 24
+  local gap = 4
+  local right_btn_width = toolbar_width - left_btn_width - gap
+  local rounding = 3
+  local text_height = 13
+
+  local COLOR_BTN_ON = config.COLOR_BTN_ON
+  local COLOR_BTN_OFF = config.COLOR_BTN_OFF
+  local COLOR_BTN_HOVER = config.COLOR_BTN_HOVER
+  local COLOR_BTN_TEXT = config.COLOR_BTN_TEXT
+
+  local fx_count = take and reaper.TakeFX_GetCount(take) or 0
+  local has_fx = fx_count > 0
+
+  -- Left button: + (no FX) or Power icon (has FX)
+  local left_x = toolbar_x
+  local left_y = toolbar_y
+
+  local mouse_in_left = mouse_x >= left_x and mouse_x <= left_x + left_btn_width
+                        and mouse_y >= left_y and mouse_y <= left_y + btn_height
+
+  local left_bg = mouse_in_left and 0x505050FF or COLOR_BTN_OFF
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, left_x, left_y, left_x + left_btn_width, left_y + btn_height, left_bg, rounding)
+
+  if has_fx then
+    -- Draw power icon centered, colored with accent
+    local icon_cx = left_x + left_btn_width / 2
+    local icon_cy = left_y + btn_height / 2
+    drawing.draw_power_icon(draw_list, icon_cx, icon_cy, 5, COLOR_BTN_ON)
+  else
+    -- Draw "+" text centered
+    local plus_w = reaper.ImGui_CalcTextSize(ctx, "+")
+    local plus_x = left_x + (left_btn_width - plus_w) / 2
+    local plus_y = left_y + (btn_height - text_height) / 2
+    reaper.ImGui_DrawList_AddText(draw_list, plus_x, plus_y, COLOR_BTN_TEXT, "+")
+  end
+
+  -- Left button click
+  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_left then
+    if take then
+      if not has_fx then
+        -- No FX: open/focus FX Browser (only open if closed, never close)
+        if reaper.GetToggleCommandState(40271) ~= 1 then
+          reaper.Main_OnCommand(40271, 0)
+        end
+      else
+        -- Has FX: toggle bypass on all
+        local any_enabled = false
+        for i = 0, fx_count - 1 do
+          if reaper.TakeFX_GetEnabled(take, i) then
+            any_enabled = true
+            break
+          end
+        end
+        reaper.Undo_BeginBlock()
+        for i = 0, fx_count - 1 do
+          reaper.TakeFX_SetEnabled(take, i, not any_enabled)
+        end
+        reaper.Undo_EndBlock("NVSD_ItemView: Toggle all FX bypass", -1)
+      end
+    end
+  end
+
+  -- Right button: FX
+  local right_x = left_x + left_btn_width + gap
+  local right_y = toolbar_y
+
+  local mouse_in_right = mouse_x >= right_x and mouse_x <= right_x + right_btn_width
+                         and mouse_y >= right_y and mouse_y <= right_y + btn_height
+
+  local right_bg
+  if has_fx then
+    right_bg = mouse_in_right and COLOR_BTN_HOVER or COLOR_BTN_ON
+  else
+    right_bg = mouse_in_right and 0x505050FF or COLOR_BTN_OFF
+  end
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, right_x, right_y, right_x + right_btn_width, right_y + btn_height, right_bg, rounding)
+
+  local fx_text = "FX"
+  local fx_text_w = reaper.ImGui_CalcTextSize(ctx, fx_text)
+  local fx_text_x = right_x + (right_btn_width - fx_text_w) / 2
+  local fx_text_y = right_y + (btn_height - text_height) / 2
+  local fx_text_color = has_fx and 0x404040FF or COLOR_BTN_TEXT
+  reaper.ImGui_DrawList_AddText(draw_list, fx_text_x, fx_text_y, fx_text_color, fx_text)
+
+  -- Right button click
+  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_right then
+    if take then
+      local alt_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
+      if alt_held and has_fx then
+        -- Alt+click: remove ALL FX
+        reaper.Undo_BeginBlock()
+        for i = fx_count - 1, 0, -1 do
+          reaper.TakeFX_Delete(take, i)
+        end
+        reaper.Undo_EndBlock("NVSD_ItemView: Remove all FX", -1)
+      elseif has_fx then
+        -- Has FX: toggle FX chain window
+        local chain_visible = reaper.TakeFX_GetChainVisible(take)
+        if chain_visible >= 0 then
+          reaper.TakeFX_Show(take, 0, 0)  -- hide chain
+        else
+          reaper.TakeFX_Show(take, 0, 1)  -- show chain
+        end
+      else
+        -- No FX: open/focus FX Browser (only open if closed, never close)
+        if reaper.GetToggleCommandState(40271) ~= 1 then
+          reaper.Main_OnCommand(40271, 0)
+        end
+      end
+    end
+  end
+
+  return toolbar_y + btn_height
+end
+
+-- FX cache (module-level, shared across frames)
+local fx_cache = { take = nil, count = 0, state_count = 0, entries = {} }
+
+-- Strip format prefix from FX name ("VST:", "JS:", "VSTi:", etc.)
+local function strip_fx_prefix(name)
+  return name:match(": (.+) %(") or name:match(": (.+)") or name
+end
+
+-- Build/refresh FX cache for a take
+local function refresh_fx_cache(take)
+  if not take then
+    fx_cache.take = nil
+    fx_cache.count = 0
+    fx_cache.state_count = 0
+    fx_cache.entries = {}
+    return
+  end
+
+  local fx_count = reaper.TakeFX_GetCount(take)
+  local proj_state = reaper.GetProjectStateChangeCount(0)
+
+  if fx_cache.take == take and fx_cache.count == fx_count and fx_cache.state_count == proj_state then
+    return -- cache is still valid
+  end
+
+  fx_cache.take = take
+  fx_cache.count = fx_count
+  fx_cache.state_count = proj_state
+  fx_cache.entries = {}
+
+  for i = 0, fx_count - 1 do
+    local retval, name = reaper.TakeFX_GetFXName(take, i, "")
+    local display_name = strip_fx_prefix(name)
+    fx_cache.entries[i + 1] = {
+      name = display_name,
+      full_name = name,
+      index = i,
+    }
+  end
+end
+
+-- Draw the FX list in a given rectangular area with beveled box, drag-and-drop, and scroll
+-- Returns the number of FX rows actually drawn
+function controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
+                                fx_x, fx_y, fx_width, fx_height,
+                                take, config, state, drawing)
+  -- Always draw the beveled box background
+  local BOX_FILL = 0x151515FF
+  local BOX_BORDER = 0x333333FF
+  local BOX_BEVEL = 4
+  drawing.draw_beveled_rect(draw_list, fx_x, fx_y, fx_x + fx_width, fx_y + fx_height, BOX_FILL, BOX_BORDER, BOX_BEVEL)
+
+  if not take then return 0 end
+
+  refresh_fx_cache(take)
+  local entries = fx_cache.entries
+  if #entries == 0 then return 0 end
+
+  local row_height = 20
+  local bypass_size = 14
+  local bypass_margin = 4
+  local text_x_offset = bypass_size + bypass_margin * 2
+  local rows_drawn = 0
+  local inner_pad = 2  -- small padding inside beveled box
+
+  -- Scrolling: compute content height and whether scrollbar is needed
+  local content_height = #entries * row_height
+  local visible_height = fx_height - inner_pad * 2
+  local needs_scroll = content_height > visible_height
+  local scrollbar_width = needs_scroll and 6 or 0
+  local content_width = fx_width - scrollbar_width  -- available width for FX rows
+
+  -- Clamp scroll offset
+  local max_scroll = math.max(0, content_height - visible_height)
+  if state.fx_scroll_offset > max_scroll then state.fx_scroll_offset = max_scroll end
+  if state.fx_scroll_offset < 0 then state.fx_scroll_offset = 0 end
+
+  -- Mouse wheel scrolling (when mouse is inside the FX box)
+  local mouse_in_box = mouse_x >= fx_x and mouse_x <= fx_x + fx_width
+                       and mouse_y >= fx_y and mouse_y <= fx_y + fx_height
+  if mouse_in_box and needs_scroll then
+    local wheel = reaper.ImGui_GetMouseWheel(ctx)
+    if wheel ~= 0 then
+      state.fx_scroll_offset = state.fx_scroll_offset - wheel * row_height
+      if state.fx_scroll_offset < 0 then state.fx_scroll_offset = 0 end
+      if state.fx_scroll_offset > max_scroll then state.fx_scroll_offset = max_scroll end
+    end
+  end
+
+  -- Visible bounds for row clipping
+  local clip_top = fx_y + inner_pad
+  local clip_bottom = fx_y + fx_height - inner_pad
+
+  -- Clip drawing to the beveled box interior (prevents text bleed on scroll)
+  local has_clip_rect = reaper.ImGui_DrawList_PushClipRect ~= nil
+  if has_clip_rect then
+    reaper.ImGui_DrawList_PushClipRect(draw_list, fx_x, clip_top, fx_x + fx_width, clip_bottom, true)
+  end
+
+  -- Collect row Y positions for drag target calculation
+  local row_positions = {}  -- [i] = { y = top_y, entry = entry }
+  local scroll = state.fx_scroll_offset
+
+  for i = 1, #entries do
+    local entry = entries[i]
+    if not entry then break end
+
+    local row_y = fx_y + inner_pad + (i - 1) * row_height - scroll
+
+    -- Skip rows entirely above/below visible area (but still track for drag targets)
+    local row_visible = (row_y + row_height > clip_top) and (row_y < clip_bottom)
+
+    row_positions[#row_positions + 1] = { y = row_y, entry = entry, list_idx = i }
+
+    local fx_idx = entry.index
+    local is_enabled = reaper.TakeFX_GetEnabled(take, fx_idx)
+    local is_offline = reaper.TakeFX_GetOffline(take, fx_idx)
+    local is_open = reaper.TakeFX_GetOpen(take, fx_idx)
+
+    -- Hit detection for the whole row (only if visible and within clip bounds)
+    local mouse_in_row = row_visible
+                         and mouse_x >= fx_x and mouse_x <= fx_x + content_width
+                         and mouse_y >= math.max(row_y, clip_top) and mouse_y <= math.min(row_y + row_height, clip_bottom)
+
+    -- Skip drawing source row normally if it's being dragged (draw ghosted)
+    local is_drag_source = state.fx_drag_activated and state.fx_drag_src_idx == fx_idx
+
+    if row_visible then
+      -- Row background
+      if is_drag_source then
+        reaper.ImGui_DrawList_AddRectFilled(draw_list, fx_x + inner_pad, row_y, fx_x + content_width - inner_pad, row_y + row_height, 0x2A2A2AFF)
+      elseif mouse_in_row and not state.fx_drag_activated then
+        reaper.ImGui_DrawList_AddRectFilled(draw_list, fx_x + inner_pad, row_y, fx_x + content_width - inner_pad, row_y + row_height, 0x3A3A3AFF)
+      end
+
+      -- Bypass toggle indicator [B]
+      local bp_x = fx_x + bypass_margin + inner_pad
+      local bp_y = row_y + (row_height - bypass_size) / 2
+      local mouse_in_bypass = mouse_x >= bp_x and mouse_x <= bp_x + bypass_size
+                              and mouse_y >= bp_y and mouse_y <= bp_y + bypass_size
+                              and row_visible
+
+      if is_enabled then
+        local bp_color = is_drag_source and 0x4A90D960 or 0x4A90D9FF
+        reaper.ImGui_DrawList_AddRectFilled(draw_list, bp_x, bp_y, bp_x + bypass_size, bp_y + bypass_size, bp_color, 2)
+      else
+        local bp_border = is_drag_source and 0x55555560 or 0x555555FF
+        reaper.ImGui_DrawList_AddRect(draw_list, bp_x, bp_y, bp_x + bypass_size, bp_y + bypass_size, bp_border, 2)
+      end
+
+      -- FX name text
+      local text_color
+      if is_drag_source then
+        text_color = 0x66666660
+      elseif is_offline then
+        text_color = 0x994444FF
+      elseif not is_enabled then
+        text_color = 0x777777FF
+      elseif is_open then
+        text_color = 0xFFFFFFFF
+      else
+        text_color = 0xCCCCCCFF
+      end
+
+      local text_x = fx_x + text_x_offset + inner_pad
+      local text_y = row_y + (row_height - 13) / 2
+      local max_text_w = content_width - text_x_offset - inner_pad * 2 - 4
+
+      -- Truncate text to fit
+      local display_text = entry.name
+      local text_w = reaper.ImGui_CalcTextSize(ctx, display_text)
+      if text_w > max_text_w then
+        while #display_text > 3 and reaper.ImGui_CalcTextSize(ctx, display_text .. "...") > max_text_w do
+          display_text = display_text:sub(1, -2)
+        end
+        display_text = display_text .. "..."
+      end
+
+      reaper.ImGui_DrawList_AddText(draw_list, text_x, text_y, text_color, display_text)
+
+
+      -- Click/drag handling (only when not mid-drag, row must be visible)
+      if not state.fx_drag_activated then
+        if reaper.ImGui_IsMouseClicked(ctx, 0) then
+          if mouse_in_bypass then
+            reaper.Undo_BeginBlock()
+            reaper.TakeFX_SetEnabled(take, fx_idx, not is_enabled)
+            reaper.Undo_EndBlock("NVSD_ItemView: Toggle FX bypass", -1)
+          elseif mouse_in_row then
+            local shift_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
+            local alt_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
+            if alt_held then
+              reaper.Undo_BeginBlock()
+              reaper.TakeFX_Delete(take, fx_idx)
+              reaper.Undo_EndBlock("NVSD_ItemView: Delete FX", -1)
+              fx_cache.state_count = 0
+            elseif shift_held then
+              reaper.Undo_BeginBlock()
+              reaper.TakeFX_SetEnabled(take, fx_idx, not is_enabled)
+              reaper.Undo_EndBlock("NVSD_ItemView: Toggle FX bypass", -1)
+            elseif not mouse_in_bypass then
+              state.fx_dragging = true
+              state.fx_drag_src_idx = fx_idx
+              state.fx_drag_start_y = mouse_y
+              state.fx_drag_activated = false
+              state.fx_drag_mouse_y = mouse_y
+            end
+          end
+        end
+      end
+
+      -- Right-click: store FX index for context menu
+      if reaper.ImGui_IsMouseClicked(ctx, 1) and mouse_in_row then
+        state.fx_context_menu_idx = fx_idx
+        state.fx_context_menu_take = take
+        reaper.ImGui_OpenPopup(ctx, "fx_context_menu")
+      end
+    end
+
+    rows_drawn = rows_drawn + 1
+  end
+
+  -- Drag-and-drop processing
+  if state.fx_dragging then
+    state.fx_drag_mouse_y = mouse_y
+
+    -- Check threshold
+    if not state.fx_drag_activated then
+      if math.abs(mouse_y - state.fx_drag_start_y) > state.fx_drag_threshold then
+        state.fx_drag_activated = true
+      end
+    end
+
+    -- Draw drag visuals when activated
+    if state.fx_drag_activated and #row_positions > 0 then
+      reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
+
+      -- Find the dragged entry
+      local drag_entry = nil
+      for _, rp in ipairs(row_positions) do
+        if rp.entry.index == state.fx_drag_src_idx then
+          drag_entry = rp.entry
+          break
+        end
+      end
+
+      -- Determine drop target position
+      local drop_before_idx = nil
+      for ri, rp in ipairs(row_positions) do
+        local row_mid = rp.y + row_height / 2
+        if mouse_y < row_mid then
+          drop_before_idx = rp.entry.index
+          local line_y = rp.y
+          reaper.ImGui_DrawList_AddLine(draw_list, fx_x + 2, line_y, fx_x + content_width - 2, line_y, 0x4A90D9FF, 2)
+          break
+        end
+      end
+      if not drop_before_idx and #row_positions > 0 then
+        local last_rp = row_positions[#row_positions]
+        drop_before_idx = last_rp.entry.index + 1
+        local line_y = last_rp.y + row_height
+        reaper.ImGui_DrawList_AddLine(draw_list, fx_x + 2, line_y, fx_x + content_width - 2, line_y, 0x4A90D9FF, 2)
+      end
+
+      -- Draw floating dragged row at mouse position
+      if drag_entry then
+        local float_y = mouse_y - row_height / 2
+        reaper.ImGui_DrawList_AddRectFilled(draw_list, fx_x + inner_pad, float_y, fx_x + content_width - inner_pad, float_y + row_height, 0x4A90D9AA)
+
+        local is_enabled = reaper.TakeFX_GetEnabled(take, drag_entry.index)
+        local float_bp_x = fx_x + bypass_margin + inner_pad
+        local float_bp_y = float_y + (row_height - bypass_size) / 2
+        if is_enabled then
+          reaper.ImGui_DrawList_AddRectFilled(draw_list, float_bp_x, float_bp_y, float_bp_x + bypass_size, float_bp_y + bypass_size, 0x4A90D9FF, 2)
+        else
+          reaper.ImGui_DrawList_AddRect(draw_list, float_bp_x, float_bp_y, float_bp_x + bypass_size, float_bp_y + bypass_size, 0x555555FF, 2)
+        end
+
+        local float_text_x = fx_x + text_x_offset + inner_pad
+        local float_text_y = float_y + (row_height - 13) / 2
+        reaper.ImGui_DrawList_AddText(draw_list, float_text_x, float_text_y, 0xFFFFFFFF, drag_entry.name)
+      end
+
+      state.fx_drag_drop_target = drop_before_idx
+    end
+
+    -- Handle mouse release
+    if reaper.ImGui_IsMouseReleased(ctx, 0) then
+      if state.fx_drag_activated and state.fx_drag_drop_target then
+        local src = state.fx_drag_src_idx
+        local dst = state.fx_drag_drop_target
+
+        if dst ~= src and dst ~= src + 1 then
+          reaper.Undo_BeginBlock()
+          local move_dst = dst
+          if src < dst then
+            move_dst = dst - 1
+          end
+          reaper.TakeFX_CopyToTake(take, src, take, move_dst, true)
+          reaper.Undo_EndBlock("NVSD_ItemView: Reorder FX", -1)
+          fx_cache.state_count = 0
+        end
+      elseif not state.fx_drag_activated then
+        local is_open = reaper.TakeFX_GetOpen(take, state.fx_drag_src_idx)
+        if is_open then
+          reaper.TakeFX_Show(take, state.fx_drag_src_idx, 2)
+        else
+          reaper.TakeFX_Show(take, state.fx_drag_src_idx, 3)
+        end
+      end
+
+      state.fx_dragging = false
+      state.fx_drag_src_idx = -1
+      state.fx_drag_activated = false
+      state.fx_drag_drop_target = nil
+    end
+  end
+
+  -- Pop clip rect before drawing scrollbar (which sits outside the clipped area)
+  if has_clip_rect then
+    reaper.ImGui_DrawList_PopClipRect(draw_list)
+  end
+
+  -- Draw scrollbar when needed
+  if needs_scroll then
+    local sb_x = fx_x + fx_width - scrollbar_width - 1
+    local sb_top = fx_y + inner_pad
+    local sb_height = visible_height
+
+    -- Track background
+    reaper.ImGui_DrawList_AddRectFilled(draw_list, sb_x, sb_top, sb_x + scrollbar_width, sb_top + sb_height, 0x1A1A1AFF)
+
+    -- Thumb
+    local thumb_ratio = visible_height / content_height
+    local thumb_height = math.max(12, sb_height * thumb_ratio)
+    local scroll_ratio = state.fx_scroll_offset / max_scroll
+    local thumb_y = sb_top + scroll_ratio * (sb_height - thumb_height)
+
+    local mouse_in_scrollbar = mouse_x >= sb_x and mouse_x <= sb_x + scrollbar_width
+                               and mouse_y >= sb_top and mouse_y <= sb_top + sb_height
+    local thumb_color = mouse_in_scrollbar and 0x666666FF or 0x444444FF
+    reaper.ImGui_DrawList_AddRectFilled(draw_list, sb_x, thumb_y, sb_x + scrollbar_width, thumb_y + thumb_height, thumb_color, 2)
+  end
+
+  return rows_drawn
+end
+
+-- Draw the FX right-click context menu (call once per frame, after draw_fx_list)
+function controls.draw_fx_context_menu(ctx, state)
+  if reaper.ImGui_BeginPopup(ctx, "fx_context_menu") then
+    local take = state.fx_context_menu_take
+    local fx_idx = state.fx_context_menu_idx
+    if take and fx_idx then
+      local is_enabled = reaper.TakeFX_GetEnabled(take, fx_idx)
+      local is_offline = reaper.TakeFX_GetOffline(take, fx_idx)
+
+      if reaper.ImGui_MenuItem(ctx, is_enabled and "Bypass" or "Enable") then
+        reaper.Undo_BeginBlock()
+        reaper.TakeFX_SetEnabled(take, fx_idx, not is_enabled)
+        reaper.Undo_EndBlock("NVSD_ItemView: Toggle FX bypass", -1)
+      end
+      if reaper.ImGui_MenuItem(ctx, is_offline and "Set Online" or "Set Offline") then
+        reaper.Undo_BeginBlock()
+        reaper.TakeFX_SetOffline(take, fx_idx, not is_offline)
+        reaper.Undo_EndBlock("NVSD_ItemView: Toggle FX offline", -1)
+      end
+      if reaper.ImGui_MenuItem(ctx, "Open FX Chain Window") then
+        reaper.TakeFX_Show(take, fx_idx, 1)  -- show chain window
+      end
+      reaper.ImGui_Separator(ctx)
+      if reaper.ImGui_MenuItem(ctx, "Delete FX") then
+        reaper.Undo_BeginBlock()
+        reaper.TakeFX_Delete(take, fx_idx)
+        reaper.Undo_EndBlock("NVSD_ItemView: Delete FX", -1)
+        fx_cache.state_count = 0  -- force cache refresh
+      end
+    end
+    reaper.ImGui_EndPopup(ctx)
+  end
+end
+
+-- Get cached FX count for a take (used by main layout to compute columns)
+function controls.get_fx_count(take)
+  if not take then return 0 end
+  refresh_fx_cache(take)
+  return fx_cache.count
 end
 
 return controls

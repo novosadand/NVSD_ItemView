@@ -36,6 +36,15 @@ state.fade_drag_start_mouse_x = 0
 state.fade_drag_start_value = 0     -- original fade length (seconds) at drag start
 state.fade_drag_start_view_length = 0
 
+-- FX drag-and-drop reorder state
+state.fx_dragging = false
+state.fx_drag_src_idx = -1        -- 0-based REAPER FX index being dragged
+state.fx_drag_start_y = 0         -- mouse Y at drag start
+state.fx_drag_threshold = 4       -- px of movement before drag activates
+state.fx_drag_activated = false   -- true once threshold exceeded (prevents accidental drags)
+state.fx_drag_mouse_y = 0         -- current mouse Y during drag
+state.fx_scroll_offset = 0        -- FX list scroll offset in pixels
+
 -- Panning state
 state.is_panning = false
 state.pan_start_mouse_x = 0

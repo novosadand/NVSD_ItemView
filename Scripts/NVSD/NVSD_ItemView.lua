@@ -131,6 +131,8 @@ local function loop()
       state.dragging_fade_out = false
       state.is_panning = false
       state.is_ruler_dragging = false
+      state.fx_dragging = false
+      state.fx_drag_activated = false
       state.undo_block_open = nil
       state.was_mouse_down = false
       state.invalidate_view_peaks()
@@ -179,6 +181,8 @@ local function loop()
     state.dragging_fade_out = false
     state.is_panning = false
     state.is_ruler_dragging = false
+    state.fx_dragging = false
+    state.fx_drag_activated = false
   end
 
   -- Auto-reload check (skip during mouse-down to avoid disk I/O lag)
@@ -475,16 +479,17 @@ local function loop()
 
           -- Get available space for waveform
           local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
+          local waveform_height = math.max(50, avail_h - (config.WAVEFORM_MARGIN_V * 2) - config.INFO_BAR_HEIGHT - config.RULER_HEIGHT - config.TIME_RULER_HEIGHT)
+          local panel_height = config.INFO_BAR_HEIGHT + config.RULER_HEIGHT + waveform_height + config.TIME_RULER_HEIGHT
+
           local total_left_width = config.LEFT_COLUMN_WIDTH + config.LEFT_PANEL_WIDTH
           local waveform_width = math.max(100, avail_w - (config.WAVEFORM_MARGIN_H * 2) - total_left_width)
-          local waveform_height = math.max(50, avail_h - (config.WAVEFORM_MARGIN_V * 2) - config.INFO_BAR_HEIGHT - config.RULER_HEIGHT - config.TIME_RULER_HEIGHT)
 
           local cursor_x, cursor_y = reaper.ImGui_GetCursorScreenPos(ctx)
           local left_col_x = cursor_x + config.WINDOW_PADDING
           local left_col_y = cursor_y + config.WAVEFORM_MARGIN_V
           local panel_x = left_col_x + config.LEFT_COLUMN_WIDTH
           local panel_y = cursor_y + config.WAVEFORM_MARGIN_V
-          local panel_height = config.INFO_BAR_HEIGHT + config.RULER_HEIGHT + waveform_height + config.TIME_RULER_HEIGHT
           local wave_x = cursor_x + total_left_width + config.WAVEFORM_MARGIN_H
           local info_bar_y = cursor_y + config.WAVEFORM_MARGIN_V
           local ruler_y = info_bar_y + config.INFO_BAR_HEIGHT
@@ -518,6 +523,7 @@ local function loop()
           local we_are_dragging = state.dragging_start or state.dragging_end or state.is_panning
                                   or state.is_ruler_dragging or state.is_any_control_dragging()
                                   or state.dragging_fade_in or state.dragging_fade_out
+                                  or state.fx_dragging
           local user_dragging_in_reaper = mouse_is_down and not we_are_dragging
 
           -- Get file path (used by info bar)
@@ -810,7 +816,20 @@ local function loop()
           local COLOR_LEFT_COL_BG = 0x1A1A1AFF
           reaper.ImGui_DrawList_AddRectFilled(draw_list, left_col_x, left_col_y, left_col_x + config.LEFT_COLUMN_WIDTH - 2, left_col_y + panel_height, COLOR_LEFT_COL_BG)
 
-          controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take, config, state, utils, drawing)
+          local buttons_bottom = controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take, config, state, utils, drawing)
+
+          -- Draw FX toolbar and scrollable FX list below buttons
+          local fx_toolbar_bottom = controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
+            left_col_x + 8, buttons_bottom + 6, config.LEFT_COLUMN_WIDTH - 16,
+            take, config, state, drawing)
+          local fx_area_top = fx_toolbar_bottom + 4
+          local fx_area_height = (left_col_y + panel_height - 4) - fx_area_top
+          controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
+            left_col_x + 4, fx_area_top, config.LEFT_COLUMN_WIDTH - 10, fx_area_height,
+            take, config, state, drawing)
+
+          -- FX right-click context menu
+          controls.draw_fx_context_menu(ctx, state)
 
           local COLOR_PANEL_BG = 0x202020FF
           reaper.ImGui_DrawList_AddRectFilled(draw_list, panel_x, panel_y, panel_x + config.LEFT_PANEL_WIDTH - 4, panel_y + panel_height, COLOR_PANEL_BG)
@@ -951,7 +970,9 @@ local function loop()
           end
 
           -- Right-click: fade shape menus or generic context menu
-          if right_click_in_window then
+          -- Skip if the FX context menu was opened this frame (by draw_fx_list)
+          local fx_menu_opened = right_clicked and reaper.ImGui_IsPopupOpen(ctx, "fx_context_menu")
+          if right_click_in_window and not fx_menu_opened then
             if near_fade_in then
               reaper.ImGui_OpenPopup(ctx, "fade_in_shape_menu")
             elseif near_fade_out then
@@ -1552,6 +1573,8 @@ local function loop()
     state.dragging_fade_out = false
     state.is_panning = false
     state.is_ruler_dragging = false
+    state.fx_dragging = false
+    state.fx_drag_activated = false
     state.undo_block_open = nil
     state.sticky_item = nil
     state.sticky_item_valid = false

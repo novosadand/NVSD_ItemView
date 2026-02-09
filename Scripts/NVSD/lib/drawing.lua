@@ -1002,4 +1002,71 @@ function drawing.draw_knob(draw_list, cx, cy, radius, angle, is_hovered, is_acti
   reaper.ImGui_DrawList_AddText(draw_list, cx - 5, cy + radius + 2, st_color, "st")
 end
 
+-- Draw a filled rectangle with beveled (chamfered) corners using ImGui path API
+-- Gives the TCP-style look (flat-cut corners, not rounded)
+function drawing.draw_beveled_rect(draw_list, x1, y1, x2, y2, fill_color, border_color, bevel)
+  bevel = bevel or 4
+  local DL_PathLineTo = reaper.ImGui_DrawList_PathLineTo
+  local DL_PathFillConvex = reaper.ImGui_DrawList_PathFillConvex
+  local DL_PathStroke = reaper.ImGui_DrawList_PathStroke
+
+  if not DL_PathLineTo then
+    -- Fallback: plain rectangle
+    reaper.ImGui_DrawList_AddRectFilled(draw_list, x1, y1, x2, y2, fill_color)
+    if border_color then
+      reaper.ImGui_DrawList_AddRect(draw_list, x1, y1, x2, y2, border_color)
+    end
+    return
+  end
+
+  -- Clamp bevel to half the smallest dimension
+  local max_bevel = math.min((x2 - x1) / 2, (y2 - y1) / 2)
+  if bevel > max_bevel then bevel = max_bevel end
+
+  local function trace_path()
+    DL_PathLineTo(draw_list, x1 + bevel, y1)          -- top-left after bevel
+    DL_PathLineTo(draw_list, x2 - bevel, y1)          -- top-right before bevel
+    DL_PathLineTo(draw_list, x2, y1 + bevel)           -- top-right after bevel
+    DL_PathLineTo(draw_list, x2, y2 - bevel)           -- bottom-right before bevel
+    DL_PathLineTo(draw_list, x2 - bevel, y2)          -- bottom-right after bevel
+    DL_PathLineTo(draw_list, x1 + bevel, y2)          -- bottom-left before bevel
+    DL_PathLineTo(draw_list, x1, y2 - bevel)           -- bottom-left after bevel
+    DL_PathLineTo(draw_list, x1, y1 + bevel)           -- top-left before bevel
+  end
+
+  -- Fill
+  trace_path()
+  DL_PathFillConvex(draw_list, fill_color)
+
+  -- Border
+  if border_color then
+    trace_path()
+    DL_PathStroke(draw_list, border_color, 1, 1)  -- closed=1, thickness=1
+  end
+end
+
+-- Draw a TV-style standby/power icon (IEC 5009): circle with gap at top, vertical line through gap
+function drawing.draw_power_icon(draw_list, cx, cy, radius, color)
+  local DL_PathLineTo = reaper.ImGui_DrawList_PathLineTo
+  local DL_PathStroke = reaper.ImGui_DrawList_PathStroke
+  local DL_AddLine = reaper.ImGui_DrawList_AddLine
+
+  if not DL_PathLineTo then return end
+
+  -- Arc: 270 degrees, gap at top (from ~45deg past top to ~315deg past top)
+  -- Start at angle -60deg from top (i.e. -PI/2 - PI/3) going clockwise to +60deg from top
+  local gap_half = math.pi / 3  -- 60 degree gap on each side of top
+  local start_angle = -math.pi / 2 + gap_half
+  local end_angle = -math.pi / 2 + 2 * math.pi - gap_half
+  local segments = 20
+  for i = 0, segments do
+    local a = start_angle + (end_angle - start_angle) * (i / segments)
+    DL_PathLineTo(draw_list, cx + math.cos(a) * radius, cy + math.sin(a) * radius)
+  end
+  DL_PathStroke(draw_list, color, 0, 1.5)
+
+  -- Vertical line through the gap (from top of circle down to center)
+  DL_AddLine(draw_list, cx, cy - radius, cx, cy, color, 1.5)
+end
+
 return drawing
