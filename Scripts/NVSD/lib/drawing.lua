@@ -3,23 +3,9 @@
 
 local drawing = {}
 
--- Power curve LUT: maps [0..1024] → value^0.7 for fast waveform scaling
-local power_lut = {}
-for i = 0, 1024 do
-  power_lut[i] = (i / 1024) ^ 0.7
-end
-
--- Fast power curve using LUT: returns sign(value) * |value|^0.7
+-- Linear passthrough (matches REAPER's native waveform display - no compression)
 local function power_curve(value)
-  if value >= 0 then
-    local idx = value * 1024
-    if idx > 1024 then idx = 1024 end
-    return power_lut[math.floor(idx)]
-  else
-    local idx = -value * 1024
-    if idx > 1024 then idx = 1024 end
-    return -power_lut[math.floor(idx)]
-  end
+  return value
 end
 
 -- Fade curve equations: each maps x in [0,1] to amplitude [0,1]
@@ -236,7 +222,7 @@ local function compute_grid_params(x, width, view_start, view_length, item_posit
   local _, start_measures = reaper.TimeMap2_timeToBeats(0, project_start)
   local first_bar = math.floor(start_measures)
 
-  local min_bar_spacing = 40
+  local min_bar_spacing = 60
   local avg_bar_duration = 60 / bpm * beats_per_bar
   local px_per_bar = (avg_bar_duration / view_length) * width
   local bar_skip = math.max(1, math.ceil(min_bar_spacing / px_per_bar))
@@ -286,7 +272,7 @@ end
 function drawing.draw_grid_lines(draw_list, x, wave_y, width, wave_height,
                                   view_start, view_length, item_position, start_offset, playrate, config, utils)
   local g = compute_grid_params(x, width, view_start, view_length, item_position, start_offset, playrate, config, utils)
-  local show_beat_grid = g.px_per_beat >= 8
+  local show_beat_grid = g.px_per_beat >= 12
 
   local bar = g.first_bar
   local iterations = 0
@@ -339,12 +325,12 @@ function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler
   reaper.ImGui_DrawList_AddRectFilled(draw_list, x, ruler_y, x + width, ruler_y + ruler_height, config.COLOR_RULER_BG)
 
   local g = compute_grid_params(x, width, view_start, view_length, item_position, start_offset, playrate, config, utils)
-  local show_beat_labels = g.px_per_beat >= 30
-  local show_beat_ticks = g.px_per_beat >= 12
+  local show_beat_labels = g.px_per_beat >= 50
+  local show_beat_ticks = g.px_per_beat >= 18
   -- Sub-beat ruler ticks: only at quarter-beat positions, need decent spacing
-  local show_sub_ticks = g.quarter_step and (g.px_per_beat / 4) >= 20
+  local show_sub_ticks = g.quarter_step and (g.px_per_beat / 4) >= 25
   -- Sub-beat labels: only when really zoomed in (each quarter-beat has plenty of room)
-  local show_sub_labels = g.quarter_step and (g.px_per_beat / 4) >= 60
+  local show_sub_labels = g.quarter_step and (g.px_per_beat / 4) >= 70
   local beat_label_color = 0x555555FF
 
   local bar = g.first_bar
@@ -763,17 +749,19 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
           col_tops[ch][i] = center_y - extent
           col_bots[ch][i] = center_y + extent
         else
-          -- Peaks mode: min/max range
+          -- Peaks mode: symmetric display using max(|min|, |max|)
+          -- Some sources return broken min values (zero, positive, or near-zero).
+          -- Always draw symmetric around center — matches standard DAW clip views.
           local v_min = peak_mins[flat_idx] or 0
           local v_max = peak_maxs[flat_idx] or 0
-          local raw_max = v_max * visual_gain
-          local raw_min = v_min * visual_gain
-          if raw_max > 1 then raw_max = 1 elseif raw_max < -1 then raw_max = -1 end
-          if raw_min > 1 then raw_min = 1 elseif raw_min < -1 then raw_min = -1 end
-          local scaled_max = power_curve(raw_max)
-          local scaled_min = power_curve(raw_min)
-          local top_y = center_y - (scaled_max * half_height)
-          local bot_y = center_y - (scaled_min * half_height)
+          local v_abs = math.abs(v_min)
+          local v_abs_max = math.abs(v_max)
+          if v_abs_max > v_abs then v_abs = v_abs_max end
+          local raw = v_abs * visual_gain
+          if raw > 1 then raw = 1 end
+          local scaled = power_curve(raw)
+          local top_y = center_y - scaled * half_height
+          local bot_y = center_y + scaled * half_height
           if bot_y - top_y < 1 then
             top_y = center_y - 0.5
             bot_y = center_y + 0.5
@@ -836,57 +824,32 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
       local tops = col_tops[ch]
       local bots = col_bots[ch]
 
-      if is_waveform_mode then
-        -- Waveform mode: connected line segments with fill to center
-        local center_y_ch = y + (ch - 1) * channel_height + channel_height * 0.5
+      -- Fill: vertical bars from top to bottom per pixel column
+      for i = s_start, s_stop do
+        local px = x + i * pixel_step
+        DL_AddLine(draw_list, px, tops[i], px, bots[i], fill_color, pixel_step)
+      end
 
-        -- Fill: vertical lines from sample to center
+      -- Outlines: batched via path API (reduces GPU draw commands)
+      local draw_from = (s_start == 0) and 1 or s_start
+      if has_path and s_stop > s_start then
+        -- Top outline
         for i = s_start, s_stop do
-          local px = x + i * pixel_step
-          DL_AddLine(draw_list, px, tops[i], px, center_y_ch, fill_color, pixel_step)
+          DL_PathLineTo(draw_list, x + i * pixel_step, tops[i])
         end
-
-        -- Outline: connected path through sample points
-        if has_path and s_stop > s_start then
-          for i = s_start, s_stop do
-            DL_PathLineTo(draw_list, x + i * pixel_step, tops[i])
-          end
-          DL_PathStroke(draw_list, outline_color, 0, 1)
-        else
-          for i = s_start + 1, s_stop do
-            DL_AddLine(draw_list, x + (i - 1) * pixel_step, tops[i - 1],
-                       x + i * pixel_step, tops[i], outline_color, 1)
-          end
+        DL_PathStroke(draw_list, outline_color, 0, 1)
+        -- Bottom outline
+        for i = s_start, s_stop do
+          DL_PathLineTo(draw_list, x + i * pixel_step, bots[i])
         end
+        DL_PathStroke(draw_list, outline_color, 0, 1)
       else
-        -- Peaks mode: vertical bars with outlines
-        -- Fill: vertical lines per pixel column
-        for i = s_start, s_stop do
-          local px = x + i * pixel_step
-          DL_AddLine(draw_list, px, tops[i], px, bots[i], fill_color, pixel_step)
-        end
-
-        -- Outlines: batched via path API (reduces GPU draw commands)
-        local draw_from = (s_start == 0) and 1 or s_start
-        if has_path and s_stop > s_start then
-          -- Top outline
-          for i = s_start, s_stop do
-            DL_PathLineTo(draw_list, x + i * pixel_step, tops[i])
-          end
-          DL_PathStroke(draw_list, outline_color, 0, 1)
-          -- Bottom outline
-          for i = s_start, s_stop do
-            DL_PathLineTo(draw_list, x + i * pixel_step, bots[i])
-          end
-          DL_PathStroke(draw_list, outline_color, 0, 1)
-        else
-          -- Fallback: individual lines
-          for i = draw_from, s_stop do
-            local px_prev = x + (i - 1) * pixel_step
-            local px_curr = x + i * pixel_step
-            DL_AddLine(draw_list, px_prev, tops[i - 1], px_curr, tops[i], outline_color, 1)
-            DL_AddLine(draw_list, px_prev, bots[i - 1], px_curr, bots[i], outline_color, 1)
-          end
+        -- Fallback: individual lines
+        for i = draw_from, s_stop do
+          local px_prev = x + (i - 1) * pixel_step
+          local px_curr = x + i * pixel_step
+          DL_AddLine(draw_list, px_prev, tops[i - 1], px_curr, tops[i], outline_color, 1)
+          DL_AddLine(draw_list, px_prev, bots[i - 1], px_curr, bots[i], outline_color, 1)
         end
       end
     end

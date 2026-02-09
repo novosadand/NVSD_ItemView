@@ -1464,7 +1464,7 @@ local function loop()
             return t
           end
 
-          -- Helper: snap source time to REAPER grid
+          -- Helper: snap source time to finest visible grid subdivision
           -- snap_offset: override start_offset for snapping (use drag_start_offset during marker drags)
           local function snap_to_grid_if_enabled(source_t, snap_offset)
             local snap_enabled = reaper.GetToggleCommandState(1157) == 1
@@ -1472,7 +1472,31 @@ local function loop()
 
             local offset = snap_offset or start_offset
             local project_t = utils.source_to_project_time(source_t, item_position, offset, playrate)
-            local snapped_project_t = reaper.SnapToGrid(0, project_t)
+
+            -- Compute finest visible grid subdivision (same logic as grid display)
+            local bpm, bpi = reaper.GetProjectTimeSignature2(0, project_t)
+            local beats_per_bar = math.floor(bpi)
+            if beats_per_bar < 1 then beats_per_bar = 4 end
+            local avg_bar_duration = 60 / bpm * beats_per_bar
+            local px_per_bar = (avg_bar_duration / view_length) * waveform_width
+            local px_per_beat = px_per_bar / beats_per_bar
+
+            local finest_sub = 1
+            while (px_per_beat / (finest_sub * 2)) >= 24 do
+              finest_sub = finest_sub * 2
+            end
+
+            -- Snap in beat space: get beat position, round to nearest subdivision
+            local snap_unit = 1 / finest_sub
+            local beat_in_measure, measure = reaper.TimeMap2_timeToBeats(0, project_t)
+            local snapped_beat = math.floor(beat_in_measure / snap_unit + 0.5) * snap_unit
+            local snapped_measure = measure
+            if snapped_beat >= beats_per_bar then
+              snapped_beat = snapped_beat - beats_per_bar
+              snapped_measure = measure + 1
+            end
+
+            local snapped_project_t = reaper.TimeMap2_beatsToTime(0, snapped_beat, snapped_measure)
             return utils.project_to_source_time(snapped_project_t, item_position, offset, playrate)
           end
 
