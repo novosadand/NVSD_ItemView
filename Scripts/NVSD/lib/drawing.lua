@@ -77,7 +77,8 @@ function drawing.draw_fade_overlay(draw_list, fade_start_px, fade_end_px,
 
   -- Darken only above the curve (the attenuated region)
   local step = 2  -- 2px columns for performance
-  for px = 0, math.floor(width), step do
+  local width_floor = math.floor(width)
+  for px = 0, width_floor, step do
     local t = px / width
     if t > 1 then t = 1 end
     local base = is_fade_in and curve_fn(t) or (1 - curve_fn(t))
@@ -87,11 +88,20 @@ function drawing.draw_fade_overlay(draw_list, fade_start_px, fade_end_px,
       DL_AddLine(draw_list, fade_start_px + px, fade_top_y, fade_start_px + px, curve_y, tint_alpha, step)
     end
   end
+  -- Final column at t=1 (loop may not reach the end due to step size)
+  do
+    local base = is_fade_in and curve_fn(1) or (1 - curve_fn(1))
+    local vol = apply_curvature(base, dir)
+    local curve_y = fade_top_y + curve_range * (1 - vol)
+    if curve_y > fade_top_y then
+      DL_AddLine(draw_list, fade_start_px + width_floor, fade_top_y, fade_start_px + width_floor, curve_y, tint_alpha, step)
+    end
+  end
 
   -- Draw curve line on top (brighter when hovered)
   if DL_PathLineTo and width > 4 then
     local line_step = math.max(1, math.floor(width / 200))
-    for px = 0, math.floor(width), line_step do
+    for px = 0, width_floor, line_step do
       local t = px / width
       if t > 1 then t = 1 end
       local base = is_fade_in and curve_fn(t) or (1 - curve_fn(t))
@@ -99,6 +109,10 @@ function drawing.draw_fade_overlay(draw_list, fade_start_px, fade_end_px,
       local curve_y = fade_top_y + curve_range * (1 - vol)
       DL_PathLineTo(draw_list, fade_start_px + px, curve_y)
     end
+    -- Always include the final point at t=1
+    local end_base = is_fade_in and curve_fn(1) or (1 - curve_fn(1))
+    local end_vol = apply_curvature(end_base, dir)
+    DL_PathLineTo(draw_list, fade_end_px, fade_top_y + curve_range * (1 - end_vol))
     local line_color = is_hovered and 0xFFFFFFCC or 0xFFFFFF80
     local line_width = is_hovered and 2.0 or 1.5
     DL_PathStroke(draw_list, line_color, 0, line_width)

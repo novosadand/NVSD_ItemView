@@ -73,6 +73,16 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
         if new_playrate > 0 then
           local new_length = old_length * (old_playrate / new_playrate)
           reaper.SetMediaItemInfo_Value(take_item, "D_LENGTH", new_length)
+
+          -- Clamp fades so they don't cross
+          local fi = reaper.GetMediaItemInfo_Value(take_item, "D_FADEINLEN")
+          local fo = reaper.GetMediaItemInfo_Value(take_item, "D_FADEOUTLEN")
+          if fi + fo > new_length then
+            fo = math.max(0, new_length - fi)
+            if fo == 0 then fi = math.min(fi, new_length) end
+            reaper.SetMediaItemInfo_Value(take_item, "D_FADEINLEN", fi)
+            reaper.SetMediaItemInfo_Value(take_item, "D_FADEOUTLEN", fo)
+          end
         end
       end
 
@@ -433,6 +443,18 @@ local function set_take_pitch(take, semitones, state, utils)
     if new_playrate > 0 then
       local new_length = old_length * (old_playrate / new_playrate)
       reaper.SetMediaItemInfo_Value(take_item, "D_LENGTH", new_length)
+
+      -- Clamp fades so they don't cross: shrink fade-out first, then fade-in
+      local fi = reaper.GetMediaItemInfo_Value(take_item, "D_FADEINLEN")
+      local fo = reaper.GetMediaItemInfo_Value(take_item, "D_FADEOUTLEN")
+      if fi + fo > new_length then
+        fo = math.max(0, new_length - fi)
+        if fo == 0 then
+          fi = math.min(fi, new_length)
+        end
+        reaper.SetMediaItemInfo_Value(take_item, "D_FADEINLEN", fi)
+        reaper.SetMediaItemInfo_Value(take_item, "D_FADEOUTLEN", fo)
+      end
     end
   end
 end

@@ -1378,6 +1378,20 @@ local function loop()
                 state.preview_active = false
               end
             end
+            -- Alt+click on fade curve (no drag movement): remove the fade
+            if state.dragging_fade_curve_in and math.abs(state.fade_curve_cumulative_y) < 3 then
+              reaper.Undo_BeginBlock()
+              reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", 0)
+              reaper.SetMediaItemInfo_Value(item, "D_FADEINDIR", 0)
+              reaper.UpdateArrange()
+              reaper.Undo_EndBlock("NVSD_ItemView: Remove fade in", -1)
+            elseif state.dragging_fade_curve_out and math.abs(state.fade_curve_cumulative_y) < 3 then
+              reaper.Undo_BeginBlock()
+              reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", 0)
+              reaper.SetMediaItemInfo_Value(item, "D_FADEOUTDIR", 0)
+              reaper.UpdateArrange()
+              reaper.Undo_EndBlock("NVSD_ItemView: Remove fade out", -1)
+            end
             state.dragging_start = false
             state.dragging_end = false
             state.marker_drag_activated = false
