@@ -1449,6 +1449,14 @@ local function loop()
               state.fade_out_hovered or state.dragging_fade_out)
           end
 
+          -- Fade hint: small curved triangle when hovering grab zone with no fade
+          if state.fade_in_hovered and fade_in_len == 0 and not state.dragging_fade_in then
+            drawing.draw_fade_hint(draw_list, start_marker_x, wave_y, true)
+          end
+          if state.fade_out_hovered and fade_out_len == 0 and not state.dragging_fade_out then
+            drawing.draw_fade_hint(draw_list, end_marker_x, wave_y, false)
+          end
+
           -- Draw markers on top
           if start_marker_x >= wave_x - config.MARKER_WIDTH and start_marker_x <= wave_x + waveform_width + config.MARKER_WIDTH then
             drawing.draw_marker(draw_list, start_marker_x, wave_y, waveform_height, true, near_start, state.dragging_start, config)

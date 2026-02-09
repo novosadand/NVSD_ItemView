@@ -102,6 +102,31 @@ function drawing.draw_fade_handle(draw_list, x, y, is_hovered, is_dragging, is_f
   reaper.ImGui_DrawList_AddRect(draw_list, x1, y - size, x2, y + size, border, 0, 0, 1)
 end
 
+-- Draw fade hint: small curved triangle in the upper corner of a marker.
+-- Fade-in (at start marker): |)  shape in top-right corner
+-- Fade-out (at end marker):  (|  shape in top-left corner (mirrored)
+function drawing.draw_fade_hint(draw_list, marker_x, top_y, is_fade_in)
+  local size = 26
+  local y0 = top_y + 1  -- +1 to stay below ruler border
+  local x1, y1, x2, y2, x3, y3
+
+  if is_fade_in then
+    -- |/ triangle at start marker
+    x1, y1 = marker_x, y0            -- top-left
+    x2, y2 = marker_x, y0 + size     -- bottom-left
+    x3, y3 = marker_x + size, y0     -- top-right
+  else
+    -- \| triangle at end marker (mirrored)
+    x1, y1 = marker_x, y0            -- top-right
+    x2, y2 = marker_x, y0 + size     -- bottom-right
+    x3, y3 = marker_x - size, y0     -- top-left
+  end
+
+  -- Filled triangle + outline for smooth anti-aliased edges
+  reaper.ImGui_DrawList_AddTriangleFilled(draw_list, x1, y1, x2, y2, x3, y3, 0xFFFFFF30)
+  reaper.ImGui_DrawList_AddTriangle(draw_list, x1, y1, x2, y2, x3, y3, 0xFFFFFF50, 1.0)
+end
+
 -- Draw fade shape icon (curve line only, no fill or border)
 function drawing.draw_fade_shape_icon(draw_list, x, y, w, h, shape, is_fade_in)
   local curve_fn = fade_curves[shape] or fade_curves[0]
@@ -885,18 +910,16 @@ function drawing.draw_marker(draw_list, x, y, height, is_start, is_hovered, is_d
   reaper.ImGui_DrawList_AddLine(draw_list, x, y, x, y + height, color, 3)
 
   local handle_size = 7
+  -- Anchor triangles at the outer edge of the 3px line (not the center)
+  local bx = is_start and (x + 1) or (x - 1)
+  local dir = is_start and 1 or -1
 
-  if is_start then
-    reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-      x, y, x + handle_size, y + handle_size / 2, x, y + handle_size, color)
-    reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-      x, y + height - handle_size, x + handle_size, y + height - handle_size / 2, x, y + height, color)
-  else
-    reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-      x, y, x - handle_size, y + handle_size / 2, x, y + handle_size, color)
-    reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-      x, y + height - handle_size, x - handle_size, y + height - handle_size / 2, x, y + height, color)
-  end
+  -- Top triangle
+  reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
+    bx, y, bx + dir * handle_size, y + handle_size / 2, bx, y + handle_size, color)
+  -- Bottom triangle
+  reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
+    bx, y + height - handle_size, bx + dir * handle_size, y + height - handle_size / 2, bx, y + height, color)
 end
 
 -- Draw playhead (vertical line with triangle indicator at top)
