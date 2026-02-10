@@ -517,17 +517,21 @@ local function loop()
           reaper.Undo_EndBlock("NVSD_ItemView: Clear pitch/speed", -1)
         end
 
-        -- Open in external editor
+        -- Open in external editor (or Item Properties if no editor configured)
         if settings.check_shortcut(ctx, "open_editor") then
           local saved_items = {}
           for i = 0, reaper.CountSelectedMediaItems(0) - 1 do
             saved_items[#saved_items + 1] = reaper.GetSelectedMediaItem(0, i)
           end
-          reaper.Undo_BeginBlock()
           reaper.SelectAllMediaItems(0, false)
           reaper.SetMediaItemSelected(item, true)
-          reaper.Main_OnCommand(40109, 0)
-          reaper.Undo_EndBlock("NVSD_ItemView: Open in External Editor", -1)
+          if controls.has_external_editor() then
+            reaper.Undo_BeginBlock()
+            reaper.Main_OnCommand(40109, 0)  -- Open items in external editor
+            reaper.Undo_EndBlock("NVSD_ItemView: Open in External Editor", -1)
+          else
+            reaper.Main_OnCommand(40009, 0)  -- Item properties dialog
+          end
           reaper.SelectAllMediaItems(0, false)
           for _, sel_item in ipairs(saved_items) do
             if reaper.ValidatePtr(sel_item, "MediaItem*") then
@@ -1077,13 +1081,11 @@ local function loop()
           local COLOR_PANEL_BG = 0x202020FF
           reaper.ImGui_DrawList_AddRectFilled(draw_list, panel_x, panel_y, panel_x + config.LEFT_PANEL_WIDTH - 4, panel_y + panel_height, COLOR_PANEL_BG)
           local panel_split1 = panel_y + panel_height * 0.43   -- gain / pan boundary
-          local panel_split2 = panel_y + panel_height * 0.67   -- pan / pitch boundary
+          local panel_split2 = panel_y + panel_height * 0.72   -- pan / pitch boundary
 
           controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_y, panel_split1, item, item_vol, config, state, utils)
 
-          -- Pan knob centered between gain slider bottom and pitch knob center
-          local pitch_knob_cy = panel_split2 + (panel_y + panel_height - panel_split2) / 2
-          controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_split1, pitch_knob_cy, item, take, config, state, utils, drawing)
+          controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_split1, panel_split2, item, take, config, state, utils, drawing)
 
           local take_pitch, knob_cx, knob_cy = controls.draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_split2, panel_y + panel_height, take, config, state, utils, drawing)
 

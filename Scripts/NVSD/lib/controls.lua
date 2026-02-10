@@ -3,6 +3,33 @@
 
 local controls = {}
 
+-- Check if an external editor is configured in REAPER preferences ([extedit] section)
+local _ext_editor_cached = nil
+local function has_external_editor()
+  if _ext_editor_cached ~= nil then return _ext_editor_cached end
+  local ini = reaper.get_ini_file()
+  if not ini then _ext_editor_cached = false; return false end
+  local f = io.open(ini, "r")
+  if not f then _ext_editor_cached = false; return false end
+  local in_extedit = false
+  for line in f:lines() do
+    if line:match("^%[extedit%]") then
+      in_extedit = true
+    elseif in_extedit then
+      if line:match("^%[") then break end  -- next section, no entries found
+      if line:match("^%d+=.+") then
+        f:close()
+        _ext_editor_cached = true
+        return true
+      end
+    end
+  end
+  f:close()
+  _ext_editor_cached = false
+  return false
+end
+controls.has_external_editor = has_external_editor
+
 -- Draw WARP/Reverse/Edit buttons in the left column
 function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take, config, state, utils, drawing)
   local btn_height = 24
@@ -295,17 +322,19 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_edit then
     if item then
-      -- Save current selection
       local saved_items = {}
       for i = 0, reaper.CountSelectedMediaItems(0) - 1 do
         saved_items[#saved_items + 1] = reaper.GetSelectedMediaItem(0, i)
       end
-      reaper.Undo_BeginBlock()
       reaper.SelectAllMediaItems(0, false)
       reaper.SetMediaItemSelected(item, true)
-      reaper.Main_OnCommand(40109, 0)
-      reaper.Undo_EndBlock("NVSD_ItemView: Open in External Editor", -1)
-      -- Restore selection outside undo block
+      if has_external_editor() then
+        reaper.Undo_BeginBlock()
+        reaper.Main_OnCommand(40109, 0)  -- Open items in external editor
+        reaper.Undo_EndBlock("NVSD_ItemView: Open in External Editor", -1)
+      else
+        reaper.Main_OnCommand(40009, 0)  -- Item properties dialog
+      end
       reaper.SelectAllMediaItems(0, false)
       for _, sel_item in ipairs(saved_items) do
         if reaper.ValidatePtr(sel_item, "MediaItem*") then
@@ -480,7 +509,7 @@ function controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel
     new_pan = math.max(-1, math.min(1, new_pan))
     if take then
       reaper.SetMediaItemTakeInfo_Value(take, "D_PAN", new_pan)
-      reaper.UpdateItemInProject(item)
+      reaper.UpdateArrange()
     end
   end
 
