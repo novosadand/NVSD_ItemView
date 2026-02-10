@@ -17,6 +17,7 @@ state.pending_cache_invalidation = 0  -- Frames to wait before forcing peak relo
 -- Marker dragging
 state.dragging_start = false
 state.dragging_end = false
+state.dragging_zone = false          -- alt+drag in free waveform zone (slides both markers)
 state.marker_drag_activated = false  -- true once mouse moves beyond threshold
 state.marker_drag_threshold = 4     -- px of movement before drag activates
 state.undo_block_open = nil
@@ -43,6 +44,8 @@ state.dragging_fade_curve_out = false  -- alt+drag curvature for fade-out
 state.fade_curve_drag_start_value = 0  -- original D_FADEINDIR/D_FADEOUTDIR at drag start
 state.fade_curve_cumulative_y = 0     -- accumulated Y delta (cursor-locked)
 state.fade_curve_was_dragged = false  -- true once cumulative Y exceeds threshold (prevents false remove)
+state.fade_drag_start_auto = 0       -- auto-crossfade length at drag start
+state.fade_drag_start_auto_other = 0 -- other fade's auto-crossfade length at drag start
 state.fade_curve_lock_x = nil         -- screen X lock position
 state.fade_curve_lock_y = nil         -- screen Y lock position
 state.fade_curve_last_y = nil         -- last frame screen Y for delta

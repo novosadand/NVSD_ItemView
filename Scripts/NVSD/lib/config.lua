@@ -39,6 +39,37 @@ config.COLOR_ENV_GRID_CENTER = 0xFFFFFF44    -- brightest for center (0 st)
 config.COLOR_ENV_GRID_LABEL = 0xFFFFFF66     -- semitone label text
 config.COLOR_ENV_LINE_HOVER = 0xAAEEEEFF    -- brighter teal for hovered segment
 config.PITCH_LABEL_WIDTH = 30               -- left gutter width for pitch semitone labels
+-- Per-type envelope colors
+config.ENV_COLORS = {
+  Volume = {
+    line       = 0x66CCCCFF,
+    line_dash  = 0x66CCCC99,
+    fill       = 0x66CCCC20,
+    node_hover = 0x66CCFFFF,
+    node_border= 0x66CCCCFF,
+    line_hover = 0xAAEEEEFF,
+    preview    = 0xFFFFFF88,
+  },
+  Pitch = {
+    line       = 0x8B7BDDFF,
+    line_dash  = 0x8B7BDD99,
+    fill       = 0x8B7BDD20,
+    node_hover = 0xB0A0EEFF,
+    node_border= 0x8B7BDDFF,
+    line_hover = 0xC0B0FFFF,
+    preview    = 0xFFFFFF88,
+  },
+  Pan = {
+    line       = 0xCC8844FF,
+    line_dash  = 0xCC884499,
+    fill       = 0xCC884420,
+    node_hover = 0xEEAA66FF,
+    node_border= 0xCC8844FF,
+    line_hover = 0xFFCC88FF,
+    preview    = 0xFFFFFF88,
+  },
+}
+
 config.ENV_NODE_RADIUS = 4
 config.ENV_NODE_HIT_RADIUS = 8
 config.ENV_LINE_THICKNESS = 2.0

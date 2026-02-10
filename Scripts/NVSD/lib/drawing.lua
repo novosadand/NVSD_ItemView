@@ -95,10 +95,32 @@ local function get_fade_bez(shape, dir, is_fade_out)
   return x1, y1, x2, y2, x3, y3, x4, y4
 end
 
+-- Canonical fade shape curves: exact math per shape
+-- (the Bezier system makes shapes 0/2/3/4 identical (linear) at dir=0)
+local shape_icon_fns = {
+  [0] = function(x) return x end,                                       -- Linear
+  [1] = function(x) return 1 - (1-x)*(1-x) end,                        -- Fast start
+  [2] = function(x) return x*x end,                                     -- Slow start
+  [3] = function(x) return 1 - (1-x)^4 end,                             -- Fast start steep
+  [4] = function(x) return x^4 end,                                      -- Slow start steep
+  [5] = function(x) return (1 - math.cos(math.pi * x)) * 0.5 end,      -- S-curve
+  [6] = function(x)                                                       -- S-curve steep
+    if x < 0.5 then return 8*x*x*x*x else local t=1-x; return 1-8*t*t*t*t end
+  end,
+}
+
 -- Evaluate REAPER fade amplitude at position t (0..1)
 -- Returns amplitude: 0..1 for fade-in, 1..0 for fade-out
+-- When dir=0, uses exact mathematical curves (the Bezier system renders
+-- shapes 2/3/4 as linear at dir=0, but REAPER uses their canonical curves)
 local function eval_fade(t, shape, dir, is_fade_out)
-  local x1,y1, x2,y2, x3,y3, x4,y4 = get_fade_bez(shape, dir or 0, is_fade_out)
+  dir = dir or 0
+  if math.abs(dir) < 0.001 and shape >= 0 and shape <= 6 then
+    local fn = shape_icon_fns[shape]
+    if is_fade_out then return fn(1 - t) end
+    return fn(t)
+  end
+  local x1,y1, x2,y2, x3,y3, x4,y4 = get_fade_bez(shape, dir, is_fade_out)
   return cbez_y(x1,y1, x2,y2, x3,y3, x4,y4, t)
 end
 
@@ -112,10 +134,21 @@ local fade_lut_cache = {
 local function get_fade_lut(shape, dir, is_fade_out)
   local c = fade_lut_cache[is_fade_out and "fo" or "fi"]
   if c.shape == shape and c.dir == dir then return c.lut end
-  local x1,y1, x2,y2, x3,y3, x4,y4 = get_fade_bez(shape, dir, is_fade_out)
   local lut = c.lut
-  for i = 0, FADE_LUT_SIZE do
-    lut[i] = cbez_y(x1,y1, x2,y2, x3,y3, x4,y4, i / FADE_LUT_SIZE)
+  if math.abs(dir) < 0.001 and shape >= 0 and shape <= 6 then
+    -- dir=0: use exact mathematical curves (matches REAPER's canonical shapes)
+    local fn = shape_icon_fns[shape]
+    if is_fade_out then
+      for i = 0, FADE_LUT_SIZE do lut[i] = fn(1 - i / FADE_LUT_SIZE) end
+    else
+      for i = 0, FADE_LUT_SIZE do lut[i] = fn(i / FADE_LUT_SIZE) end
+    end
+  else
+    -- dir!=0: use Bezier interpolation system for curvature-adjusted curves
+    local x1,y1, x2,y2, x3,y3, x4,y4 = get_fade_bez(shape, dir, is_fade_out)
+    for i = 0, FADE_LUT_SIZE do
+      lut[i] = cbez_y(x1,y1, x2,y2, x3,y3, x4,y4, i / FADE_LUT_SIZE)
+    end
   end
   c.shape = shape; c.dir = dir
   return lut
@@ -129,19 +162,7 @@ local function fade_lut_lookup(lut, t)
   return lut[i] + (lut[i + 1] - lut[i]) * (idx - i)
 end
 
--- Shape icon LUTs: each shape's characteristic curve for the right-click selector
--- Uses explicit math per shape (the Bezier system makes 0/3/4 identical at dir=0)
-local shape_icon_fns = {
-  [0] = function(x) return x end,                                       -- Linear
-  [1] = function(x) return 1 - (1-x)*(1-x) end,                        -- Fast start
-  [2] = function(x) return x*x end,                                     -- Slow start
-  [3] = function(x) return 1 - (1-x)^4 end,                             -- Fast start steep
-  [4] = function(x) return x^4 end,                                      -- Slow start steep
-  [5] = function(x) return (1 - math.cos(math.pi * x)) * 0.5 end,      -- S-curve
-  [6] = function(x)                                                       -- S-curve steep
-    if x < 0.5 then return 8*x*x*x*x else local t=1-x; return 1-8*t*t*t*t end
-  end,
-}
+-- Shape icon LUTs (pre-computed from shape_icon_fns for icon rendering)
 local shape_icon_luts = {}
 for s = 0, 6 do
   local lut = {}
@@ -273,8 +294,8 @@ function drawing.draw_fade_shape_icon(draw_list, x, y, w, h, shape, is_fade_in)
   local steps = 40
   for i = 0, steps do
     local t = i / steps
-    local vol = fade_lut_lookup(lut, t)
-    if not is_fade_in then vol = 1 - vol end
+    -- Fade-out: time-reverse (read LUT backwards) to match actual rendering
+    local vol = is_fade_in and fade_lut_lookup(lut, t) or fade_lut_lookup(lut, 1 - t)
     DL_PathLineTo(draw_list, x + t * w, y + h - vol * h)
   end
   DL_PathStroke(draw_list, 0xCCCCCCFF, 0, 2.0)
@@ -1323,7 +1344,7 @@ function drawing.draw_envelope_dropdown(draw_list, ctx, x, y, height,
   local btn_x = x + 4
   local btn_y = y + 2
 
-  local items = { "Volume", "Pitch" }
+  local items = { "Volume", "Pitch", "Pan" }
   local menu_item_height = 16
   local menu_height = #items * menu_item_height + 4
   local menu_y = btn_y - menu_height - 1
@@ -1367,8 +1388,8 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
                                         wave_x, wave_y, waveform_width, waveform_height,
                                         time_to_px, view_start, view_length,
                                         mouse_x, mouse_y, config, state, source_length,
-                                        env_scaling, env_max_raw, env_min_raw, is_pitch,
-                                        snap_time_fn)
+                                        env_scaling, env_max_raw, env_min_raw, env_type,
+                                        snap_time_fn, env_colors)
   local DL_AddLine = reaper.ImGui_DrawList_AddLine
   local DL_PathLineTo = reaper.ImGui_DrawList_PathLineTo
   local DL_PathStroke = reaper.ImGui_DrawList_PathStroke
@@ -1377,6 +1398,14 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
   local DL_AddRectFilled = reaper.ImGui_DrawList_AddRectFilled
   local DL_AddText = reaper.ImGui_DrawList_AddText
   local has_path = DL_PathLineTo ~= nil
+
+  -- Derive type flags from env_type string
+  local is_pitch = (env_type == "Pitch")
+  local is_pan = (env_type == "Pan")
+  local is_centered = is_pitch or is_pan
+
+  -- Fall back to Volume colors if env_colors not provided
+  env_colors = env_colors or config.ENV_COLORS.Volume
 
   env_min_raw = env_min_raw or 0
   local env_range = env_max_raw - env_min_raw
@@ -1401,6 +1430,11 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
       -- Pitch: show semitones
       if math.abs(raw) < 0.05 then return "0 st" end
       return string.format("%+.1f st", raw)
+    elseif is_pan then
+      -- Pan: show L/C/R percentage
+      if math.abs(raw) < 0.005 then return "Center" end
+      local pct = math.abs(raw) * 100
+      return string.format("%.0f%%%s", pct, raw < 0 and "L" or "R")
     else
       -- Volume: show dB
       local linear = reaper.ScaleFromEnvelopeMode(env_scaling, raw)
@@ -1435,8 +1469,8 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
   end
 
   -- Default raw value for implicit anchors
-  -- Volume: 0 dB (fader unity). Pitch: 0 semitones
-  local default_raw = is_pitch and 0 or reaper.ScaleToEnvelopeMode(env_scaling, 1.0)
+  -- Volume: 0 dB (fader unity). Pitch: 0 semitones. Pan: center (0)
+  local default_raw = is_centered and 0 or reaper.ScaleToEnvelopeMode(env_scaling, 1.0)
 
   -- Build effective point list (sorted by time) with implicit anchors
   -- env_points contain RAW values (not normalized)
@@ -1483,7 +1517,7 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
     return default_raw
   end
 
-  -- 0. Pitch: draw semitone grid lines + left label column
+  -- 0. Pitch/Pan: draw grid lines + left label column
   if is_pitch then
     local gutter_w = config.PITCH_LABEL_WIDTH
     local gutter_x = wave_x - gutter_w
@@ -1526,12 +1560,47 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
         end
       end
     end
+  elseif is_pan then
+    local gutter_w = config.PITCH_LABEL_WIDTH
+    local gutter_x = wave_x - gutter_w
+
+    -- Label column background + separator
+    DL_AddRectFilled(draw_list, gutter_x, wave_y, wave_x, wave_y + waveform_height, config.COLOR_WAVEFORM_BG)
+    DL_AddLine(draw_list, wave_x, wave_y, wave_x, wave_y + waveform_height, config.COLOR_ENV_GRID, 1)
+
+    -- Pan labels: 100L, 50L, C, 50R, 100R (adaptive based on height)
+    local pan_marks = { {-1, "100L"}, {-0.5, "50L"}, {0, "C"}, {0.5, "50R"}, {1, "100R"} }
+    -- If height is small, only show 100L, C, 100R
+    if waveform_height < 120 then
+      pan_marks = { {-1, "100L"}, {0, "C"}, {1, "100R"} }
+    end
+
+    for _, mark in ipairs(pan_marks) do
+      local raw_val, label = mark[1], mark[2]
+      local ly = value_to_y(raw_val)
+      if ly >= wave_y and ly <= wave_y + waveform_height then
+        local color
+        if raw_val == 0 then
+          color = config.COLOR_ENV_GRID_CENTER
+        elseif math.abs(raw_val) == 0.5 then
+          color = config.COLOR_ENV_GRID_OCTAVE
+        else
+          color = config.COLOR_ENV_GRID
+        end
+        DL_AddLine(draw_list, wave_x, ly, wave_x + waveform_width, ly, color, 1)
+
+        local tw = reaper.ImGui_CalcTextSize(ctx, label)
+        local label_color = (raw_val == 0) and config.COLOR_ENV_GRID_CENTER or config.COLOR_ENV_GRID_LABEL
+        DL_AddText(draw_list, gutter_x + gutter_w - tw - 3, ly - 6, label_color, label)
+        DL_AddLine(draw_list, wave_x - 3, ly, wave_x, ly, color, 1)
+      end
+    end
   end
 
   -- 1. Fill area (column-by-column, 2px step)
   local view_end = view_start + view_length
   local step = 2
-  local center_y = is_pitch and value_to_y(0) or (wave_y + waveform_height)
+  local center_y = is_centered and value_to_y(0) or (wave_y + waveform_height)
   for px = 0, waveform_width, step do
     local t = view_start + (px / waveform_width) * view_length
     local v = interp_value(t)
@@ -1540,7 +1609,7 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
     local fill_top = math.min(env_y, center_y)
     local fill_bot = math.max(env_y, center_y)
     if fill_bot - fill_top >= 1 then
-      DL_AddLine(draw_list, wave_x + px, fill_top, wave_x + px, fill_bot, config.COLOR_ENV_FILL, step)
+      DL_AddLine(draw_list, wave_x + px, fill_top, wave_x + px, fill_bot, env_colors.fill, step)
     end
   end
 
@@ -1554,7 +1623,7 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
     while px < waveform_width do
       local dash_end = math.min(px + config.ENV_DASH_LENGTH, waveform_width)
       DL_AddLine(draw_list, wave_x + px, dash_y, wave_x + dash_end, dash_y,
-        config.COLOR_ENV_LINE_DASHED, config.ENV_LINE_THICKNESS)
+        env_colors.line_dash, config.ENV_LINE_THICKNESS)
       px = px + config.ENV_DASH_LENGTH + config.ENV_DASH_GAP
     end
   elseif has_path then
@@ -1568,7 +1637,7 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
     -- Final point
     local v_end = interp_value(view_end)
     DL_PathLineTo(draw_list, wave_x + waveform_width, value_to_y(v_end))
-    DL_PathStroke(draw_list, config.COLOR_ENV_LINE, 0, config.ENV_LINE_THICKNESS)
+    DL_PathStroke(draw_list, env_colors.line, 0, config.ENV_LINE_THICKNESS)
   end
 
   -- 3. Segment hover detection: find closest line segment to mouse
@@ -1639,7 +1708,7 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
           DL_PathLineTo(draw_list, wave_x + px, value_to_y(interp_value(t)))
         end
         DL_PathLineTo(draw_list, wave_x + px_end, value_to_y(interp_value(view_start + (px_end / waveform_width) * view_length)))
-        DL_PathStroke(draw_list, config.COLOR_ENV_LINE_HOVER, 0, config.ENV_LINE_THICKNESS + 1)
+        DL_PathStroke(draw_list, env_colors.line_hover, 0, config.ENV_LINE_THICKNESS + 1)
       end
     end
   end
@@ -1651,9 +1720,9 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
       local node_py = value_to_y(pts[i].value)
       if node_px >= wave_x - config.ENV_NODE_RADIUS and node_px <= wave_x + waveform_width + config.ENV_NODE_RADIUS then
         local is_hovered = (pts[i].idx == state.env_node_hovered_idx)
-        local fill = is_hovered and config.COLOR_ENV_NODE_HOVER or config.COLOR_ENV_NODE
+        local fill = is_hovered and env_colors.node_hover or config.COLOR_ENV_NODE
         DL_AddCircleFilled(draw_list, node_px, node_py, config.ENV_NODE_RADIUS, fill, 16)
-        DL_AddCircle(draw_list, node_px, node_py, config.ENV_NODE_RADIUS, config.COLOR_ENV_NODE_BORDER, 16, 1.5)
+        DL_AddCircle(draw_list, node_px, node_py, config.ENV_NODE_RADIUS, env_colors.node_border, 16, 1.5)
       end
     end
   end
@@ -1663,7 +1732,7 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
   if state.envelope_hovered_segment >= 0 and state.env_node_hovered_idx < 0
       and not state.dragging_env_node and not state.env_tension_dragging and not alt_held then
     DL_AddCircleFilled(draw_list, state.envelope_hover_x, state.envelope_hover_y,
-      config.ENV_NODE_RADIUS, config.COLOR_ENV_PREVIEW_NODE, 16)
+      config.ENV_NODE_RADIUS, env_colors.preview, 16)
 
     -- Tooltip
     local tip_text = raw_to_label(state.envelope_hover_value)

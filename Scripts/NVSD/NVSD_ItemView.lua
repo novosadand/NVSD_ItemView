@@ -61,7 +61,8 @@ local function ensure_take_envelope(item, take, env_name)
   -- Try action first
   reaper.SetMediaItemSelected(item, true)
   reaper.SetActiveTake(take)
-  local action_id = (env_name == "Volume") and 40693 or 40714
+  local action_ids = { Volume = 40693, Pitch = 40714, Pan = 40694 }
+  local action_id = action_ids[env_name] or 40693
   reaper.Main_OnCommand(action_id, 0)
   env = reaper.GetTakeEnvelopeByName(take, env_name)
   if env then return env end
@@ -69,41 +70,16 @@ local function ensure_take_envelope(item, take, env_name)
   local chunk_tag = ({ Volume = "VOLENV2", Pitch = "PITCHENV", Pan = "PANENV2" })[env_name]
   if not chunk_tag then return nil end
   local _, chunk = reaper.GetItemStateChunk(item, "", false)
-  -- Debug: write first 500 chars of chunk
-  local dbg = io.open(script_dir .. "/env_chunk_debug.txt", "w")
-  if dbg then
-    dbg:write("=== CHUNK DEBUG ===\n")
-    dbg:write("chunk_tag: " .. chunk_tag .. "\n")
-    dbg:write("chunk_length: " .. #chunk .. "\n")
-    dbg:write("has_tag: " .. tostring(chunk:find("<" .. chunk_tag) ~= nil) .. "\n")
-    dbg:write("--- chunk (first 1500 chars) ---\n")
-    dbg:write(chunk:sub(1, 1500) .. "\n")
-    dbg:close()
-  end
   if chunk:find("<" .. chunk_tag) then return reaper.GetTakeEnvelopeByName(take, env_name) end
   local env_chunk = "<" .. chunk_tag .. "\nACT 1 -1\nVIS 1 1 1\nLANEHEIGHT 0 0\nARM 0\nDEFSHAPE 0 -1 -1\nPT 0 0 0\n>\n"
   -- Find the item's closing > (last > in chunk) and insert before it
   local last_close = chunk:match(".*()>")
   if last_close then
     chunk = chunk:sub(1, last_close - 1) .. env_chunk .. chunk:sub(last_close)
-    local ok = reaper.SetItemStateChunk(item, chunk, false)
+    reaper.SetItemStateChunk(item, chunk, false)
     reaper.UpdateItemInProject(item)
     reaper.UpdateArrange()
-    env = reaper.GetTakeEnvelopeByName(take, env_name)
-    -- Debug result
-    local dbg2 = io.open(script_dir .. "/env_chunk_debug.txt", "a")
-    if dbg2 then
-      dbg2:write("\n=== AFTER CHUNK SET ===\n")
-      dbg2:write("SetItemStateChunk returned: " .. tostring(ok) .. "\n")
-      dbg2:write("env after: " .. tostring(env ~= nil) .. "\n")
-      local ne = reaper.CountTakeEnvelopes(take)
-      dbg2:write("take_envelopes after: " .. tostring(ne) .. "\n")
-      dbg2:write("--- new chunk (first 800) ---\n")
-      local _, newchunk = reaper.GetItemStateChunk(item, "", false)
-      dbg2:write(newchunk:sub(1, 800) .. "\n")
-      dbg2:close()
-    end
-    return env
+    return reaper.GetTakeEnvelopeByName(take, env_name)
   end
   return nil
 end
@@ -344,6 +320,7 @@ local function loop()
         env_node = "NVSD_ItemView: Move envelope point",
         env_freehand = "NVSD_ItemView: Draw envelope freehand",
         env_tension = "NVSD_ItemView: Adjust envelope curve",
+        slide_both = "NVSD_ItemView: Slide item",
       }
       local msg = undo_messages[state.undo_block_open] or "NVSD_ItemView: Edit"
       reaper.Undo_OnStateChangeEx(msg, -1, -1)
@@ -372,11 +349,13 @@ local function loop()
         if sel_take then
           local vol_env = reaper.GetTakeEnvelopeByName(sel_take, "Volume")
           local pitch_env = reaper.GetTakeEnvelopeByName(sel_take, "Pitch")
-          if vol_env or pitch_env then
+          local pan_env = reaper.GetTakeEnvelopeByName(sel_take, "Pan")
+          if vol_env or pitch_env or pan_env then
             state.active_view_tab = "envelopes"
-            -- Prefer Pitch if only Pitch exists, otherwise default to Volume
-            if pitch_env and not vol_env then
+            if pitch_env and not vol_env and not pan_env then
               state.envelope_type = "Pitch"
+            elseif pan_env and not vol_env and not pitch_env then
+              state.envelope_type = "Pan"
             else
               state.envelope_type = "Volume"
             end
@@ -580,16 +559,36 @@ local function loop()
           local item_vol = reaper.GetMediaItemInfo_Value(item, "D_VOL")
 
           -- Fade values (use effective length: max of manual and auto-crossfade)
-          local fade_in_len = math.max(
-            reaper.GetMediaItemInfo_Value(item, "D_FADEINLEN"),
-            reaper.GetMediaItemInfo_Value(item, "D_FADEINLEN_AUTO"))
-          local fade_out_len = math.max(
-            reaper.GetMediaItemInfo_Value(item, "D_FADEOUTLEN"),
-            reaper.GetMediaItemInfo_Value(item, "D_FADEOUTLEN_AUTO"))
+          local fade_in_len_manual = reaper.GetMediaItemInfo_Value(item, "D_FADEINLEN")
+          local fade_in_len_auto = reaper.GetMediaItemInfo_Value(item, "D_FADEINLEN_AUTO")
+          local fade_out_len_manual = reaper.GetMediaItemInfo_Value(item, "D_FADEOUTLEN")
+          local fade_out_len_auto = reaper.GetMediaItemInfo_Value(item, "D_FADEOUTLEN_AUTO")
+          local fade_in_len = math.max(fade_in_len_manual, fade_in_len_auto)
+          local fade_out_len = math.max(fade_out_len_manual, fade_out_len_auto)
           local fade_in_shape = math.floor(reaper.GetMediaItemInfo_Value(item, "C_FADEINSHAPE") + 0.5)
           local fade_out_shape = math.floor(reaper.GetMediaItemInfo_Value(item, "C_FADEOUTSHAPE") + 0.5)
           local fade_in_dir = reaper.GetMediaItemInfo_Value(item, "D_FADEINDIR")
           local fade_out_dir = reaper.GetMediaItemInfo_Value(item, "D_FADEOUTDIR")
+
+          -- Handle auto-crossfade shapes: REAPER returns shape >= 7 for crossfade-customized fades.
+          -- The actual shape is in the item state chunk's FADEIN/FADEOUT first field (integer part).
+          if fade_in_shape > 6 or fade_out_shape > 6 then
+            local _, chunk = reaper.GetItemStateChunk(item, "", false)
+            if fade_in_shape > 6 then
+              local fi_first = chunk:match("FADEIN ([%d%.%-]+)")
+              if fi_first then
+                fade_in_shape = math.floor(tonumber(fi_first))
+                if fade_in_shape < 0 or fade_in_shape > 6 then fade_in_shape = 0 end
+              end
+            end
+            if fade_out_shape > 6 then
+              local fo_first = chunk:match("FADEOUT ([%d%.%-]+)")
+              if fo_first then
+                fade_out_shape = math.floor(tonumber(fo_first))
+                if fade_out_shape < 0 or fade_out_shape > 6 then fade_out_shape = 0 end
+              end
+            end
+          end
 
           -- Get available space for waveform
           local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
@@ -598,7 +597,7 @@ local function loop()
           local panel_height = config.INFO_BAR_HEIGHT + config.RULER_HEIGHT + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height
 
           local total_left_width = config.LEFT_COLUMN_WIDTH + config.LEFT_PANEL_WIDTH
-          local pitch_gutter = (state.active_view_tab == "envelopes" and state.envelope_type == "Pitch") and config.PITCH_LABEL_WIDTH or 0
+          local pitch_gutter = (state.active_view_tab == "envelopes" and (state.envelope_type == "Pitch" or state.envelope_type == "Pan")) and config.PITCH_LABEL_WIDTH or 0
           local waveform_width = math.max(100, avail_w - (config.WAVEFORM_MARGIN_H * 2) - total_left_width - pitch_gutter)
 
           local cursor_x, cursor_y = reaper.ImGui_GetCursorScreenPos(ctx)
@@ -932,18 +931,20 @@ local function loop()
           -- Draw envelope overlay when envelopes tab is active
           if state.active_view_tab == "envelopes" then
             -- Read envelope points from REAPER (raw values for fader-scaled display)
-            local env_name = state.envelope_type == "Pitch" and "Pitch" or "Volume"
-            local is_pitch = (state.envelope_type == "Pitch")
+            local env_name = state.envelope_type  -- "Volume", "Pitch", or "Pan"
+            local is_pitch = (env_name == "Pitch")
+            local is_pan = (env_name == "Pan")
+            local is_centered = is_pitch or is_pan
             local env = take and reaper.GetTakeEnvelopeByName(take, env_name)
             local env_points = {}
             local num_env_points = 0
-            -- Default scaling: Volume=fader(1), Pitch=linear(0)
-            local env_scaling = is_pitch and 0 or 1
-            local env_max_raw = is_pitch and 24.0 or reaper.ScaleToEnvelopeMode(env_scaling, 2.0)
-            local env_min_raw = is_pitch and -24.0 or 0
+            -- Default scaling: Volume=fader(1), Pitch/Pan=linear(0)
+            local env_scaling = is_centered and 0 or 1
+            local env_max_raw = is_pitch and 24.0 or (is_pan and 1.0 or reaper.ScaleToEnvelopeMode(env_scaling, 2.0))
+            local env_min_raw = is_pitch and -24.0 or (is_pan and -1.0 or 0)
             if env then
               env_scaling = reaper.GetEnvelopeScalingMode(env)
-              if not is_pitch then
+              if not is_centered then
                 env_max_raw = reaper.ScaleToEnvelopeMode(env_scaling, 2.0)
               end
               num_env_points = reaper.CountEnvelopePoints(env)
@@ -966,12 +967,13 @@ local function loop()
             end
 
             -- Draw envelope overlay on waveform
+            local env_colors = config.ENV_COLORS[state.envelope_type] or config.ENV_COLORS.Volume
             drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_env_points,
               wave_x, wave_y, waveform_width, waveform_height,
               time_to_px, view_start, view_length,
               mouse_x, mouse_y, config, state, source_length,
-              env_scaling, env_max_raw, env_min_raw, is_pitch,
-              snap_to_grid_if_enabled)
+              env_scaling, env_max_raw, env_min_raw, state.envelope_type,
+              snap_to_grid_if_enabled, env_colors)
 
           end
 
@@ -1212,6 +1214,16 @@ local function loop()
             end
           end
 
+          -- Free zone: waveform area between markers, no interactive element hovered
+          local mouse_in_free_zone = mouse_in_waveform
+              and mouse_x > start_marker_x + config.MARKER_WIDTH / 2
+              and mouse_x < end_marker_x - config.MARKER_WIDTH / 2
+              and not near_start and not near_end
+              and not near_fade_in and not near_fade_out
+              and not mouse_in_fade_in_body and not mouse_in_fade_out_body
+              and not (state.active_view_tab == "envelopes" and state.env_node_hovered_idx >= 0)
+              and not (state.active_view_tab == "envelopes" and state.envelope_hovered_segment >= 0)
+
           -- Cursor feedback (alt_held cached at top of frame)
           -- Fade grabs use Hand cursor to distinguish from marker's ResizeEW
           if state.dragging_fade_curve_in or state.dragging_fade_curve_out or state.env_tension_dragging then
@@ -1220,6 +1232,8 @@ local function loop()
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
           elseif alt_held and reaper_is_active and (mouse_in_fade_in_body or mouse_in_fade_out_body) then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
+          elseif alt_held and mouse_in_free_zone and not state.dragging_fade_in and not state.dragging_fade_out then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())
           elseif near_fade_in or near_fade_out then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
           elseif (state.dragging_start or state.dragging_end) and alt_held then
@@ -1493,6 +1507,8 @@ local function loop()
               state.fade_drag_start_value = fade_in_len
               state.fade_drag_start_other = fade_out_len
               state.fade_drag_start_view_length = view_length
+              state.fade_drag_start_auto = fade_in_len_auto
+              state.fade_drag_start_auto_other = fade_out_len_auto
               if not state.undo_block_open then
                 state.undo_block_open = "fade_in"
               end
@@ -1502,6 +1518,8 @@ local function loop()
               state.fade_drag_start_value = fade_out_len
               state.fade_drag_start_other = fade_in_len
               state.fade_drag_start_view_length = view_length
+              state.fade_drag_start_auto = fade_out_len_auto
+              state.fade_drag_start_auto_other = fade_in_len_auto
               if not state.undo_block_open then
                 state.undo_block_open = "fade_out"
               end
@@ -1541,14 +1559,40 @@ local function loop()
             end
           end
 
+          -- Alt+click in free zone: initiate zone drag (slides both markers)
+          if reaper.ImGui_IsMouseClicked(ctx, 0) and alt_held and mouse_in_free_zone
+              and not state.dragging_start and not state.dragging_end
+              and not state.dragging_fade_in and not state.dragging_fade_out
+              and not state.dragging_fade_curve_in and not state.dragging_fade_curve_out
+              and not state.is_ruler_dragging and not state.is_panning then
+            state.dragging_zone = true
+            state.dragging_start = true  -- reuse marker drag machinery
+            state.marker_drag_activated = false
+            state.drag_start_offset = start_offset
+            state.drag_start_length = item_length
+            state.drag_start_mouse_x = mouse_x
+            state.drag_start_view_length = view_length
+            state.drag_start_view_start = view_start
+            state.drag_start_playrate = playrate
+            state.drag_current_start = start_offset
+            state.drag_current_end = start_offset + source_item_length
+            state.drag_start_fade_in = fade_in_len
+            state.drag_start_fade_out = fade_out_len
+            if not state.undo_block_open then
+              state.undo_block_open = "slide_both"
+            end
+          end
+
           -- Envelope node interaction (create/drag/delete)
           if state.active_view_tab == "envelopes" and take then
-            local env_name = state.envelope_type == "Pitch" and "Pitch" or "Volume"
-            local is_pitch = (state.envelope_type == "Pitch")
-            local env_max_raw = is_pitch and 24.0 or reaper.ScaleToEnvelopeMode(is_pitch and 0 or 1, 2.0)
-            local env_min_raw = is_pitch and -24.0 or 0
+            local env_name = state.envelope_type  -- "Volume", "Pitch", or "Pan"
+            local is_pitch = (env_name == "Pitch")
+            local is_pan = (env_name == "Pan")
+            local is_centered = is_pitch or is_pan
+            local env_max_raw = is_pitch and 24.0 or (is_pan and 1.0 or reaper.ScaleToEnvelopeMode(is_centered and 0 or 1, 2.0))
+            local env_min_raw = is_pitch and -24.0 or (is_pan and -1.0 or 0)
 
-            -- Helper: convert mouse Y to envelope raw value (works for both Volume and Pitch)
+            -- Helper: convert mouse Y to envelope raw value
             local function mouse_y_to_raw(my)
               local raw = env_min_raw + (env_max_raw - env_min_raw) * (1 - (my - wave_y) / waveform_height)
               raw = math.max(env_min_raw, math.min(env_max_raw, raw))
@@ -1930,7 +1974,8 @@ local function loop()
               -- Create undo point AFTER envelope shift so both D_STARTOFFS + envelope are captured atomically
               local undo_msg = state.dragging_start and "NVSD_ItemView: Adjust item start" or "NVSD_ItemView: Adjust item end"
               reaper.Undo_OnStateChangeEx(undo_msg, -1, -1)
-            elseif (state.dragging_start or state.dragging_end) and not state.marker_drag_activated then
+            elseif (state.dragging_start or state.dragging_end) and not state.marker_drag_activated
+                and not state.dragging_zone then
               -- Click on marker without dragging: place preview cursor at marker position
               local marker_pos = state.dragging_start and state.drag_current_start or state.drag_current_end
               state.preview_cursor_pos = marker_pos
@@ -1944,18 +1989,21 @@ local function loop()
             if state.dragging_fade_curve_in and not state.fade_curve_was_dragged then
               reaper.Undo_BeginBlock()
               reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", 0)
+              reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN_AUTO", 0)
               reaper.SetMediaItemInfo_Value(item, "D_FADEINDIR", 0)
               reaper.UpdateArrange()
               reaper.Undo_EndBlock("NVSD_ItemView: Remove fade in", -1)
             elseif state.dragging_fade_curve_out and not state.fade_curve_was_dragged then
               reaper.Undo_BeginBlock()
               reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", 0)
+              reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN_AUTO", 0)
               reaper.SetMediaItemInfo_Value(item, "D_FADEOUTDIR", 0)
               reaper.UpdateArrange()
               reaper.Undo_EndBlock("NVSD_ItemView: Remove fade out", -1)
             end
             state.dragging_start = false
             state.dragging_end = false
+            state.dragging_zone = false
             state.marker_drag_activated = false
             state.dragging_fade_in = false
             state.dragging_fade_out = false
@@ -2094,7 +2142,8 @@ local function loop()
             reaper.UpdateArrange()
 
           -- Dragging start marker
-          elseif state.dragging_start and state.marker_drag_activated and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
+          elseif state.dragging_start and state.marker_drag_activated and not state.dragging_zone
+              and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
             local original_source_end = state.drag_start_offset + (state.drag_start_length * state.drag_start_playrate)
             local new_start
             if mouse_x >= wave_x and mouse_x <= wave_x + waveform_width then
@@ -2177,7 +2226,15 @@ local function loop()
             -- Push fade-out: cap at remaining space, but never grow past its initial value
             local fo = math.min(state.fade_drag_start_other, math.max(0, item_length - fi))
             reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
+            -- Also update auto-crossfade length so REAPER reflects the change
+            if state.fade_drag_start_auto > 0 then
+              reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN_AUTO", math.min(fi, state.fade_drag_start_auto))
+            end
             reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
+            -- Shrink the other side's auto if pushed
+            if state.fade_drag_start_auto_other > 0 and fo < state.fade_drag_start_auto_other then
+              reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN_AUTO", fo)
+            end
             reaper.UpdateArrange()
           elseif state.dragging_fade_out and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
             local delta_px = state.fade_drag_start_mouse_x - mouse_x  -- reversed: drag left = more fade
@@ -2186,8 +2243,14 @@ local function loop()
             fo = math.min(fo, item_length)
             -- Push fade-in: cap at remaining space, but never grow past its initial value
             local fi = math.min(state.fade_drag_start_other, math.max(0, item_length - fo))
-            reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
             reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
+            if state.fade_drag_start_auto > 0 then
+              reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN_AUTO", math.min(fo, state.fade_drag_start_auto))
+            end
+            reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
+            if state.fade_drag_start_auto_other > 0 and fi < state.fade_drag_start_auto_other then
+              reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN_AUTO", fi)
+            end
             reaper.UpdateArrange()
           end
 
@@ -2217,13 +2280,21 @@ local function loop()
               -- Clamp cumulative delta so reversing direction responds instantly
               state.fade_curve_cumulative_y = (state.fade_curve_drag_start_value - new_dir) / sensitivity
               reaper.SetMediaItemInfo_Value(item, "D_FADEINDIR", new_dir)
+              fade_in_dir = new_dir  -- update local for immediate draw
             else
               new_dir = state.fade_curve_drag_start_value + state.fade_curve_cumulative_y * sensitivity
               new_dir = math.max(-1, math.min(1, new_dir))
               state.fade_curve_cumulative_y = (new_dir - state.fade_curve_drag_start_value) / sensitivity
               reaper.SetMediaItemInfo_Value(item, "D_FADEOUTDIR", new_dir)
+              fade_out_dir = new_dir  -- update local for immediate draw
             end
             reaper.UpdateArrange()
+          end
+
+          -- Alt-hover free zone highlight
+          if alt_held and mouse_in_free_zone and not we_are_dragging then
+            reaper.ImGui_DrawList_AddRectFilled(draw_list,
+              start_marker_x, wave_y, end_marker_x, wave_y + waveform_height, 0xFFFFFF08)
           end
 
           -- Draw fade overlays (before markers, after all position vars are computed)
