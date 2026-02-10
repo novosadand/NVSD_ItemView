@@ -18,6 +18,7 @@ state.pending_cache_invalidation = 0  -- Frames to wait before forcing peak relo
 state.dragging_start = false
 state.dragging_end = false
 state.dragging_zone = false          -- alt+drag in free waveform zone (slides both markers)
+state.drag_alt_latched = false       -- true when alt was held at drag start (sticky slide-both)
 state.marker_drag_activated = false  -- true once mouse moves beyond threshold
 state.marker_drag_threshold = 4     -- px of movement before drag activates
 state.undo_block_open = nil

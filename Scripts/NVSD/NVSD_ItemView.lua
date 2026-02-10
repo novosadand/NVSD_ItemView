@@ -1081,7 +1081,9 @@ local function loop()
 
           controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_y, panel_split1, item, item_vol, config, state, utils)
 
-          controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_split1, panel_split2, item, take, config, state, utils, drawing)
+          -- Pan knob centered between gain slider bottom and pitch knob center
+          local pitch_knob_cy = panel_split2 + (panel_y + panel_height - panel_split2) / 2
+          controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_split1, pitch_knob_cy, item, take, config, state, utils, drawing)
 
           local take_pitch, knob_cx, knob_cy = controls.draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_split2, panel_y + panel_height, take, config, state, utils, drawing)
 
@@ -1261,7 +1263,7 @@ local function loop()
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())
           elseif near_fade_in or near_fade_out then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
-          elseif (state.dragging_start or state.dragging_end) and alt_held then
+          elseif (state.dragging_start or state.dragging_end) and (alt_held or state.drag_alt_latched) then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())
           elseif mouse_in_marker_area and (near_start or near_end) then
             if alt_held then
@@ -1627,6 +1629,7 @@ local function loop()
               and not state.is_ruler_dragging and not state.is_panning then
             if near_start then
               state.dragging_start = true
+              state.drag_alt_latched = alt_held
               state.marker_drag_activated = false
               state.drag_start_offset = start_offset
               state.drag_start_length = item_length
@@ -1640,6 +1643,7 @@ local function loop()
               state.drag_start_fade_out = fade_out_len
             elseif near_end then
               state.dragging_end = true
+              state.drag_alt_latched = alt_held
               state.marker_drag_activated = false
               state.drag_start_offset = start_offset
               state.drag_start_length = item_length
@@ -1662,6 +1666,7 @@ local function loop()
               and not state.is_ruler_dragging and not state.is_panning then
             state.dragging_zone = true
             state.dragging_start = true  -- reuse marker drag machinery
+            state.drag_alt_latched = true
             state.marker_drag_activated = false
             state.drag_start_offset = start_offset
             state.drag_start_length = item_length
@@ -1701,12 +1706,14 @@ local function loop()
             if not state.selection_drag_activated then
               if math.abs(mouse_x - state.selection_start_mouse_x) >= state.marker_drag_threshold then
                 state.selection_drag_activated = true
+                -- Snap start time to grid when drag activates
+                state.selection_start_time = snap_to_grid_if_enabled(state.selection_start_time)
               end
             end
             if state.selection_drag_activated then
-              state.selection_end_time = px_to_time(mouse_x)
-              -- Clamp to source bounds
-              state.selection_end_time = math.max(0, math.min(source_length, state.selection_end_time))
+              local raw_time = px_to_time(mouse_x)
+              raw_time = math.max(0, math.min(source_length, raw_time))
+              state.selection_end_time = snap_to_grid_if_enabled(raw_time)
             end
           end
 
@@ -2332,6 +2339,7 @@ local function loop()
             state.dragging_start = false
             state.dragging_end = false
             state.dragging_zone = false
+            state.drag_alt_latched = false
             state.marker_drag_activated = false
             state.dragging_fade_in = false
             state.dragging_fade_out = false
@@ -2423,8 +2431,8 @@ local function loop()
             end
           end
 
-          -- Alt+drag: slide both markers
-          if (state.dragging_start or state.dragging_end) and state.marker_drag_activated and alt_held and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
+          -- Alt+drag: slide both markers (alt latched at drag start, releasing alt mid-drag keeps sliding)
+          if (state.dragging_start or state.dragging_end) and state.marker_drag_activated and state.drag_alt_latched and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
             local mouse_delta_px = mouse_x - state.drag_start_mouse_x
             local mouse_delta_time = (mouse_delta_px / waveform_width) * state.drag_start_view_length
 
