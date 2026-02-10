@@ -65,6 +65,20 @@ function utils.pitch_to_angle(pitch, pitch_max)
   return clock_angle - math.pi / 2
 end
 
+-- Convert pan value (-1..1) to knob angle (radians)
+function utils.pan_to_angle(pan)
+  local clock_angle = pan * (5 * math.pi / 6)
+  return clock_angle - math.pi / 2
+end
+
+-- Format pan value for display: "C", "L50", "R100", etc.
+function utils.format_pan(pan)
+  if math.abs(pan) < 0.005 then return "C" end
+  local pct = math.floor(math.abs(pan) * 100 + 0.5)
+  if pan < 0 then return "L" .. pct end
+  return "R" .. pct
+end
+
 -- Convert pitch float to semitones and cents display values
 -- Uses round-to-nearest for Ableton-style ±50 cents range
 function utils.pitch_to_semitones_cents(pitch)

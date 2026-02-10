@@ -312,6 +312,7 @@ local function loop()
         marker_start = "NVSD_ItemView: Adjust item start",
         marker_end = "NVSD_ItemView: Adjust item end",
         pitch = "NVSD_ItemView: Adjust pitch",
+        pan = "NVSD_ItemView: Adjust pan",
         gain = "NVSD_ItemView: Adjust item volume",
         semitones = "NVSD_ItemView: Adjust semitones",
         cents = "NVSD_ItemView: Adjust cents",
@@ -1055,11 +1056,14 @@ local function loop()
 
           local COLOR_PANEL_BG = 0x202020FF
           reaper.ImGui_DrawList_AddRectFilled(draw_list, panel_x, panel_y, panel_x + config.LEFT_PANEL_WIDTH - 4, panel_y + panel_height, COLOR_PANEL_BG)
-          local panel_split = panel_y + panel_height * 0.55
+          local panel_split1 = panel_y + panel_height * 0.43   -- gain / pan boundary
+          local panel_split2 = panel_y + panel_height * 0.67   -- pan / pitch boundary
 
-          controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_y, panel_split, item, item_vol, config, state, utils)
+          controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_y, panel_split1, item, item_vol, config, state, utils)
 
-          local take_pitch, knob_cx, knob_cy = controls.draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_split, panel_y + panel_height, take, config, state, utils, drawing)
+          controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_split1, panel_split2, item, take, config, state, utils, drawing)
+
+          local take_pitch, knob_cx, knob_cy = controls.draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_split2, panel_y + panel_height, take, config, state, utils, drawing)
 
           controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, panel_x, knob_cy, take, take_pitch, config, state, utils)
 

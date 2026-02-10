@@ -1159,7 +1159,7 @@ function drawing.draw_preview_playhead(draw_list, x, y, height)
 end
 
 -- Draw a knob
-function drawing.draw_knob(draw_list, cx, cy, radius, angle, is_hovered, is_active)
+function drawing.draw_knob(draw_list, cx, cy, radius, angle, is_hovered, is_active, label, unit_text)
   local COLOR_KNOB_BG = 0x303030FF
   local COLOR_KNOB_BORDER = is_active and 0x6AB0F9FF or (is_hovered and 0x888888FF or 0x555555FF)
   local COLOR_KNOB_POINTER = 0xFFFFFFFF
@@ -1223,11 +1223,13 @@ function drawing.draw_knob(draw_list, cx, cy, radius, angle, is_hovered, is_acti
   local py2 = cy + math.sin(angle) * pointer_outer
   reaper.ImGui_DrawList_AddLine(draw_list, px1, py1, px2, py2, COLOR_KNOB_POINTER, 2)
 
-  local label_color = 0xAAAAAAFF
-  reaper.ImGui_DrawList_AddText(draw_list, cx - 12, cy - radius - 18, label_color, "Pitch")
-
-  local st_color = 0x888888FF
-  reaper.ImGui_DrawList_AddText(draw_list, cx - 5, cy + radius + 2, st_color, "st")
+  if label then
+    local lw = #label * 6
+    reaper.ImGui_DrawList_AddText(draw_list, cx - lw / 2, cy - radius - 18, 0xAAAAAAFF, label)
+  end
+  if unit_text then
+    reaper.ImGui_DrawList_AddText(draw_list, cx - 5, cy + radius + 2, 0x888888FF, unit_text)
+  end
 end
 
 -- Draw a filled rectangle with beveled (chamfered) corners using ImGui path API

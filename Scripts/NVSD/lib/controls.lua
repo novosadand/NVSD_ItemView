@@ -74,14 +74,23 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
           local new_length = old_length * (old_playrate / new_playrate)
           reaper.SetMediaItemInfo_Value(take_item, "D_LENGTH", new_length)
 
-          -- Clamp fades so they don't cross
+          -- Clamp fades so they don't cross (effective fade = max of manual and auto at each edge)
           local fi = reaper.GetMediaItemInfo_Value(take_item, "D_FADEINLEN")
           local fo = reaper.GetMediaItemInfo_Value(take_item, "D_FADEOUTLEN")
-          if fi + fo > new_length then
-            fo = math.max(0, new_length - fi)
-            if fo == 0 then fi = math.min(fi, new_length) end
-            reaper.SetMediaItemInfo_Value(take_item, "D_FADEINLEN", fi)
-            reaper.SetMediaItemInfo_Value(take_item, "D_FADEOUTLEN", fo)
+          local fia = reaper.GetMediaItemInfo_Value(take_item, "D_FADEINLEN_AUTO")
+          local foa = reaper.GetMediaItemInfo_Value(take_item, "D_FADEOUTLEN_AUTO")
+
+          local eff_fi = math.max(fi, fia)
+          local eff_fo = math.max(fo, foa)
+
+          if eff_fi + eff_fo > new_length then
+            eff_fo = math.max(0, new_length - eff_fi)
+            if eff_fo == 0 then eff_fi = math.min(eff_fi, new_length) end
+
+            reaper.SetMediaItemInfo_Value(take_item, "D_FADEINLEN", math.min(fi, eff_fi))
+            reaper.SetMediaItemInfo_Value(take_item, "D_FADEOUTLEN", math.min(fo, eff_fo))
+            reaper.SetMediaItemInfo_Value(take_item, "D_FADEINLEN_AUTO", math.min(fia, eff_fi))
+            reaper.SetMediaItemInfo_Value(take_item, "D_FADEOUTLEN_AUTO", math.min(foa, eff_fo))
           end
         end
       end
@@ -422,6 +431,62 @@ function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, pa
 
 end
 
+-- Draw pan knob
+function controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_top, panel_bottom, item, take, config, state, utils, drawing)
+  local take_pan = 0
+  if take then
+    take_pan = reaper.GetMediaItemTakeInfo_Value(take, "D_PAN")
+    if math.abs(take_pan) < 0.005 then take_pan = 0 end
+  end
+
+  local knob_cx = panel_x + config.LEFT_PANEL_WIDTH / 2 - 2
+  local knob_cy = panel_top + (panel_bottom - panel_top) / 2
+  local knob_angle = utils.pan_to_angle(take_pan)
+
+  local knob_dx = mouse_x - knob_cx
+  local knob_dy = mouse_y - knob_cy
+  local knob_dist = math.sqrt(knob_dx * knob_dx + knob_dy * knob_dy)
+  local mouse_in_knob = knob_dist <= config.PITCH_KNOB_RADIUS + 8
+
+  drawing.draw_knob(draw_list, knob_cx, knob_cy, config.PITCH_KNOB_RADIUS, knob_angle,
+    mouse_in_knob, state.is_dragging("pan"), "Pan")
+
+  -- Pan value label below knob
+  local pan_text = utils.format_pan(take_pan)
+  local pan_text_w = #pan_text * 6
+  reaper.ImGui_DrawList_AddText(draw_list, knob_cx - pan_text_w / 2,
+    knob_cy + config.PITCH_KNOB_RADIUS + 2, 0x888888FF, pan_text)
+
+  -- Double-click reset to center
+  if reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_knob then
+    if take then
+      reaper.Undo_BeginBlock()
+      reaper.SetMediaItemTakeInfo_Value(take, "D_PAN", 0)
+      reaper.UpdateArrange()
+      reaper.Undo_EndBlock("NVSD_ItemView: Reset pan to center", -1)
+    end
+    state.end_drag("pan")
+  elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_knob then
+    state.start_drag("pan", mouse_y, take_pan, true)
+  end
+
+  if reaper.ImGui_IsMouseReleased(ctx, 0) and state.is_dragging("pan") then
+    state.end_drag("pan")
+  end
+
+  if state.is_dragging("pan") and reaper.ImGui_IsMouseDown(ctx, 0) then
+    local delta_y = state.get_drag_delta(ctx, "pan", mouse_y, take_pan, 0.2)
+    local new_pan = state.drag_controls.pan.start_value + delta_y / 200
+    new_pan = math.max(-1, math.min(1, new_pan))
+    if take then
+      reaper.SetMediaItemTakeInfo_Value(take, "D_PAN", new_pan)
+      reaper.UpdateItemInProject(item)
+    end
+  end
+
+  return take_pan
+end
+
 -- Set pitch on take based on warp mode
 local function set_take_pitch(take, semitones, state, utils)
   if not take then return end
@@ -444,16 +509,27 @@ local function set_take_pitch(take, semitones, state, utils)
       local new_length = old_length * (old_playrate / new_playrate)
       reaper.SetMediaItemInfo_Value(take_item, "D_LENGTH", new_length)
 
-      -- Clamp fades so they don't cross: shrink fade-out first, then fade-in
+      -- Clamp fades so they don't cross (effective fade = max of manual and auto at each edge)
       local fi = reaper.GetMediaItemInfo_Value(take_item, "D_FADEINLEN")
       local fo = reaper.GetMediaItemInfo_Value(take_item, "D_FADEOUTLEN")
-      if fi + fo > new_length then
-        fo = math.max(0, new_length - fi)
-        if fo == 0 then
-          fi = math.min(fi, new_length)
+      local fia = reaper.GetMediaItemInfo_Value(take_item, "D_FADEINLEN_AUTO")
+      local foa = reaper.GetMediaItemInfo_Value(take_item, "D_FADEOUTLEN_AUTO")
+
+      local eff_fi = math.max(fi, fia)
+      local eff_fo = math.max(fo, foa)
+
+      if eff_fi + eff_fo > new_length then
+        -- Shrink fade-out first, then fade-in if needed
+        eff_fo = math.max(0, new_length - eff_fi)
+        if eff_fo == 0 then
+          eff_fi = math.min(eff_fi, new_length)
         end
-        reaper.SetMediaItemInfo_Value(take_item, "D_FADEINLEN", fi)
-        reaper.SetMediaItemInfo_Value(take_item, "D_FADEOUTLEN", fo)
+
+        -- Clamp all fade values to their edge's effective limit
+        reaper.SetMediaItemInfo_Value(take_item, "D_FADEINLEN", math.min(fi, eff_fi))
+        reaper.SetMediaItemInfo_Value(take_item, "D_FADEOUTLEN", math.min(fo, eff_fo))
+        reaper.SetMediaItemInfo_Value(take_item, "D_FADEINLEN_AUTO", math.min(fia, eff_fi))
+        reaper.SetMediaItemInfo_Value(take_item, "D_FADEOUTLEN_AUTO", math.min(foa, eff_fo))
       end
     end
   end
@@ -484,7 +560,7 @@ function controls.draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, pan
   local knob_dist = math.sqrt(knob_dx * knob_dx + knob_dy * knob_dy)
   local mouse_in_knob = knob_dist <= config.PITCH_KNOB_RADIUS + 8
 
-  drawing.draw_knob(draw_list, knob_cx, knob_cy, config.PITCH_KNOB_RADIUS, knob_angle, mouse_in_knob, state.is_dragging("pitch"))
+  drawing.draw_knob(draw_list, knob_cx, knob_cy, config.PITCH_KNOB_RADIUS, knob_angle, mouse_in_knob, state.is_dragging("pitch"), "Pitch", "st")
 
   local pitch_double_clicked = reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_knob
   if pitch_double_clicked then

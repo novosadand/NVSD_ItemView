@@ -151,6 +151,7 @@ state.preview_item = nil             -- item being previewed (for validation)
 -- Unified drag control state
 state.drag_controls = {
   gain = { active = false, start_y = 0, start_value = 0, fine_held = false },
+  pan = { active = false, start_y = 0, start_value = 0, fine_held = false },
   pitch = { active = false, start_y = 0, start_value = 0, fine_held = false },
   semitones = { active = false, start_y = 0, start_value = 0 },
   cents = { active = false, start_y = 0, start_value = 0 },
@@ -188,7 +189,8 @@ end
 
 -- Check if any control drag is active
 function state.is_any_control_dragging()
-  return state.drag_controls.gain.active or state.drag_controls.pitch.active
+  return state.drag_controls.gain.active or state.drag_controls.pan.active
+      or state.drag_controls.pitch.active
       or state.drag_controls.semitones.active or state.drag_controls.cents.active
 end
 
