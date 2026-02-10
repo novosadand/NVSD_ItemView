@@ -407,7 +407,8 @@ function drawing.draw_grid_lines(draw_list, x, wave_y, width, wave_height,
   local g = compute_grid_params(x, width, view_start, view_length, item_position, start_offset, playrate, config, utils)
   local show_beat_grid = g.px_per_beat >= 20
 
-  local bar = g.first_bar
+  -- Align first_bar to bar_skip boundary so lines are stable when panning
+  local bar = g.first_bar - (g.first_bar % g.bar_skip)
   local iterations = 0
   while iterations < 1000 do
     iterations = iterations + 1
@@ -420,8 +421,8 @@ function drawing.draw_grid_lines(draw_list, x, wave_y, width, wave_height,
       reaper.ImGui_DrawList_AddLine(draw_list, bar_px, wave_y, bar_px, wave_y + wave_height, config.COLOR_GRID_BAR, 1)
     end
 
-    -- Beat grid lines
-    if show_beat_grid then
+    -- Beat grid lines (only when not skipping bars)
+    if show_beat_grid and g.bar_skip == 1 then
       for beat = 1, g.beats_per_bar - 1 do
         local beat_project_time = reaper.TimeMap2_beatsToTime(0, beat, bar)
         if beat_project_time > g.project_end then break end
@@ -432,8 +433,8 @@ function drawing.draw_grid_lines(draw_list, x, wave_y, width, wave_height,
       end
     end
 
-    -- Sub-beat grid lines
-    if g.finest_sub >= 2 then
+    -- Sub-beat grid lines (only when not skipping bars)
+    if g.finest_sub >= 2 and g.bar_skip == 1 then
       for beat = 0, g.beats_per_bar - 1 do
         for sub = 1, g.finest_sub - 1 do
           local sub_project_time = reaper.TimeMap2_beatsToTime(0, beat + (sub / g.finest_sub), bar)
@@ -448,7 +449,7 @@ function drawing.draw_grid_lines(draw_list, x, wave_y, width, wave_height,
       end
     end
 
-    bar = bar + 1
+    bar = bar + g.bar_skip
   end
 end
 
@@ -466,7 +467,8 @@ function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler
   local show_sub_labels = g.quarter_step and (g.px_per_beat / 4) >= 90
   local beat_label_color = 0x555555FF
 
-  local bar = g.first_bar
+  -- Align first_bar to bar_skip boundary
+  local bar = g.first_bar - (g.first_bar % g.bar_skip)
   local iterations = 0
   while iterations < 1000 do
     iterations = iterations + 1
@@ -477,17 +479,12 @@ function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler
 
     if bar_source_time >= g.view_start and bar_source_time <= g.view_end then
       local bar_px = g.time_to_px(bar_source_time)
-      local bar_num = bar + 1
-      if bar_num % g.bar_skip == 1 or g.bar_skip == 1 then
-        reaper.ImGui_DrawList_AddLine(draw_list, bar_px, ruler_y, bar_px, ruler_y + ruler_height, config.COLOR_RULER_TICK, 1)
-        reaper.ImGui_DrawList_AddText(draw_list, bar_px + 3, ruler_y + 3, config.COLOR_RULER_TEXT, tostring(bar_num))
-      else
-        reaper.ImGui_DrawList_AddLine(draw_list, bar_px, ruler_y + ruler_height - 4, bar_px, ruler_y + ruler_height, config.COLOR_RULER_TICK, 1)
-      end
+      reaper.ImGui_DrawList_AddLine(draw_list, bar_px, ruler_y, bar_px, ruler_y + ruler_height, config.COLOR_RULER_TICK, 1)
+      reaper.ImGui_DrawList_AddText(draw_list, bar_px + 3, ruler_y + 3, config.COLOR_RULER_TEXT, tostring(bar + 1))
     end
 
-    -- Beat ticks and labels in ruler
-    if show_beat_ticks then
+    -- Beat ticks and labels in ruler (only when not skipping bars)
+    if show_beat_ticks and g.bar_skip == 1 then
       for beat = 1, g.beats_per_bar - 1 do
         local beat_project_time = reaper.TimeMap2_beatsToTime(0, beat, bar)
         if beat_project_time > g.project_end then break end
@@ -496,16 +493,15 @@ function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler
           local beat_px = g.time_to_px(beat_source_time)
           local tick_top = ruler_y + ruler_height - math.floor(ruler_height * 0.5)
           reaper.ImGui_DrawList_AddLine(draw_list, beat_px, tick_top, beat_px, ruler_y + ruler_height, g.beat_tick_color, 1)
-          if show_beat_labels and (g.bar_skip == 1 or ((bar + 1) % g.bar_skip == 1)) then
+          if show_beat_labels then
             reaper.ImGui_DrawList_AddText(draw_list, beat_px + 3, ruler_y + 3, beat_label_color, (bar + 1) .. "." .. (beat + 1))
           end
         end
       end
     end
 
-    -- Sub-beat ticks and labels in ruler (only quarter-beat positions, not every fine subdivision)
-    if g.quarter_step and (show_sub_ticks or show_sub_labels) then
-      local bar_has_labels = g.bar_skip == 1 or ((bar + 1) % g.bar_skip == 1)
+    -- Sub-beat ticks and labels in ruler (only when not skipping bars)
+    if g.quarter_step and g.bar_skip == 1 and (show_sub_ticks or show_sub_labels) then
       for beat = 0, g.beats_per_bar - 1 do
         for q = 1, 3 do
           local beat_frac = beat + (q / 4)
@@ -520,7 +516,7 @@ function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler
               reaper.ImGui_DrawList_AddLine(draw_list, sub_px, ruler_y + ruler_height - tick_h, sub_px, ruler_y + ruler_height, g.sub_tick_color, 1)
             end
 
-            if show_sub_labels and bar_has_labels then
+            if show_sub_labels then
               reaper.ImGui_DrawList_AddText(draw_list, sub_px + 3, ruler_y + 3, g.sub_label_color, (bar + 1) .. "." .. (beat + 1) .. "." .. (q + 1))
             end
           end
@@ -528,7 +524,7 @@ function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler
       end
     end
 
-    bar = bar + 1
+    bar = bar + g.bar_skip
   end
 
   reaper.ImGui_DrawList_AddLine(draw_list, x, ruler_y + ruler_height, x + width, ruler_y + ruler_height, config.COLOR_GRID_BAR, 1)
@@ -619,77 +615,8 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
 
   local gear_clicked = mouse_in_gear and reaper.ImGui_IsMouseClicked(ctx, 0)
 
-  -- Tab buttons (centered in bar)
-  local tab_height = height - 6
-  local tab_y = y + 3
-  local tab_padding_h = 10
-  local tab_gap = 2
-
-  local tabs = { "Sample", "Envelopes" }
-
-  -- Measure total width of all tabs, then center the group
-  local tab_widths = {}
-  local total_tab_width = 0
-  for i = 1, #tabs do
-    local tw = reaper.ImGui_CalcTextSize(ctx, tabs[i])
-    tab_widths[i] = tw + tab_padding_h * 2
-    total_tab_width = total_tab_width + tab_widths[i]
-  end
-  total_tab_width = total_tab_width + tab_gap * (#tabs - 1)
-
-  local tab_rects = {}
-  local cursor_left = x + (width - total_tab_width) / 2
-  for i = 1, #tabs do
-    local label = tabs[i]
-    local key = label:lower()
-    local tx1 = cursor_left
-    local tx2 = cursor_left + tab_widths[i]
-    tab_rects[i] = { x1 = tx1, x2 = tx2, label = label, key = key }
-    cursor_left = tx2 + tab_gap
-  end
-
-  -- Draw tabs
-  local active_tab = state and state.active_view_tab or "sample"
-  local tab_clicked = nil
-
-  for _, tab in ipairs(tab_rects) do
-    local is_active = tab.key == active_tab
-    local mouse_in_tab = mouse_x >= tab.x1 and mouse_x <= tab.x2
-                         and mouse_y >= tab_y and mouse_y <= tab_y + tab_height
-
-    -- Rectangle background: highlighted for active, subtle for hover
-    if is_active then
-      reaper.ImGui_DrawList_AddRectFilled(draw_list, tab.x1, tab_y, tab.x2, tab_y + tab_height, 0x444444FF)
-      reaper.ImGui_DrawList_AddRect(draw_list, tab.x1, tab_y, tab.x2, tab_y + tab_height, 0x666666FF, 0, 0, 1)
-    elseif mouse_in_tab then
-      reaper.ImGui_DrawList_AddRectFilled(draw_list, tab.x1, tab_y, tab.x2, tab_y + tab_height, 0x333333FF)
-    end
-
-    local text_color
-    if is_active then
-      text_color = config.COLOR_BTN_TEXT
-    elseif mouse_in_tab then
-      text_color = 0xAAAAAAFF
-    else
-      text_color = 0x888888FF
-    end
-
-    local tw = reaper.ImGui_CalcTextSize(ctx, tab.label)
-    local text_x = tab.x1 + (tab.x2 - tab.x1 - tw) / 2
-    local text_y = tab_y + (tab_height - 13) / 2
-    reaper.ImGui_DrawList_AddText(draw_list, text_x, text_y, text_color, tab.label)
-
-    if mouse_in_tab and reaper.ImGui_IsMouseClicked(ctx, 0) then
-      tab_clicked = tab.key
-    end
-  end
-
-  if tab_clicked and state then
-    state.active_view_tab = tab_clicked
-  end
-
-  -- Right boundary for filename text (don't overlap tabs)
-  local text_max_x = (#tab_rects > 0) and (tab_rects[1].x1 - 8) or (gear_x - 8)
+  -- Right boundary for filename text (don't overlap gear icon)
+  local text_max_x = gear_x - 8
 
   -- Mute toggle
   local mute_size = 10
@@ -1306,14 +1233,11 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
   reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, config.COLOR_RULER_BG)
   reaper.ImGui_DrawList_AddLine(draw_list, x, y, x + width, y, config.COLOR_GRID_BAR, 1)
 
-  -- Dropdown button only when on Envelopes tab
-  if state.active_view_tab ~= "envelopes" then return end
-
   local btn_w = 100
   local btn_h = height - 4
   local btn_x = x + 4
   local btn_y = y + 2
-  local label = state.envelope_type
+  local label = state.envelopes_visible and state.envelope_type or "Hidden"
 
   local mouse_in_btn = mouse_x >= btn_x and mouse_x <= btn_x + btn_w
                         and mouse_y >= btn_y and mouse_y <= btn_y + btn_h
@@ -1335,6 +1259,46 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
     state.envelope_dropdown_open = not state.envelope_dropdown_open
   end
 
+  -- Envelope lock button (to the right of the envelope type dropdown)
+  local lock_btn_w = 22
+  local lock_gap = 3
+  local lock_btn_x = btn_x + btn_w + lock_gap
+  local lock_btn_y = btn_y
+  local lock_btn_h = btn_h
+  local mouse_in_lock = mouse_x >= lock_btn_x and mouse_x <= lock_btn_x + lock_btn_w
+                        and mouse_y >= lock_btn_y and mouse_y <= lock_btn_y + lock_btn_h
+  local lock_active = state.envelope_lock
+  local lock_bg = lock_active and config.COLOR_BTN_ON or (mouse_in_lock and 0x505050FF or 0x303030FF)
+  local lock_border = lock_active and config.COLOR_BTN_ON or 0x555555FF
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, lock_btn_x, lock_btn_y,
+      lock_btn_x + lock_btn_w, lock_btn_y + lock_btn_h, lock_bg, 2)
+  reaper.ImGui_DrawList_AddRect(draw_list, lock_btn_x, lock_btn_y,
+      lock_btn_x + lock_btn_w, lock_btn_y + lock_btn_h, lock_border, 2)
+
+  -- Draw lock icon
+  local lcx = lock_btn_x + lock_btn_w / 2
+  local lcy = lock_btn_y + lock_btn_h / 2
+  local lock_color = lock_active and 0x202020FF or 0xCCCCCCFF
+  -- Lock body
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, lcx - 4, lcy - 1, lcx + 4, lcy + 5, lock_color, 1)
+  -- Shackle
+  if lock_active then
+    reaper.ImGui_DrawList_AddLine(draw_list, lcx - 2, lcy - 1, lcx - 2, lcy - 4, lock_color, 1.5)
+    reaper.ImGui_DrawList_AddLine(draw_list, lcx - 2, lcy - 4, lcx + 2, lcy - 4, lock_color, 1.5)
+    reaper.ImGui_DrawList_AddLine(draw_list, lcx + 2, lcy - 4, lcx + 2, lcy - 1, lock_color, 1.5)
+  else
+    reaper.ImGui_DrawList_AddLine(draw_list, lcx - 2, lcy - 1, lcx - 2, lcy - 4, lock_color, 1.5)
+    reaper.ImGui_DrawList_AddLine(draw_list, lcx - 2, lcy - 4, lcx + 2, lcy - 4, lock_color, 1.5)
+    reaper.ImGui_DrawList_AddLine(draw_list, lcx + 2, lcy - 4, lcx + 2, lcy - 2, lock_color, 1.5)
+  end
+
+  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_lock then
+    state.envelope_lock = not state.envelope_lock
+  end
+  if mouse_in_lock then
+    reaper.ImGui_SetTooltip(ctx, "Lock envelopes in place")
+  end
+
 end
 
 -- Draw envelope dropdown menu (called AFTER overlay so it renders on top)
@@ -1346,7 +1310,7 @@ function drawing.draw_envelope_dropdown(draw_list, ctx, x, y, height,
   local btn_x = x + 4
   local btn_y = y + 2
 
-  local items = { "Volume", "Pitch", "Pan" }
+  local items = { "Volume", "Pitch", "Pan", "Hide" }
   local menu_item_height = 16
   local menu_height = #items * menu_item_height + 4
   local menu_y = btn_y - menu_height - 1
@@ -1364,11 +1328,21 @@ function drawing.draw_envelope_dropdown(draw_list, ctx, x, y, height,
       reaper.ImGui_DrawList_AddRectFilled(draw_list, menu_x + 1, item_y, menu_x + btn_w - 1, item_y + menu_item_height, 0x4A4A4AFF)
     end
 
-    local text_color = (item_name == state.envelope_type) and 0x4A90D9FF or 0xCCCCCCFF
+    local text_color
+    if item_name == "Hide" then
+      text_color = (not state.envelopes_visible) and 0x4A90D9FF or 0x999999FF
+    else
+      text_color = (item_name == state.envelope_type and state.envelopes_visible) and 0x4A90D9FF or 0xCCCCCCFF
+    end
     reaper.ImGui_DrawList_AddText(draw_list, menu_x + 4, item_y + 2, text_color, item_name)
 
     if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_item then
-      state.envelope_type = item_name
+      if item_name == "Hide" then
+        state.envelopes_visible = false
+      else
+        state.envelope_type = item_name
+        state.envelopes_visible = true
+      end
       state.envelope_dropdown_open = false
     end
   end

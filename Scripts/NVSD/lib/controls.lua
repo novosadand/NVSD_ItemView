@@ -353,8 +353,10 @@ function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, pa
   local slider_pos = utils.db_to_slider(item_db)
 
   local slider_x = panel_x + (config.LEFT_PANEL_WIDTH - config.GAIN_SLIDER_WIDTH) / 2 - 2
-  local slider_top = panel_y + 20
-  local slider_bottom = panel_split - 20
+  local available = panel_split - panel_y
+  local pad = math.max(4, math.min(20, (available - 48) * 0.3))
+  local slider_top = panel_y + pad + 14   -- 14px for "Gain" label
+  local slider_bottom = panel_split - pad - 14  -- 14px for dB text
   local slider_height = slider_bottom - slider_top
 
   local COLOR_SLIDER_TRACK = 0x404040FF
@@ -456,7 +458,7 @@ function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, pa
   reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - 14, panel_y + 2, 0xAAAAAAFF, "Gain")
   local db_text = utils.format_db(item_db)
   local db_text_w = reaper.ImGui_CalcTextSize(ctx, db_text)
-  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - db_text_w / 2, slider_bottom + 6, 0xAAAAAAFF, db_text)
+  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - db_text_w / 2, slider_bottom + math.min(6, pad), 0xAAAAAAFF, db_text)
 
 end
 
@@ -581,7 +583,11 @@ function controls.draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, pan
   end
 
   local knob_cx = panel_x + config.LEFT_PANEL_WIDTH / 2 - 2
-  local knob_cy = panel_split + (panel_bottom - panel_split) / 2
+  local region_h = panel_bottom - panel_split
+  local centered_cy = panel_split + region_h / 2
+  local max_cy = panel_bottom - 50  -- boxes need 50px below center
+  local min_cy = panel_split + 34   -- label needs 34px above center
+  local knob_cy = math.max(min_cy, math.min(centered_cy, max_cy))
   local knob_angle = utils.pitch_to_angle(take_pitch, config.PITCH_MAX)
 
   local knob_dx = mouse_x - knob_cx

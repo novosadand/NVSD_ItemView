@@ -108,9 +108,10 @@ state.has_js_extension = reaper.JS_Mouse_SetPosition ~= nil
 -- Warp mode state
 state.warp_mode = false
 state.warp_dropdown_open = false
+state.envelope_lock = false  -- Lock envelopes in place when dragging markers
 
--- View tab state (Sample = waveform view, Envelopes = envelope overlay)
-state.active_view_tab = "sample"  -- "sample" or "envelopes"
+-- Envelope overlay visibility (true = show envelope overlay on waveform)
+state.envelopes_visible = true
 
 -- Envelope editor state
 state.envelope_type = "Volume"           -- "Volume" or "Pitch"

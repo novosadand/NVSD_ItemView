@@ -364,7 +364,7 @@ local function loop()
           local pitch_env = reaper.GetTakeEnvelopeByName(sel_take, "Pitch")
           local pan_env = reaper.GetTakeEnvelopeByName(sel_take, "Pan")
           if vol_env or pitch_env or pan_env then
-            state.active_view_tab = "envelopes"
+            state.envelopes_visible = true
             if pitch_env and not vol_env and not pan_env then
               state.envelope_type = "Pitch"
             elseif pan_env and not vol_env and not pitch_env then
@@ -373,7 +373,7 @@ local function loop()
               state.envelope_type = "Volume"
             end
           else
-            state.active_view_tab = "sample"
+            state.envelopes_visible = false
           end
         end
       end
@@ -616,8 +616,13 @@ local function loop()
           local waveform_height = math.max(50, avail_h - (config.WAVEFORM_MARGIN_V * 2) - config.INFO_BAR_HEIGHT - config.RULER_HEIGHT - config.TIME_RULER_HEIGHT - envelope_bar_height)
           local panel_height = config.INFO_BAR_HEIGHT + config.RULER_HEIGHT + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height
 
-          local total_left_width = config.LEFT_COLUMN_WIDTH + config.LEFT_PANEL_WIDTH
-          local pitch_gutter = (state.active_view_tab == "envelopes" and (state.envelope_type == "Pitch" or state.envelope_type == "Pan")) and config.PITCH_LABEL_WIDTH or 0
+          local two_col_panel = panel_height < 270
+          local effective_panel_width = two_col_panel
+              and (config.LEFT_PANEL_WIDTH * 2)
+              or config.LEFT_PANEL_WIDTH
+
+          local total_left_width = config.LEFT_COLUMN_WIDTH + effective_panel_width
+          local pitch_gutter = (state.envelopes_visible and (state.envelope_type == "Pitch" or state.envelope_type == "Pan")) and config.PITCH_LABEL_WIDTH or 0
           local waveform_width = math.max(100, avail_w - (config.WAVEFORM_MARGIN_H * 2) - total_left_width - pitch_gutter)
 
           local cursor_x, cursor_y = reaper.ImGui_GetCursorScreenPos(ctx)
@@ -949,13 +954,10 @@ local function loop()
             return utils.project_to_source_time(snapped_project_t, item_position, offset, playrate)
           end
 
-          -- Clear region selection when not on sample tab
-          if state.active_view_tab ~= "sample" then
-            state.region_selected = false
-          end
+          -- Selection now persists across sample/envelope tabs
 
           -- Draw envelope overlay when envelopes tab is active
-          if state.active_view_tab == "envelopes" then
+          if state.envelopes_visible then
             -- Read envelope points from REAPER (raw values for fader-scaled display)
             local env_name = state.envelope_type  -- "Volume", "Pitch", or "Pan"
             local is_pitch = (env_name == "Pitch")
@@ -974,12 +976,8 @@ local function loop()
                 env_max_raw = reaper.ScaleToEnvelopeMode(env_scaling, 2.0)
               end
               num_env_points = reaper.CountEnvelopePoints(env)
-              -- During any marker drag, freeze envelope to original offset
-              -- so the envelope stays anchored to the same audio content visually.
+              -- Envelope points are shifted in realtime during drag, so always use live offset
               local env_time_offset = start_offset
-              if (state.dragging_start or state.dragging_end) and state.marker_drag_activated then
-                env_time_offset = state.drag_start_offset
-              end
               for i = 0, num_env_points - 1 do
                 local retval, ept_time, ept_value, ept_shape, ept_tension, ept_selected = reaper.GetEnvelopePoint(env, i)
                 if retval then
@@ -1079,17 +1077,58 @@ local function loop()
           controls.draw_fx_context_menu(ctx, state)
 
           local COLOR_PANEL_BG = 0x202020FF
-          reaper.ImGui_DrawList_AddRectFilled(draw_list, panel_x, panel_y, panel_x + config.LEFT_PANEL_WIDTH - 4, panel_y + panel_height, COLOR_PANEL_BG)
-          local panel_split1 = panel_y + panel_height * 0.43   -- gain / pan boundary
-          local panel_split2 = panel_y + panel_height * 0.72   -- pan / pitch boundary
+          reaper.ImGui_DrawList_AddRectFilled(draw_list, panel_x, panel_y,
+              panel_x + effective_panel_width - 4, panel_y + panel_height, COLOR_PANEL_BG)
 
-          controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_y, panel_split1, item, item_vol, config, state, utils)
+          if two_col_panel then
+            -- Two-column mode: gain on left, knobs on right
+            local div_x = panel_x + config.LEFT_PANEL_WIDTH - 2
+            reaper.ImGui_DrawList_AddLine(draw_list, div_x, panel_y + 4, div_x,
+                panel_y + panel_height - 4, 0x333333FF, 1)
 
-          controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_split1, panel_split2, item, take, config, state, utils, drawing)
+            -- Left column: gain slider (full height)
+            controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y,
+                panel_x, panel_y, panel_y + panel_height,
+                item, item_vol, config, state, utils)
 
-          local take_pitch, knob_cx, knob_cy = controls.draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_split2, panel_y + panel_height, take, config, state, utils, drawing)
+            -- Right column: pan (top 45%) + pitch+boxes (bottom 55%)
+            local knobs_x = panel_x + config.LEFT_PANEL_WIDTH
+            local knob_split = panel_y + panel_height * 0.45
 
-          controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, panel_x, knob_cy, take, take_pitch, config, state, utils)
+            controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y,
+                knobs_x, panel_y, knob_split,
+                item, take, config, state, utils, drawing)
+
+            local take_pitch, knob_cx, knob_cy = controls.draw_pitch_knob(
+                ctx, draw_list, mouse_x, mouse_y,
+                knobs_x, knob_split, panel_y + panel_height,
+                take, config, state, utils, drawing)
+
+            controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y,
+                knobs_x, knob_cy, take, take_pitch, config, state, utils)
+          else
+            -- Single column: knobs get fixed minimum space, gain gets the rest
+            local pan_height = 70
+            local pitch_height = 85
+            local panel_split1 = panel_y + panel_height - pan_height - pitch_height
+            local panel_split2 = panel_split1 + pan_height
+
+            controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y,
+                panel_x, panel_y, panel_split1,
+                item, item_vol, config, state, utils)
+
+            controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y,
+                panel_x, panel_split1, panel_split2,
+                item, take, config, state, utils, drawing)
+
+            local take_pitch, knob_cx, knob_cy = controls.draw_pitch_knob(
+                ctx, draw_list, mouse_x, mouse_y,
+                panel_x, panel_split2, panel_y + panel_height,
+                take, config, state, utils, drawing)
+
+            controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y,
+                panel_x, knob_cy, take, take_pitch, config, state, utils)
+          end
 
           -- Hide and lock cursor while dragging any control
           if state.is_any_control_dragging() then
@@ -1250,8 +1289,8 @@ local function loop()
               and not near_start and not near_end
               and not near_fade_in and not near_fade_out
               and not mouse_in_fade_in_body and not mouse_in_fade_out_body
-              and not (state.active_view_tab == "envelopes" and state.env_node_hovered_idx >= 0)
-              and not (state.active_view_tab == "envelopes" and state.envelope_hovered_segment >= 0)
+              and not (state.envelopes_visible and state.env_node_hovered_idx >= 0)
+              and not (state.envelopes_visible and state.envelope_hovered_segment >= 0)
 
           -- Cursor feedback (alt_held cached at top of frame)
           -- Fade grabs use Hand cursor to distinguish from marker's ResizeEW
@@ -1279,16 +1318,16 @@ local function loop()
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())
           elseif state.env_segment_dragging then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
-          elseif state.active_view_tab == "envelopes" and alt_held and reaper_is_active
+          elseif state.envelopes_visible and alt_held and reaper_is_active
               and state.env_node_hovered_idx >= 0 then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_NotAllowed())
-          elseif state.active_view_tab == "envelopes" and alt_held and reaper_is_active
+          elseif state.envelopes_visible and alt_held and reaper_is_active
               and state.envelope_hovered_segment >= 0 and state.env_node_hovered_idx < 0 then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
-          elseif state.active_view_tab == "envelopes" and shift_held and reaper_is_active
+          elseif state.envelopes_visible and shift_held and reaper_is_active
               and state.envelope_hovered_segment >= 0 and state.env_node_hovered_idx < 0 then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
-          elseif state.active_view_tab == "envelopes" and mouse_in_waveform
+          elseif state.envelopes_visible and mouse_in_waveform
               and reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl()) then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
           elseif state.selecting_region and state.selection_drag_activated then
@@ -1685,9 +1724,12 @@ local function loop()
             end
           end
 
-          -- Region selection: click+drag in waveform (sample tab only)
+          -- Region selection: click+drag in waveform (sample & envelope tabs)
           if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_waveform
-              and state.active_view_tab == "sample"
+              and not (state.envelopes_visible
+                  and (state.env_node_hovered_idx >= 0
+                       or state.envelope_hovered_segment >= 0
+                       or ctrl_held))
               and not state.dragging_start and not state.dragging_end
               and not state.dragging_fade_in and not state.dragging_fade_out
               and not state.dragging_fade_curve_in and not state.dragging_fade_curve_out
@@ -1773,6 +1815,82 @@ local function loop()
             reaper.SetMediaItemInfo_Value(temp_item, "D_FADEOUTLEN_AUTO", 0)
             reaper.UpdateItemInProject(temp_item)
 
+            -- Adjust envelope points to match the selected region
+            local env_delta = new_startoffs - take_offset  -- how much D_STARTOFFS moved
+            local env_names = { "Volume", "Pitch", "Pan" }
+            for _, ename in ipairs(env_names) do
+              local e = temp_take and reaper.GetTakeEnvelopeByName(temp_take, ename)
+              if e then
+                local np = reaper.CountEnvelopePoints(e)
+                if np > 0 then
+                  -- Read all points, shifted to new time base
+                  local pts = {}
+                  for i = 0, np - 1 do
+                    local ret, pt_time, pt_val, pt_shape, pt_tension, pt_sel =
+                        reaper.GetEnvelopePoint(e, i)
+                    if ret then
+                      pts[#pts + 1] = {
+                        time = pt_time - env_delta,
+                        value = pt_val, shape = pt_shape,
+                        tension = pt_tension, selected = pt_sel
+                      }
+                    end
+                  end
+
+                  -- Interpolate value at a given time from the shifted points list
+                  local function interp_at(t)
+                    for j = 1, #pts - 1 do
+                      if pts[j].time <= t and pts[j + 1].time >= t then
+                        local t0, t1 = pts[j].time, pts[j + 1].time
+                        local v0, v1 = pts[j].value, pts[j + 1].value
+                        if t1 - t0 < 0.000001 then return v0 end
+                        local frac = (t - t0) / (t1 - t0)
+                        return v0 + (v1 - v0) * frac
+                      end
+                    end
+                    if #pts > 0 and t <= pts[1].time then return pts[1].value end
+                    if #pts > 0 and t >= pts[#pts].time then return pts[#pts].value end
+                    return 0
+                  end
+
+                  -- Build filtered list: only points inside [0, new_length]
+                  local new_pts = {}
+                  local has_start = false
+                  local has_end = false
+
+                  for _, p in ipairs(pts) do
+                    if p.time >= 0 and p.time <= new_length then
+                      if math.abs(p.time) < 0.0001 then has_start = true end
+                      if math.abs(p.time - new_length) < 0.0001 then has_end = true end
+                      new_pts[#new_pts + 1] = p
+                    end
+                  end
+
+                  -- Add boundary points if needed (interpolated from original)
+                  if not has_start then
+                    local v = interp_at(0)
+                    table.insert(new_pts, 1, {
+                      time = 0, value = v, shape = 0, tension = 0, selected = false
+                    })
+                  end
+                  if not has_end then
+                    local v = interp_at(new_length)
+                    new_pts[#new_pts + 1] = {
+                      time = new_length, value = v, shape = 0, tension = 0, selected = false
+                    }
+                  end
+
+                  -- Clear all original points and write the new ones
+                  reaper.DeleteEnvelopePointRange(e, -1, new_length + 1)
+                  for _, p in ipairs(new_pts) do
+                    reaper.InsertEnvelopePoint(e, p.time, p.value, p.shape,
+                        p.tension, p.selected, true)
+                  end
+                  reaper.Envelope_SortPoints(e)
+                end
+              end
+            end
+
             -- Select only the temp item
             reaper.SetMediaItemSelected(item, false)
             reaper.SetMediaItemSelected(temp_item, true)
@@ -1789,7 +1907,7 @@ local function loop()
           end
 
           -- Envelope node interaction (create/drag/delete)
-          if state.active_view_tab == "envelopes" and take then
+          if state.envelopes_visible and take then
             local env_name = state.envelope_type  -- "Volume", "Pitch", or "Pan"
             local is_pitch = (env_name == "Pitch")
             local is_pan = (env_name == "Pan")
@@ -2251,7 +2369,7 @@ local function loop()
               and not near_start and not near_end
               and not near_fade_in and not near_fade_out
               and not alt_held
-              and not (state.active_view_tab == "envelopes" and (state.env_node_hovered_idx >= 0 or state.envelope_hovered_segment >= 0 or reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl()))) then
+              and not (state.envelopes_visible and (state.env_node_hovered_idx >= 0 or state.envelope_hovered_segment >= 0 or reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl()))) then
             state.preview_cursor_pos = px_to_time(mouse_x)
             -- Stop any active preview when cursor moves
             if state.preview_active and state.preview_handle then
@@ -2264,26 +2382,7 @@ local function loop()
           -- End dragging
           if reaper.ImGui_IsMouseReleased(ctx, 0) then
             if (state.dragging_start or state.dragging_end) and state.marker_drag_activated then
-              -- After any marker drag that changed D_STARTOFFS, shift envelope points
-              -- to maintain their source-audio position (envelope stays anchored to the audio).
-              local offset_delta = start_offset - state.drag_start_offset
-              if math.abs(offset_delta) > 0.000001 then
-                local env_names = { "Volume", "Pitch" }
-                for _, ename in ipairs(env_names) do
-                  local e = reaper.GetTakeEnvelopeByName(take, ename)
-                  if e then
-                    local np = reaper.CountEnvelopePoints(e)
-                    for ei = 0, np - 1 do
-                      local ret, pt_time, pt_val, pt_shape, pt_tension, pt_sel = reaper.GetEnvelopePoint(e, ei)
-                      if ret then
-                        reaper.SetEnvelopePoint(e, ei, pt_time - offset_delta, pt_val, pt_shape, pt_tension, pt_sel, true)
-                      end
-                    end
-                    reaper.Envelope_SortPoints(e)
-                  end
-                end
-                reaper.UpdateArrange()
-              end
+              -- Envelope points are now shifted in realtime during drag, no batch shift needed
               local old_item_length = state.drag_start_length * state.drag_start_playrate
               local new_item_length = source_item_length
               local old_item_end = state.drag_start_offset + old_item_length
@@ -2376,49 +2475,107 @@ local function loop()
 
             if clicked_mouse4 or clicked_mouse5 then
               local click_time = px_to_time(mouse_x)
-              local current_end = start_offset + source_item_length
 
-              reaper.Undo_BeginBlock()
+              if shift_held then
+                -- Set fade length so fade boundary lands at click position
+                reaper.Undo_BeginBlock()
 
-              if clicked_mouse4 then
-                local new_start = click_time
-                new_start = math.min(new_start, current_end - 0.01)
-                local new_source_length = current_end - new_start
-                local new_item_length = new_source_length / playrate
-                local new_take_offset = new_start - section_offset
+                if clicked_mouse4 then
+                  -- Fade-in ends at click position
+                  local new_fi = (click_time - start_offset) / playrate
+                  new_fi = math.max(0, math.min(item_length, new_fi))
+                  local fo = fade_out_len
+                  if new_fi + fo > item_length then
+                    fo = math.max(0, item_length - new_fi)
+                  end
+                  reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", new_fi)
+                  reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN_AUTO", 0)
+                  reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
+                  reaper.UpdateArrange()
+                  reaper.Undo_EndBlock("NVSD_ItemView: Set fade-in position", -1)
 
-                -- Fade adjustment: preserve fade-in, shrink fade-out first
-                local fi, fo = fade_in_len, fade_out_len
-                if fi + fo > new_item_length then
-                  fo = math.max(0, new_item_length - fi)
-                  if fo == 0 then fi = math.min(fi, new_item_length) end
+                elseif clicked_mouse5 then
+                  -- Fade-out starts at click position
+                  local current_end = start_offset + source_item_length
+                  local new_fo = (current_end - click_time) / playrate
+                  new_fo = math.max(0, math.min(item_length, new_fo))
+                  local fi = fade_in_len
+                  if fi + new_fo > item_length then
+                    fi = math.max(0, item_length - new_fo)
+                  end
+                  reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", new_fo)
+                  reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN_AUTO", 0)
+                  reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
+                  reaper.UpdateArrange()
+                  reaper.Undo_EndBlock("NVSD_ItemView: Set fade-out position", -1)
                 end
 
-                reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
-                reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_item_length)
-                reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
-                reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
-                reaper.UpdateArrange()
-                reaper.Undo_EndBlock("NVSD_ItemView: Set start marker", -1)
+              else
+                -- Existing marker positioning logic
+                local current_end = start_offset + source_item_length
 
-              elseif clicked_mouse5 then
-                local new_end = click_time
-                new_end = math.max(new_end, start_offset + 0.01)
-                local new_source_length = new_end - start_offset
-                local new_item_length = new_source_length / playrate
+                reaper.Undo_BeginBlock()
 
-                -- Fade adjustment: preserve fade-out, shrink fade-in first
-                local fi, fo = fade_in_len, fade_out_len
-                if fi + fo > new_item_length then
-                  fi = math.max(0, new_item_length - fo)
-                  if fi == 0 then fo = math.min(fo, new_item_length) end
+                if clicked_mouse4 then
+                  local new_start = click_time
+                  new_start = math.min(new_start, current_end - 0.01)
+                  local new_source_length = current_end - new_start
+                  local new_item_length = new_source_length / playrate
+                  local new_take_offset = new_start - section_offset
+
+                  -- Fade adjustment: preserve fade-in, shrink fade-out first
+                  local fi, fo = fade_in_len, fade_out_len
+                  if fi + fo > new_item_length then
+                    fo = math.max(0, new_item_length - fi)
+                    if fo == 0 then fi = math.min(fi, new_item_length) end
+                  end
+
+                  reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
+                  reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_item_length)
+                  reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
+                  reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
+                  -- Shift envelope points so they stay audio-anchored
+                  if not state.envelope_lock then
+                    local offset_delta = new_take_offset - take_offset
+                    if math.abs(offset_delta) > 0.000001 then
+                      local env_names = { "Volume", "Pitch", "Pan" }
+                      for _, ename in ipairs(env_names) do
+                        local e = reaper.GetTakeEnvelopeByName(take, ename)
+                        if e then
+                          local np = reaper.CountEnvelopePoints(e)
+                          for ei = 0, np - 1 do
+                            local ret, pt_time, pt_val, pt_shape, pt_tension, pt_sel = reaper.GetEnvelopePoint(e, ei)
+                            if ret then
+                              reaper.SetEnvelopePoint(e, ei, pt_time - offset_delta, pt_val, pt_shape, pt_tension, pt_sel, true)
+                            end
+                          end
+                          reaper.Envelope_SortPoints(e)
+                        end
+                      end
+                    end
+                  end
+                  reaper.UpdateArrange()
+                  reaper.Undo_EndBlock("NVSD_ItemView: Set start marker", -1)
+
+                elseif clicked_mouse5 then
+                  local new_end = click_time
+                  new_end = math.max(new_end, start_offset + 0.01)
+                  local new_source_length = new_end - start_offset
+                  local new_item_length = new_source_length / playrate
+
+                  -- Fade adjustment: preserve fade-out, shrink fade-in first
+                  local fi, fo = fade_in_len, fade_out_len
+                  if fi + fo > new_item_length then
+                    fi = math.max(0, new_item_length - fo)
+                    if fi == 0 then fo = math.min(fo, new_item_length) end
+                  end
+
+                  reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_item_length)
+                  reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
+                  reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
+                  reaper.UpdateArrange()
+                  reaper.Undo_EndBlock("NVSD_ItemView: Set end marker", -1)
                 end
-
-                reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_item_length)
-                reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
-                reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
-                reaper.UpdateArrange()
-                reaper.Undo_EndBlock("NVSD_ItemView: Set end marker", -1)
               end
             end
           end
@@ -2482,6 +2639,26 @@ local function loop()
             state.drag_current_end = new_end
 
             reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
+            -- Shift envelope points in realtime so they stay audio-anchored in arrange view
+            if not state.envelope_lock then
+              local offset_delta = new_take_offset - take_offset
+              if math.abs(offset_delta) > 0.000001 then
+                local env_names = { "Volume", "Pitch", "Pan" }
+                for _, ename in ipairs(env_names) do
+                  local e = reaper.GetTakeEnvelopeByName(take, ename)
+                  if e then
+                    local np = reaper.CountEnvelopePoints(e)
+                    for ei = 0, np - 1 do
+                      local ret, pt_time, pt_val, pt_shape, pt_tension, pt_sel = reaper.GetEnvelopePoint(e, ei)
+                      if ret then
+                        reaper.SetEnvelopePoint(e, ei, pt_time - offset_delta, pt_val, pt_shape, pt_tension, pt_sel, true)
+                      end
+                    end
+                    reaper.Envelope_SortPoints(e)
+                  end
+                end
+              end
+            end
             reaper.UpdateArrange()
 
           -- Dragging start marker
@@ -2521,6 +2698,26 @@ local function loop()
             reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_item_length)
             reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
             reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
+            -- Shift envelope points in realtime so they stay audio-anchored in arrange view
+            if not state.envelope_lock then
+              local offset_delta = new_take_offset - take_offset
+              if math.abs(offset_delta) > 0.000001 then
+                local env_names = { "Volume", "Pitch", "Pan" }
+                for _, ename in ipairs(env_names) do
+                  local e = reaper.GetTakeEnvelopeByName(take, ename)
+                  if e then
+                    local np = reaper.CountEnvelopePoints(e)
+                    for ei = 0, np - 1 do
+                      local ret, pt_time, pt_val, pt_shape, pt_tension, pt_sel = reaper.GetEnvelopePoint(e, ei)
+                      if ret then
+                        reaper.SetEnvelopePoint(e, ei, pt_time - offset_delta, pt_val, pt_shape, pt_tension, pt_sel, true)
+                      end
+                    end
+                    reaper.Envelope_SortPoints(e)
+                  end
+                end
+              end
+            end
             reaper.UpdateArrange()
 
           -- Dragging end marker
@@ -2849,10 +3046,8 @@ local function loop()
           end
 
           -- Draw envelope dropdown ON TOP of everything (after playheads/cursors)
-          if state.active_view_tab == "envelopes" then
-            drawing.draw_envelope_dropdown(draw_list, ctx, wave_x, envelope_bar_y,
-              config.ENVELOPE_BAR_HEIGHT, mouse_x, mouse_y, config, state)
-          end
+          drawing.draw_envelope_dropdown(draw_list, ctx, wave_x, envelope_bar_y,
+            config.ENVELOPE_BAR_HEIGHT, mouse_x, mouse_y, config, state)
 
         else
           reaper.ImGui_Text(ctx, "No audio source found")
