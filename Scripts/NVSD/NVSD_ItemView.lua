@@ -647,7 +647,11 @@ local function loop()
           -- Detect looped item and track start_offset wrapping
           local is_looped_item = source_item_length > source_length and source_length > 0
 
-          if is_looped_item then
+          if (state.dragging_start or state.dragging_end) and state.marker_drag_activated then
+            -- During active drag: drag state is the authority for unwrapped offset
+            state.unwrapped_start_offset = state.drag_current_start
+            state.prev_raw_start_offset = start_offset
+          elseif is_looped_item then
             -- Initialize wrap tracking on first frame or item change
             if state.unwrapped_start_offset == nil then
               state.unwrapped_start_offset = start_offset
@@ -677,7 +681,20 @@ local function loop()
 
           -- Extended view range (virtual source time coordinates)
           local ext_start, ext_end, ext_length
-          if is_looped_item then
+          if (state.dragging_start or state.dragging_end) and state.marker_drag_activated then
+            -- During active drag: compute ext from drag state for real-time view updates
+            local ds = state.drag_current_start
+            local de = state.drag_current_end
+            if ds < 0 or de > source_length then
+              ext_start = ds
+              ext_end = de
+              ext_length = de - ds
+            else
+              ext_start = 0
+              ext_end = source_length
+              ext_length = source_length
+            end
+          elseif is_looped_item then
             ext_start = state.unwrapped_start_offset
             ext_end = state.unwrapped_start_offset + source_item_length
             ext_length = source_item_length
@@ -745,6 +762,10 @@ local function loop()
           local pixel_step = user_dragging_in_reaper and 2 or 1
           local num_view_samples = math.max(1, math.floor(waveform_width / pixel_step))
 
+          local is_extended_drag = (state.dragging_start or state.dragging_end)
+              and state.marker_drag_activated
+              and (state.drag_current_start < 0 or state.drag_current_end > source_length)
+
           local need_reload = state.view_peaks == nil
               or source ~= state.view_source
               or is_reversed ~= state.view_reversed
@@ -754,7 +775,7 @@ local function loop()
 
           if need_reload and view_length > 0 then
             local peaks_result, num_ch
-            if is_looped_item and not is_reversed then
+            if (is_looped_item or is_extended_drag) and not is_reversed then
               peaks_result, num_ch = utils.get_peaks_for_range_looped(source, view_start, view_length, num_view_samples, source_length)
             else
               -- For reversed display, load peaks from the mirrored source range
@@ -776,11 +797,11 @@ local function loop()
           local draw_list = reaper.ImGui_GetWindowDrawList(ctx)
 
           local view_offset, view_item_length
-          if state.dragging_start or state.dragging_end then
-            view_offset = state.drag_start_offset
-            view_item_length = state.drag_start_length * state.drag_start_playrate
+          if (state.dragging_start or state.dragging_end) and state.drag_current_start ~= nil then
+            view_offset = state.drag_current_start
+            view_item_length = state.drag_current_end - state.drag_current_start
           elseif is_looped_item then
-            view_offset = state.unwrapped_start_offset
+            view_offset = state.unwrapped_start_offset or start_offset
             view_item_length = source_item_length
           else
             view_offset = start_offset
@@ -830,15 +851,7 @@ local function loop()
           if state.dragging_start or state.dragging_end then
             render_start = state.drag_current_start
             render_end = state.drag_current_end
-            -- Clamp markers to source bounds during drag
-            render_start = math.max(0, math.min(source_length, render_start))
-            if render_end > source_length and source_length > 0 then
-              local wrapped = render_end % source_length
-              if wrapped >= render_start then
-                render_end = wrapped
-              end
-            end
-            render_end = math.max(0, math.min(source_length, render_end))
+            -- No clamping: markers can go past source boundaries during drag
           elseif is_looped_item then
             -- Markers at item boundaries in virtual time
             render_start = ext_start
@@ -866,8 +879,8 @@ local function loop()
           drawing.draw_ruler_and_grid(draw_list, wave_x, ruler_y, wave_y, waveform_width, config.RULER_HEIGHT, waveform_height,
             grid_view_start, view_length, item_position, grid_offset, grid_playrate, config, utils)
 
-          -- Draw overlays on inactive regions (skip in looped mode - entire view is item content)
-          if not is_looped_item then
+          -- Draw overlays on inactive regions (skip in looped/extending mode - entire view is item content)
+          if not is_looped_item and not is_extended_drag then
             local COLOR_UNUSED_SOURCE = 0x00000038
             local COLOR_OUTSIDE_SOURCE = 0x00000058
 
@@ -1054,8 +1067,15 @@ local function loop()
               end
               num_env_points = reaper.CountEnvelopePoints(env)
               -- Envelope points are shifted in realtime during drag, so always use live offset
-              -- In looped mode, use unwrapped offset so points align with virtual coordinates
-              local env_time_offset = is_looped_item and state.unwrapped_start_offset or start_offset
+              -- During drag: use live drag position; looped: use unwrapped offset; else: REAPER offset
+              local env_time_offset
+              if state.dragging_start or state.dragging_end then
+                env_time_offset = state.drag_current_start
+              elseif is_looped_item then
+                env_time_offset = state.unwrapped_start_offset
+              else
+                env_time_offset = start_offset
+              end
               for i = 0, num_env_points - 1 do
                 local retval, ept_time, ept_value, ept_shape, ept_tension, ept_selected = reaper.GetEnvelopePoint(env, i)
                 if retval then
@@ -1070,8 +1090,8 @@ local function loop()
 
             -- Draw envelope overlay on waveform
             local env_colors = config.ENV_COLORS[state.envelope_type] or config.ENV_COLORS.Volume
-            local env_anchor_end = is_looped_item and ext_end or source_length
-            local env_anchor_start = is_looped_item and ext_start or nil
+            local env_anchor_end = (is_looped_item or is_extended_drag) and ext_end or source_length
+            local env_anchor_start = (is_looped_item or is_extended_drag) and ext_start or nil
             drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_env_points,
               wave_x, wave_y, waveform_width, waveform_height,
               time_to_px, view_start, view_length,
@@ -1743,37 +1763,38 @@ local function loop()
             end
           end
 
-          -- Start marker dragging (skip if fade drag already started this click, or if looped)
+          -- Start marker dragging (skip if fade drag already started this click)
           if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_marker_area
-              and not is_looped_item
               and not state.dragging_fade_in and not state.dragging_fade_out
               and not state.is_ruler_dragging and not state.is_panning then
             if near_start then
               state.dragging_start = true
               state.drag_alt_latched = alt_held
               state.marker_drag_activated = false
-              state.drag_start_offset = start_offset
+              local drag_offset = is_looped_item and state.unwrapped_start_offset or start_offset
+              state.drag_start_offset = drag_offset
               state.drag_start_length = item_length
               state.drag_start_mouse_x = mouse_x
               state.drag_start_view_length = view_length
               state.drag_start_view_start = view_start
               state.drag_start_playrate = playrate
-              state.drag_current_start = start_offset
-              state.drag_current_end = start_offset + source_item_length
+              state.drag_current_start = drag_offset
+              state.drag_current_end = drag_offset + source_item_length
               state.drag_start_fade_in = fade_in_len
               state.drag_start_fade_out = fade_out_len
             elseif near_end then
               state.dragging_end = true
               state.drag_alt_latched = alt_held
               state.marker_drag_activated = false
-              state.drag_start_offset = start_offset
+              local drag_offset = is_looped_item and state.unwrapped_start_offset or start_offset
+              state.drag_start_offset = drag_offset
               state.drag_start_length = item_length
               state.drag_start_mouse_x = mouse_x
               state.drag_start_view_length = view_length
               state.drag_start_view_start = view_start
               state.drag_start_playrate = playrate
-              state.drag_current_start = start_offset
-              state.drag_current_end = start_offset + source_item_length
+              state.drag_current_start = drag_offset
+              state.drag_current_end = drag_offset + source_item_length
               state.drag_start_fade_in = fade_in_len
               state.drag_start_fade_out = fade_out_len
             end
@@ -1993,10 +2014,17 @@ local function loop()
             local is_pitch = (env_name == "Pitch")
             local is_pan = (env_name == "Pan")
             local is_centered = is_pitch or is_pan
-            -- Envelope coordinate helpers for looped items
-            local env_offset = is_looped_item and state.unwrapped_start_offset or start_offset
-            local env_time_min = is_looped_item and ext_start or 0
-            local env_time_max = is_looped_item and ext_end or source_length
+            -- Envelope coordinate helpers: use live drag offset during drag, unwrapped for looped
+            local env_offset
+            if state.dragging_start or state.dragging_end then
+              env_offset = state.drag_current_start
+            elseif is_looped_item then
+              env_offset = state.unwrapped_start_offset
+            else
+              env_offset = start_offset
+            end
+            local env_time_min = (is_looped_item or is_extended_drag) and ext_start or 0
+            local env_time_max = (is_looped_item or is_extended_drag) and ext_end or source_length
             local env_max_raw = is_pitch and 24.0 or (is_pan and 1.0 or reaper.ScaleToEnvelopeMode(is_centered and 0 or 1, 2.0))
             local env_min_raw = is_pitch and -24.0 or (is_pan and -1.0 or 0)
 
@@ -2750,11 +2778,14 @@ local function loop()
           elseif state.dragging_start and state.marker_drag_activated and not state.dragging_zone
               and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
             local original_source_end = state.drag_start_offset + (state.drag_start_length * state.drag_start_playrate)
+            -- Use frozen drag coordinates for stable pixel-to-time mapping
+            local drag_vs = state.drag_start_view_start
+            local drag_vl = state.drag_start_view_length
             local new_start
             if mouse_x >= wave_x and mouse_x <= wave_x + waveform_width then
-              new_start = px_to_time(mouse_x)
+              new_start = drag_vs + ((mouse_x - wave_x) / waveform_width) * drag_vl
             else
-              local edge_time = mouse_x < wave_x and view_start or view_start + view_length
+              local edge_time = mouse_x < wave_x and drag_vs or drag_vs + drag_vl
               local overflow_px = mouse_x < wave_x and (wave_x - mouse_x) or (mouse_x - wave_x - waveform_width)
               local overflow_time = (overflow_px / waveform_width) * source_length
               new_start = mouse_x < wave_x and (edge_time - overflow_time) or (edge_time + overflow_time)
@@ -2765,6 +2796,10 @@ local function loop()
             local new_source_length = original_source_end - new_start
             local new_item_length = new_source_length / state.drag_start_playrate
             local new_take_offset = new_start - section_offset
+            -- Wrap for REAPER when extending past source boundaries
+            if source_length > 0 then
+              new_take_offset = new_take_offset % source_length
+            end
 
             state.drag_current_start = new_start
             state.drag_current_end = original_source_end
@@ -2786,6 +2821,14 @@ local function loop()
             -- Shift envelope points in realtime so they stay audio-anchored in arrange view
             if not state.envelope_lock then
               local offset_delta = new_take_offset - take_offset
+              -- Unwrap delta when crossing source boundary to avoid huge jumps
+              if source_length > 0 then
+                if offset_delta > source_length * 0.5 then
+                  offset_delta = offset_delta - source_length
+                elseif offset_delta < -source_length * 0.5 then
+                  offset_delta = offset_delta + source_length
+                end
+              end
               if math.abs(offset_delta) > 0.000001 then
                 local env_names = { "Volume", "Pitch", "Pan" }
                 for _, ename in ipairs(env_names) do
@@ -2807,11 +2850,14 @@ local function loop()
 
           -- Dragging end marker
           elseif state.dragging_end and state.marker_drag_activated and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
+            -- Use frozen drag coordinates for stable pixel-to-time mapping
+            local drag_vs = state.drag_start_view_start
+            local drag_vl = state.drag_start_view_length
             local new_end
             if mouse_x >= wave_x and mouse_x <= wave_x + waveform_width then
-              new_end = px_to_time(mouse_x)
+              new_end = drag_vs + ((mouse_x - wave_x) / waveform_width) * drag_vl
             else
-              local edge_time = mouse_x < wave_x and view_start or view_start + view_length
+              local edge_time = mouse_x < wave_x and drag_vs or drag_vs + drag_vl
               local overflow_px = mouse_x < wave_x and (wave_x - mouse_x) or (mouse_x - wave_x - waveform_width)
               local overflow_time = (overflow_px / waveform_width) * source_length
               new_end = mouse_x < wave_x and (edge_time - overflow_time) or (edge_time + overflow_time)

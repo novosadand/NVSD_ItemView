@@ -236,6 +236,114 @@ function utils.get_peaks_for_range(source, start_time, duration, num_samples)
   return { mins = mins, maxs = maxs, count = actual_samples, channels = num_channels, output_mode = output_mode }, num_channels
 end
 
+-- Get peaks for a view range that may extend beyond [0, source_length] (looped items).
+-- Splits the range into segments at source boundary crossings, loads each from the
+-- wrapped source position, and assembles one contiguous peaks array.
+function utils.get_peaks_for_range_looped(source, view_start, view_length, num_samples, source_length)
+  if not source then return nil, "no source" end
+  if source_length <= 0 then return nil, "source_length <= 0" end
+  if view_length <= 0 then return nil, "view_length <= 0" end
+  if num_samples <= 0 then return nil, "num_samples <= 0" end
+
+  local num_channels = reaper.GetMediaSourceNumChannels(source)
+  if num_channels <= 0 then return nil, "num_channels <= 0" end
+
+  local time_per_sample = view_length / num_samples
+
+  -- Build segments: contiguous runs of samples that map to a contiguous source region.
+  -- A new segment starts whenever the wrapped source time jumps backwards (boundary crossing).
+  local segments = {}  -- { {start_idx, count, source_start, source_duration}, ... }
+  local seg_start_idx = 1
+  local prev_wrapped = view_start % source_length
+  if prev_wrapped < 0 then prev_wrapped = prev_wrapped + source_length end
+  local seg_source_start = prev_wrapped
+
+  for i = 2, num_samples do
+    local t = view_start + (i - 1) * time_per_sample
+    local wrapped = t % source_length
+    if wrapped < 0 then wrapped = wrapped + source_length end
+
+    -- Detect boundary crossing: wrapped time jumped backwards
+    if wrapped < prev_wrapped - time_per_sample * 0.5 then
+      -- Close current segment
+      local seg_count = i - seg_start_idx
+      local seg_duration = seg_count * time_per_sample
+      segments[#segments + 1] = {seg_start_idx, seg_count, seg_source_start, seg_duration}
+      seg_start_idx = i
+      seg_source_start = wrapped
+    end
+    prev_wrapped = wrapped
+  end
+  -- Close final segment
+  local seg_count = num_samples - seg_start_idx + 1
+  local seg_duration = seg_count * time_per_sample
+  segments[#segments + 1] = {seg_start_idx, seg_count, seg_source_start, seg_duration}
+
+  -- Allocate output arrays
+  local all_mins = {}
+  local all_maxs = {}
+  local output_mode = 0
+
+  -- Load peaks for each segment and place into the output arrays
+  for _, seg in ipairs(segments) do
+    local idx, cnt, src_start, src_dur = seg[1], seg[2], seg[3], seg[4]
+
+    local peakrate = cnt / src_dur
+    local buf_size = cnt * num_channels * 2
+    local buf = reaper.new_array(buf_size)
+    if not buf then
+      -- Fill with zeros on allocation failure
+      for j = 1, cnt * num_channels do
+        local out_pos = (idx - 1) * num_channels + j
+        all_mins[out_pos] = 0
+        all_maxs[out_pos] = 0
+      end
+    else
+      local ret = reaper.PCM_Source_GetPeaks(source, peakrate, src_start, num_channels, cnt, 0, buf)
+      local actual = 0
+      if ret ~= 0 then
+        actual = math.min(ret & 0xFFFFF, cnt)
+        output_mode = (ret >> 20) & 0xF
+      end
+
+      local min_block_offset = actual * num_channels
+
+      if num_channels == 1 then
+        for i = 1, actual do
+          local out_pos = (idx - 1) + i
+          all_maxs[out_pos] = buf[i] or 0
+          all_mins[out_pos] = buf[min_block_offset + i] or 0
+        end
+        -- Zero-fill any shortfall
+        for i = actual + 1, cnt do
+          local out_pos = (idx - 1) + i
+          all_maxs[out_pos] = 0
+          all_mins[out_pos] = 0
+        end
+      else
+        for i = 1, actual do
+          local base_idx = (i - 1) * num_channels + 1
+          local out_base = (idx - 1 + i - 1) * num_channels
+          for ch = 1, num_channels do
+            all_maxs[out_base + ch] = buf[base_idx + ch - 1] or 0
+            all_mins[out_base + ch] = buf[min_block_offset + base_idx + ch - 1] or 0
+          end
+        end
+        -- Zero-fill shortfall
+        for i = actual + 1, cnt do
+          local out_base = (idx - 1 + i - 1) * num_channels
+          for ch = 1, num_channels do
+            all_maxs[out_base + ch] = 0
+            all_mins[out_base + ch] = 0
+          end
+        end
+      end
+    end
+  end
+
+  return { mins = all_mins, maxs = all_maxs, count = num_samples, channels = num_channels, output_mode = output_mode }, num_channels
+end
+
 -- Check if mouse is near marker
 function utils.is_near_marker(mouse_x, marker_x, threshold)
   return math.abs(mouse_x - marker_x) < threshold
