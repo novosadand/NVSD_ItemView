@@ -36,6 +36,7 @@ state.dragging_fade_in = false
 state.dragging_fade_out = false
 state.fade_drag_start_mouse_x = 0
 state.fade_drag_start_value = 0     -- original fade length (seconds) at drag start
+state.fade_drag_start_other = 0     -- the OTHER fade's length at drag start (for push)
 state.fade_drag_start_view_length = 0
 state.dragging_fade_curve_in = false   -- alt+drag curvature for fade-in
 state.dragging_fade_curve_out = false  -- alt+drag curvature for fade-out
@@ -95,6 +96,29 @@ state.has_js_extension = reaper.JS_Mouse_SetPosition ~= nil
 -- Warp mode state
 state.warp_mode = false
 state.warp_dropdown_open = false
+
+-- View tab state (Sample = waveform view, Envelopes = envelope overlay)
+state.active_view_tab = "sample"  -- "sample" or "envelopes"
+
+-- Envelope editor state
+state.envelope_type = "Volume"           -- "Volume" or "Pitch"
+state.envelope_dropdown_open = false
+state.envelope_hovered_segment = -1      -- line segment index mouse is near (-1 = none)
+state.envelope_hover_x = 0              -- pixel X of hover preview
+state.envelope_hover_y = 0              -- pixel Y of hover preview
+state.envelope_hover_value = 0          -- value 0..1 at hover position
+state.envelope_hover_time = 0           -- source time at hover position
+state.dragging_env_node = false
+state.env_drag_node_idx = -1            -- 0-based REAPER envelope point index
+state.env_drag_start_mouse_x = 0
+state.env_drag_start_mouse_y = 0
+state.env_drag_start_time = 0
+state.env_drag_start_value = 0
+state.env_drag_activated = false        -- true once mouse exceeds 4px threshold
+state.env_node_hovered_idx = -1         -- index of hovered existing node
+state.env_freehand_drawing = false      -- ctrl+drag freehand envelope painting
+state.env_freehand_last_x = 0          -- last mouse X to detect movement
+state.env_freehand_last_take_time = 0  -- last inserted take time (for overwrite range)
 
 -- Audio preview state (CF_Preview API from SWS extension)
 state.preview_cursor_pos = nil       -- source time (seconds) where preview starts

@@ -559,8 +559,8 @@ function drawing.draw_time_ruler(draw_list, x, y, width, height, view_start, vie
 end
 
 -- Draw file info bar at the top
--- Returns: mouse_over_filename, gear_clicked
-function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file_path, mouse_x, mouse_y, item, config, utils, actual_num_channels)
+-- Returns: mouse_over_filename, gear_clicked, tab_clicked
+function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file_path, mouse_x, mouse_y, item, config, utils, actual_num_channels, state)
   reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, config.COLOR_INFO_BAR_BG)
   reaper.ImGui_DrawList_AddLine(draw_list, x, y + height, x + width, y + height, 0x333333FF, 1)
 
@@ -597,6 +597,81 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   reaper.ImGui_DrawList_AddCircleFilled(draw_list, gear_cx, gear_cy, inner_r * 0.6, config.COLOR_INFO_BAR_BG, 12)
 
   local gear_clicked = mouse_in_gear and reaper.ImGui_IsMouseClicked(ctx, 0)
+
+  -- Tab buttons (centered in bar)
+  local tab_height = height - 6
+  local tab_y = y + 3
+  local tab_padding_h = 10
+  local tab_gap = 2
+
+  local tabs = { "Sample" }
+  if state and state.warp_mode then
+    tabs[#tabs + 1] = "Envelopes"
+  end
+
+  -- Measure total width of all tabs, then center the group
+  local tab_widths = {}
+  local total_tab_width = 0
+  for i = 1, #tabs do
+    local tw = reaper.ImGui_CalcTextSize(ctx, tabs[i])
+    tab_widths[i] = tw + tab_padding_h * 2
+    total_tab_width = total_tab_width + tab_widths[i]
+  end
+  total_tab_width = total_tab_width + tab_gap * (#tabs - 1)
+
+  local tab_rects = {}
+  local cursor_left = x + (width - total_tab_width) / 2
+  for i = 1, #tabs do
+    local label = tabs[i]
+    local key = label:lower()
+    local tx1 = cursor_left
+    local tx2 = cursor_left + tab_widths[i]
+    tab_rects[i] = { x1 = tx1, x2 = tx2, label = label, key = key }
+    cursor_left = tx2 + tab_gap
+  end
+
+  -- Draw tabs
+  local active_tab = state and state.active_view_tab or "sample"
+  local tab_clicked = nil
+
+  for _, tab in ipairs(tab_rects) do
+    local is_active = tab.key == active_tab
+    local mouse_in_tab = mouse_x >= tab.x1 and mouse_x <= tab.x2
+                         and mouse_y >= tab_y and mouse_y <= tab_y + tab_height
+
+    -- Rectangle background: highlighted for active, subtle for hover
+    if is_active then
+      reaper.ImGui_DrawList_AddRectFilled(draw_list, tab.x1, tab_y, tab.x2, tab_y + tab_height, 0x444444FF)
+      reaper.ImGui_DrawList_AddRect(draw_list, tab.x1, tab_y, tab.x2, tab_y + tab_height, 0x666666FF, 0, 0, 1)
+    elseif mouse_in_tab then
+      reaper.ImGui_DrawList_AddRectFilled(draw_list, tab.x1, tab_y, tab.x2, tab_y + tab_height, 0x333333FF)
+    end
+
+    local text_color
+    if is_active then
+      text_color = config.COLOR_BTN_TEXT
+    elseif mouse_in_tab then
+      text_color = 0xAAAAAAFF
+    else
+      text_color = 0x888888FF
+    end
+
+    local tw = reaper.ImGui_CalcTextSize(ctx, tab.label)
+    local text_x = tab.x1 + (tab.x2 - tab.x1 - tw) / 2
+    local text_y = tab_y + (tab_height - 13) / 2
+    reaper.ImGui_DrawList_AddText(draw_list, text_x, text_y, text_color, tab.label)
+
+    if mouse_in_tab and reaper.ImGui_IsMouseClicked(ctx, 0) then
+      tab_clicked = tab.key
+    end
+  end
+
+  if tab_clicked and state then
+    state.active_view_tab = tab_clicked
+  end
+
+  -- Right boundary for filename text (don't overlap tabs)
+  local text_max_x = (#tab_rects > 0) and (tab_rects[1].x1 - 8) or (gear_x - 8)
 
   -- Mute toggle
   local mute_size = 10
@@ -705,6 +780,9 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
     mouse_x >= text_x and mouse_x <= file_name_end_x and
     mouse_y >= y and mouse_y <= y + height
 
+  -- Clip filename + metadata so they don't overlap tabs
+  reaper.ImGui_DrawList_PushClipRect(draw_list, text_x, y, text_max_x, y + height, true)
+
   if file_name ~= "" then
     local name_color = mouse_over_filename and 0xDDDDFFFF or config.COLOR_INFO_BAR_TEXT
     reaper.ImGui_DrawList_AddText(draw_list, text_x, text_y, name_color, file_name)
@@ -722,12 +800,14 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
     reaper.ImGui_DrawList_AddText(draw_list, text_x, text_y, config.COLOR_INFO_BAR_TEXT, meta_text)
   end
 
+  reaper.ImGui_DrawList_PopClipRect(draw_list)
+
   if mouse_over_filename and reaper.ImGui_IsMouseClicked(ctx, 0) then
     reaper.Main_OnCommand(41623, 0)
-    return true, false
+    return true, false, nil
   end
 
-  return mouse_over_filename, gear_clicked
+  return mouse_over_filename, gear_clicked, tab_clicked
 end
 
 -- Draw waveform with per-view peaks (1:1 peak-to-pixel mapping)
@@ -1197,6 +1277,345 @@ function drawing.draw_power_icon(draw_list, cx, cy, radius, color)
 
   -- Vertical line through the gap (from top of circle down to center)
   DL_AddLine(draw_list, cx, cy - radius, cx, cy, color, 1.5)
+end
+
+-- Draw envelope editor bottom bar with type dropdown
+function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
+                                     mouse_x, mouse_y, config, state)
+  -- Background (same as time ruler)
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, config.COLOR_RULER_BG)
+  reaper.ImGui_DrawList_AddLine(draw_list, x, y, x + width, y, config.COLOR_GRID_BAR, 1)
+
+  -- Dropdown button
+  local btn_w = 100
+  local btn_h = height - 4
+  local btn_x = x + 4
+  local btn_y = y + 2
+  local label = state.envelope_type
+
+  local mouse_in_btn = mouse_x >= btn_x and mouse_x <= btn_x + btn_w
+                        and mouse_y >= btn_y and mouse_y <= btn_y + btn_h
+
+  local btn_bg = mouse_in_btn and 0x505050FF or 0x353535FF
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, btn_x, btn_y, btn_x + btn_w, btn_y + btn_h, btn_bg, 2)
+  reaper.ImGui_DrawList_AddText(draw_list, btn_x + 4, btn_y + 1, 0xCCCCCCFF, label)
+
+  -- Triangle arrow pointing UP (menu opens upward)
+  local arrow_color = 0xAAAAAAFF
+  reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
+    btn_x + btn_w - 10, btn_y + btn_h - 4,
+    btn_x + btn_w - 4, btn_y + btn_h - 4,
+    btn_x + btn_w - 7, btn_y + 4,
+    arrow_color)
+
+  -- Toggle dropdown on click
+  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_btn then
+    state.envelope_dropdown_open = not state.envelope_dropdown_open
+  end
+
+end
+
+-- Draw envelope dropdown menu (called AFTER overlay so it renders on top)
+function drawing.draw_envelope_dropdown(draw_list, ctx, x, y, height,
+                                         mouse_x, mouse_y, config, state)
+  if not state.envelope_dropdown_open then return end
+
+  local btn_w = 100
+  local btn_x = x + 4
+  local btn_y = y + 2
+
+  local items = { "Volume", "Pitch" }
+  local menu_item_height = 16
+  local menu_height = #items * menu_item_height + 4
+  local menu_y = btn_y - menu_height - 1
+  local menu_x = btn_x
+
+  drawing.draw_beveled_rect(draw_list, menu_x, menu_y, menu_x + btn_w, menu_y + menu_height,
+    0x2A2A2AFF, 0x555555FF, 3)
+
+  for i, item_name in ipairs(items) do
+    local item_y = menu_y + 2 + (i - 1) * menu_item_height
+    local mouse_in_item = mouse_x >= menu_x and mouse_x <= menu_x + btn_w
+                          and mouse_y >= item_y and mouse_y <= item_y + menu_item_height
+
+    if mouse_in_item then
+      reaper.ImGui_DrawList_AddRectFilled(draw_list, menu_x + 1, item_y, menu_x + btn_w - 1, item_y + menu_item_height, 0x4A4A4AFF)
+    end
+
+    local text_color = (item_name == state.envelope_type) and 0x4A90D9FF or 0xCCCCCCFF
+    reaper.ImGui_DrawList_AddText(draw_list, menu_x + 4, item_y + 2, text_color, item_name)
+
+    if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_item then
+      state.envelope_type = item_name
+      state.envelope_dropdown_open = false
+    end
+  end
+
+  -- Close on click outside
+  local mouse_in_btn = mouse_x >= btn_x and mouse_x <= btn_x + btn_w
+                        and mouse_y >= btn_y and mouse_y <= btn_y + (height - 4)
+  if reaper.ImGui_IsMouseClicked(ctx, 0) and not mouse_in_btn then
+    local mouse_in_menu = mouse_x >= menu_x and mouse_x <= menu_x + btn_w
+                          and mouse_y >= menu_y and mouse_y <= menu_y + menu_height
+    if not mouse_in_menu then
+      state.envelope_dropdown_open = false
+    end
+  end
+end
+
+-- Draw envelope overlay: line, fill, nodes, tooltips over waveform
+function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
+                                        wave_x, wave_y, waveform_width, waveform_height,
+                                        time_to_px, view_start, view_length,
+                                        mouse_x, mouse_y, config, state, source_length,
+                                        env_scaling, env_max_raw, env_min_raw, is_pitch)
+  local DL_AddLine = reaper.ImGui_DrawList_AddLine
+  local DL_PathLineTo = reaper.ImGui_DrawList_PathLineTo
+  local DL_PathStroke = reaper.ImGui_DrawList_PathStroke
+  local DL_AddCircleFilled = reaper.ImGui_DrawList_AddCircleFilled
+  local DL_AddCircle = reaper.ImGui_DrawList_AddCircle
+  local DL_AddRectFilled = reaper.ImGui_DrawList_AddRectFilled
+  local DL_AddText = reaper.ImGui_DrawList_AddText
+  local has_path = DL_PathLineTo ~= nil
+
+  env_min_raw = env_min_raw or 0
+  local env_range = env_max_raw - env_min_raw
+
+  -- Coordinate mapping: raw envelope values to pixels
+  -- Volume: 0 (bottom) to max_raw (top)
+  -- Pitch: -24 (bottom) to +24 (top), 0 at center
+  local function value_to_y(raw)
+    return wave_y + waveform_height * (1 - (raw - env_min_raw) / env_range)
+  end
+
+  local function y_to_value(py)
+    local raw = env_min_raw + env_range * (1 - (py - wave_y) / waveform_height)
+    if raw < env_min_raw then raw = env_min_raw end
+    if raw > env_max_raw then raw = env_max_raw end
+    return raw
+  end
+
+  -- Helper: format raw value for tooltips
+  local function raw_to_label(raw)
+    if is_pitch then
+      -- Pitch: show semitones
+      if math.abs(raw) < 0.05 then return "0 st" end
+      return string.format("%+.1f st", raw)
+    else
+      -- Volume: show dB
+      local linear = reaper.ScaleFromEnvelopeMode(env_scaling, raw)
+      if linear <= 0 then return "-inf dB" end
+      local db = 20 * math.log(linear, 10)
+      if math.abs(db) < 0.05 then return "0.0 dB" end
+      return string.format("%+.1f dB", db)
+    end
+  end
+
+  -- Default raw value for implicit anchors
+  -- Volume: 0 dB (fader unity). Pitch: 0 semitones
+  local default_raw = is_pitch and 0 or reaper.ScaleToEnvelopeMode(env_scaling, 1.0)
+
+  -- Build effective point list (sorted by time) with implicit anchors
+  -- env_points contain RAW values (not normalized)
+  local pts = {}
+  local has_start = false
+  local has_end = false
+
+  for i = 1, num_points do
+    local p = env_points[i]
+    pts[#pts + 1] = { time = p.time, value = p.value, implicit = false, idx = i - 1 }
+    if math.abs(p.time) < 0.001 then has_start = true end
+    if math.abs(p.time - source_length) < 0.001 then has_end = true end
+  end
+
+  if not has_start then
+    -- Extend first point's value flat to the left (matches REAPER's behavior)
+    local start_val = (#pts > 0) and pts[1].value or default_raw
+    table.insert(pts, 1, { time = 0, value = start_val, implicit = true, idx = -1 })
+  end
+  if not has_end then
+    -- Extend last point's value flat to the right (matches REAPER's behavior)
+    local end_val = (#pts > 0) and pts[#pts].value or default_raw
+    pts[#pts + 1] = { time = source_length, value = end_val, implicit = true, idx = -1 }
+  end
+
+  -- Sort by time
+  table.sort(pts, function(a, b) return a.time < b.time end)
+
+  local n_pts = #pts
+
+  -- Helper: interpolate raw value at a given time
+  local function interp_value(t)
+    if n_pts == 0 then return default_raw end
+    if t <= pts[1].time then return pts[1].value end
+    if t >= pts[n_pts].time then return pts[n_pts].value end
+    for i = 1, n_pts - 1 do
+      if t >= pts[i].time and t <= pts[i + 1].time then
+        local seg_len = pts[i + 1].time - pts[i].time
+        if seg_len < 0.0001 then return pts[i].value end
+        local frac = (t - pts[i].time) / seg_len
+        return pts[i].value + frac * (pts[i + 1].value - pts[i].value)
+      end
+    end
+    return default_raw
+  end
+
+  -- 1. Fill area (column-by-column, 2px step)
+  local view_end = view_start + view_length
+  local step = 2
+  local center_y = is_pitch and value_to_y(0) or (wave_y + waveform_height)
+  for px = 0, waveform_width, step do
+    local t = view_start + (px / waveform_width) * view_length
+    local v = interp_value(t)
+    local env_y = value_to_y(v)
+    -- Volume: fill from envelope down to bottom. Pitch: fill from envelope to center (0 st)
+    local fill_top = math.min(env_y, center_y)
+    local fill_bot = math.max(env_y, center_y)
+    if fill_bot - fill_top >= 1 then
+      DL_AddLine(draw_list, wave_x + px, fill_top, wave_x + px, fill_bot, config.COLOR_ENV_FILL, step)
+    end
+  end
+
+  -- Pitch: draw center reference line (0 semitones)
+  if is_pitch then
+    local cy = value_to_y(0)
+    DL_AddLine(draw_list, wave_x, cy, wave_x + waveform_width, cy, config.COLOR_ENV_LINE_DASHED, 1)
+  end
+
+  -- 2. Envelope line
+  local no_user_nodes = (num_points == 0)
+
+  if no_user_nodes then
+    -- Dashed horizontal line at default value
+    local dash_y = value_to_y(default_raw)
+    local px = 0
+    while px < waveform_width do
+      local dash_end = math.min(px + config.ENV_DASH_LENGTH, waveform_width)
+      DL_AddLine(draw_list, wave_x + px, dash_y, wave_x + dash_end, dash_y,
+        config.COLOR_ENV_LINE_DASHED, config.ENV_LINE_THICKNESS)
+      px = px + config.ENV_DASH_LENGTH + config.ENV_DASH_GAP
+    end
+  elseif has_path then
+    -- Solid line via PathLineTo
+    local line_step = math.max(1, math.floor(waveform_width / 400))
+    for px = 0, waveform_width, line_step do
+      local t = view_start + (px / waveform_width) * view_length
+      local v = interp_value(t)
+      DL_PathLineTo(draw_list, wave_x + px, value_to_y(v))
+    end
+    -- Final point
+    local v_end = interp_value(view_end)
+    DL_PathLineTo(draw_list, wave_x + waveform_width, value_to_y(v_end))
+    DL_PathStroke(draw_list, config.COLOR_ENV_LINE, 0, config.ENV_LINE_THICKNESS)
+  end
+
+  -- 3. Segment hover detection: find closest line segment to mouse
+  state.envelope_hovered_segment = -1
+  state.env_node_hovered_idx = -1
+
+  local mouse_in_waveform = mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
+                            and mouse_y >= wave_y and mouse_y <= wave_y + waveform_height
+
+  if mouse_in_waveform and not state.dragging_env_node then
+    -- Check if mouse is near an existing node first
+    local closest_node_dist = config.ENV_NODE_HIT_RADIUS + 1
+    for i = 1, n_pts do
+      if not pts[i].implicit then
+        local node_px = time_to_px(pts[i].time)
+        local node_py = value_to_y(pts[i].value)
+        local dx = mouse_x - node_px
+        local dy = mouse_y - node_py
+        local dist = math.sqrt(dx * dx + dy * dy)
+        if dist < closest_node_dist then
+          closest_node_dist = dist
+          state.env_node_hovered_idx = pts[i].idx
+        end
+      end
+    end
+
+    -- If not hovering a node, check segment proximity
+    if state.env_node_hovered_idx < 0 then
+      local mouse_t = view_start + ((mouse_x - wave_x) / waveform_width) * view_length
+      local line_y = value_to_y(interp_value(mouse_t))
+      local dist_to_line = math.abs(mouse_y - line_y)
+      local threshold = no_user_nodes and 20 or 12
+
+      if dist_to_line <= threshold then
+        -- Find which segment
+        for i = 1, n_pts - 1 do
+          if mouse_t >= pts[i].time and mouse_t <= pts[i + 1].time then
+            state.envelope_hovered_segment = i - 1
+            state.envelope_hover_x = mouse_x
+            state.envelope_hover_y = line_y
+            state.envelope_hover_value = interp_value(mouse_t)
+            state.envelope_hover_time = mouse_t
+            break
+          end
+        end
+      end
+    end
+  end
+
+  -- 4. Draw node circles
+  for i = 1, n_pts do
+    if not pts[i].implicit then
+      local node_px = time_to_px(pts[i].time)
+      local node_py = value_to_y(pts[i].value)
+      if node_px >= wave_x - config.ENV_NODE_RADIUS and node_px <= wave_x + waveform_width + config.ENV_NODE_RADIUS then
+        local is_hovered = (pts[i].idx == state.env_node_hovered_idx)
+        local fill = is_hovered and config.COLOR_ENV_NODE_HOVER or config.COLOR_ENV_NODE
+        DL_AddCircleFilled(draw_list, node_px, node_py, config.ENV_NODE_RADIUS, fill, 16)
+        DL_AddCircle(draw_list, node_px, node_py, config.ENV_NODE_RADIUS, config.COLOR_ENV_NODE_BORDER, 16, 1.5)
+      end
+    end
+  end
+
+  -- 5. Preview circle + tooltip on segment hover
+  if state.envelope_hovered_segment >= 0 and state.env_node_hovered_idx < 0
+      and not state.dragging_env_node then
+    DL_AddCircleFilled(draw_list, state.envelope_hover_x, state.envelope_hover_y,
+      config.ENV_NODE_RADIUS, config.COLOR_ENV_PREVIEW_NODE, 16)
+
+    -- Tooltip
+    local tip_text = raw_to_label(state.envelope_hover_value)
+    local tip_w = reaper.ImGui_CalcTextSize(ctx, tip_text) + 8
+    local tip_h = 16
+    local tip_x = state.envelope_hover_x + 10
+    local tip_y = state.envelope_hover_y - tip_h - 4
+    -- Keep tooltip within waveform bounds
+    if tip_x + tip_w > wave_x + waveform_width then
+      tip_x = state.envelope_hover_x - tip_w - 10
+    end
+    if tip_y < wave_y then tip_y = wave_y + 2 end
+
+    DL_AddRectFilled(draw_list, tip_x, tip_y, tip_x + tip_w, tip_y + tip_h, config.COLOR_ENV_TOOLTIP_BG, 3)
+    DL_AddText(draw_list, tip_x + 4, tip_y + 1, config.COLOR_ENV_TOOLTIP_TEXT, tip_text)
+  end
+
+  -- 6. Drag tooltip (while dragging a node)
+  if state.dragging_env_node and state.env_drag_activated then
+    local drag_idx = state.env_drag_node_idx
+    -- Find the dragged point in pts
+    for i = 1, n_pts do
+      if pts[i].idx == drag_idx and not pts[i].implicit then
+        local node_px = time_to_px(pts[i].time)
+        local node_py = value_to_y(pts[i].value)
+        local tip_text = raw_to_label(pts[i].value)
+        local tip_w = reaper.ImGui_CalcTextSize(ctx, tip_text) + 8
+        local tip_h = 16
+        local tip_x = node_px + 10
+        local tip_y = node_py - tip_h - 4
+        if tip_x + tip_w > wave_x + waveform_width then
+          tip_x = node_px - tip_w - 10
+        end
+        if tip_y < wave_y then tip_y = wave_y + 2 end
+
+        DL_AddRectFilled(draw_list, tip_x, tip_y, tip_x + tip_w, tip_y + tip_h, config.COLOR_ENV_TOOLTIP_BG, 3)
+        DL_AddText(draw_list, tip_x + 4, tip_y + 1, config.COLOR_ENV_TOOLTIP_TEXT, tip_text)
+        break
+      end
+    end
+  end
 end
 
 return drawing
