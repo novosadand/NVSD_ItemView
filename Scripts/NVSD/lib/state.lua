@@ -88,6 +88,11 @@ state.ruler_drag_cursor_x = 0  -- Tracks visible cursor X during drag
 state.ruler_drag_window_x = 0  -- Window-space X for zoom centering
 state.last_zoomed_item = nil
 
+-- Looped item wrap tracking
+state.prev_raw_start_offset = nil  -- Previous frame's raw start_offset (for wrap detection)
+state.unwrapped_start_offset = nil -- Accumulated unwrapped start_offset
+state.is_looped_view = false       -- Whether the view is currently in looped/extended mode
+
 -- Mouse tracking
 state.was_mouse_down = false
 

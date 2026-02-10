@@ -1365,7 +1365,7 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
                                         time_to_px, view_start, view_length,
                                         mouse_x, mouse_y, config, state, source_length,
                                         env_scaling, env_max_raw, env_min_raw, env_type,
-                                        snap_time_fn, env_colors)
+                                        snap_time_fn, env_colors, anchor_start)
   local DL_AddLine = reaper.ImGui_DrawList_AddLine
   local DL_PathLineTo = reaper.ImGui_DrawList_PathLineTo
   local DL_PathStroke = reaper.ImGui_DrawList_PathStroke
@@ -1374,6 +1374,10 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
   local DL_AddRectFilled = reaper.ImGui_DrawList_AddRectFilled
   local DL_AddText = reaper.ImGui_DrawList_AddText
   local has_path = DL_PathLineTo ~= nil
+
+  -- Anchor boundaries for implicit envelope endpoints (default: 0 and source_length)
+  local anchor_s = anchor_start or 0
+  local anchor_e = source_length  -- source_length acts as anchor_end
 
   -- Derive type flags from env_type string
   local is_pitch = (env_type == "Pitch")
@@ -1458,17 +1462,17 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
     local p = env_points[i]
     pts[#pts + 1] = { time = p.time, value = p.value, implicit = false, idx = i - 1,
                        shape = p.shape or 0, tension = p.tension or 0 }
-    if math.abs(p.time) < 0.001 then has_start = true end
-    if math.abs(p.time - source_length) < 0.001 then has_end = true end
+    if math.abs(p.time - anchor_s) < 0.001 then has_start = true end
+    if math.abs(p.time - anchor_e) < 0.001 then has_end = true end
   end
 
   if not has_start then
     local start_val = (#pts > 0) and pts[1].value or default_raw
-    table.insert(pts, 1, { time = 0, value = start_val, implicit = true, idx = -1, shape = 0, tension = 0 })
+    table.insert(pts, 1, { time = anchor_s, value = start_val, implicit = true, idx = -1, shape = 0, tension = 0 })
   end
   if not has_end then
     local end_val = (#pts > 0) and pts[#pts].value or default_raw
-    pts[#pts + 1] = { time = source_length, value = end_val, implicit = true, idx = -1, shape = 0, tension = 0 }
+    pts[#pts + 1] = { time = anchor_e, value = end_val, implicit = true, idx = -1, shape = 0, tension = 0 }
   end
 
   -- Sort by time, using REAPER index as tiebreaker for same-time nodes (stable order)

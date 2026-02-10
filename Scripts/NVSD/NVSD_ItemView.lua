@@ -644,6 +644,49 @@ local function loop()
           local mouse_x, mouse_y = reaper.ImGui_GetMousePos(ctx)
           local source_item_length = item_length * playrate
 
+          -- Detect looped item and track start_offset wrapping
+          local is_looped_item = source_item_length > source_length and source_length > 0
+
+          if is_looped_item then
+            -- Initialize wrap tracking on first frame or item change
+            if state.unwrapped_start_offset == nil then
+              state.unwrapped_start_offset = start_offset
+              state.prev_raw_start_offset = start_offset
+            end
+
+            -- Detect wraps: if start_offset jumped by ~source_length, it wrapped
+            if state.prev_raw_start_offset ~= nil then
+              local delta = start_offset - state.prev_raw_start_offset
+              if delta > source_length * 0.5 then
+                -- Wrapped upward (extending left past 0): actual change was negative
+                delta = delta - source_length
+              elseif delta < -source_length * 0.5 then
+                -- Wrapped downward: actual change was positive
+                delta = delta + source_length
+              end
+              state.unwrapped_start_offset = state.unwrapped_start_offset + delta
+            end
+            state.prev_raw_start_offset = start_offset
+          else
+            -- Not looped: reset tracking
+            state.unwrapped_start_offset = nil
+            state.prev_raw_start_offset = nil
+          end
+
+          state.is_looped_view = is_looped_item
+
+          -- Extended view range (virtual source time coordinates)
+          local ext_start, ext_end, ext_length
+          if is_looped_item then
+            ext_start = state.unwrapped_start_offset
+            ext_end = state.unwrapped_start_offset + source_item_length
+            ext_length = source_item_length
+          else
+            ext_start = 0
+            ext_end = source_length
+            ext_length = source_length
+          end
+
           -- Check if take is reversed
           local is_reversed = false
           if reaper.BR_GetMediaSourceProperties and take then
@@ -680,16 +723,20 @@ local function loop()
             state.pan_offset = 0
             state.last_panned_item = item
             state.last_zoomed_item = item
+            -- Reset wrap tracking for new item
+            state.unwrapped_start_offset = nil
+            state.prev_raw_start_offset = nil
           end
 
           -- Compute view bounds
-          local view_length = source_length / state.zoom_level
-          local view_center = source_length / 2 + state.pan_offset
+          local view_length = ext_length / state.zoom_level
+          local range_center = (ext_start + ext_end) / 2
+          local view_center = range_center + state.pan_offset
           local view_start = view_center - view_length / 2
           local view_end = view_start + view_length
-          if view_start < 0 then view_start = 0; view_end = view_length end
-          if view_end > source_length then view_end = source_length; view_start = source_length - view_length end
-          if view_start < 0 then view_start = 0 end
+          if view_start < ext_start then view_start = ext_start; view_end = ext_start + view_length end
+          if view_end > ext_end then view_end = ext_end; view_start = ext_end - view_length end
+          if view_start < ext_start then view_start = ext_start end
           view_length = view_end - view_start
           if view_length <= 0 then view_length = 0.001 end
 
@@ -706,9 +753,14 @@ local function loop()
               or num_view_samples ~= state.view_num_samples
 
           if need_reload and view_length > 0 then
-            -- For reversed display, load peaks from the mirrored source range
-            local peak_start = is_reversed and math.max(0, source_length - view_start - view_length) or view_start
-            local peaks_result, num_ch = utils.get_peaks_for_range(source, peak_start, view_length, num_view_samples)
+            local peaks_result, num_ch
+            if is_looped_item and not is_reversed then
+              peaks_result, num_ch = utils.get_peaks_for_range_looped(source, view_start, view_length, num_view_samples, source_length)
+            else
+              -- For reversed display, load peaks from the mirrored source range
+              local peak_start = is_reversed and math.max(0, source_length - view_start - view_length) or view_start
+              peaks_result, num_ch = utils.get_peaks_for_range(source, peak_start, view_length, num_view_samples)
+            end
             if peaks_result then
               state.view_peaks = peaks_result
               state.view_num_channels = num_ch
@@ -727,6 +779,9 @@ local function loop()
           if state.dragging_start or state.dragging_end then
             view_offset = state.drag_start_offset
             view_item_length = state.drag_start_length * state.drag_start_playrate
+          elseif is_looped_item then
+            view_offset = state.unwrapped_start_offset
+            view_item_length = source_item_length
           else
             view_offset = start_offset
             view_item_length = source_item_length
@@ -775,13 +830,33 @@ local function loop()
           if state.dragging_start or state.dragging_end then
             render_start = state.drag_current_start
             render_end = state.drag_current_end
+            -- Clamp markers to source bounds during drag
+            render_start = math.max(0, math.min(source_length, render_start))
+            if render_end > source_length and source_length > 0 then
+              local wrapped = render_end % source_length
+              if wrapped >= render_start then
+                render_end = wrapped
+              end
+            end
+            render_end = math.max(0, math.min(source_length, render_end))
+          elseif is_looped_item then
+            -- Markers at item boundaries in virtual time
+            render_start = ext_start
+            render_end = ext_end
           else
             render_start = start_offset
             render_end = start_offset + source_item_length
+            -- Clamp markers to source bounds; for looped items, wrap end to show
+            -- where audio actually is in the source (modulo source_length)
+            render_start = math.max(0, math.min(source_length, render_start))
+            if render_end > source_length and source_length > 0 then
+              local wrapped = render_end % source_length
+              if wrapped >= render_start then
+                render_end = wrapped
+              end
+            end
+            render_end = math.max(0, math.min(source_length, render_end))
           end
-          -- Clamp markers to source bounds (for looped items, show full source)
-          render_start = math.max(0, math.min(source_length, render_start))
-          render_end = math.max(0, math.min(source_length, render_end))
           local actual_start_px = time_to_px(render_start) - wave_x
           local actual_end_px = time_to_px(render_end) - wave_x
           start_px = actual_start_px
@@ -791,110 +866,112 @@ local function loop()
           drawing.draw_ruler_and_grid(draw_list, wave_x, ruler_y, wave_y, waveform_width, config.RULER_HEIGHT, waveform_height,
             grid_view_start, view_length, item_position, grid_offset, grid_playrate, config, utils)
 
-          -- Draw overlays on inactive regions
-          local COLOR_UNUSED_SOURCE = 0x00000038
-          local COLOR_OUTSIDE_SOURCE = 0x00000058
+          -- Draw overlays on inactive regions (skip in looped mode - entire view is item content)
+          if not is_looped_item then
+            local COLOR_UNUSED_SOURCE = 0x00000038
+            local COLOR_OUTSIDE_SOURCE = 0x00000058
 
-          local source_start_px = time_to_px(0)
-          local source_end_px = time_to_px(source_length)
-          local view_left = wave_x
-          local view_right = wave_x + waveform_width
+            local source_start_px = time_to_px(0)
+            local source_end_px = time_to_px(source_length)
+            local view_left = wave_x
+            local view_right = wave_x + waveform_width
 
-          -- Calculate active regions considering loops
-          -- Item plays from start_offset to start_offset + source_item_length
-          local item_start = start_offset
-          local item_end = start_offset + source_item_length
+            -- Calculate active regions considering loops
+            -- Item plays from start_offset to start_offset + source_item_length
+            local item_start = start_offset
+            local item_end = start_offset + source_item_length
 
-          -- Check if item loops (extends past source_length)
-          local is_looping = item_end > source_length
-          local loop_end = 0  -- How far into source the loop extends from beginning
+            -- Check if item loops (extends past source_length)
+            local is_looping = item_end > source_length
+            local loop_end = 0  -- How far into source the loop extends from beginning
 
-          if is_looping then
-            -- Calculate how much of the beginning is covered by the loop
-            local overflow = item_end - source_length
-            if overflow >= source_length then
-              -- Multiple full loops - entire source is active
-              loop_end = source_length
+            if is_looping then
+              -- Calculate how much of the beginning is covered by the loop
+              local overflow = item_end - source_length
+              if overflow >= source_length then
+                -- Multiple full loops - entire source is active
+                loop_end = source_length
+              else
+                loop_end = overflow
+              end
+            end
+
+            -- Also check for negative start (looping from before source start)
+            local loop_from_end = 0
+            if item_start < 0 then
+              local underflow = -item_start
+              if underflow >= source_length then
+                loop_from_end = source_length
+              else
+                loop_from_end = underflow
+              end
+            end
+
+            -- Draw outside source overlay (before source start)
+            if source_start_px > view_left then
+              local left = view_left
+              local right = math.min(source_start_px, view_right)
+              if right > left then
+                reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_OUTSIDE_SOURCE)
+              end
+            end
+
+            -- Draw outside source overlay (after source end)
+            if source_end_px < view_right then
+              local left = math.max(source_end_px, view_left)
+              local right = view_right
+              if right > left then
+                reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_OUTSIDE_SOURCE)
+              end
+            end
+
+            -- Draw inactive regions within source bounds
+            -- Check beginning of source (0 to main_start or loop_end)
+            local main_start_clamped = math.max(0, item_start)
+            if loop_end > 0 then
+              -- Source loops - check if there's a gap between loop_end and main_start
+              if loop_end < main_start_clamped then
+                local gap_start_px = time_to_px(loop_end)
+                local gap_end_px = time_to_px(main_start_clamped)
+                local left = math.max(gap_start_px, view_left)
+                local right = math.min(gap_end_px, view_right)
+                if right > left then
+                  reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_UNUSED_SOURCE)
+                end
+              end
             else
-              loop_end = overflow
+              -- No loop from end - unused from source start to item start
+              if main_start_clamped > 0 then
+                local left = math.max(source_start_px, view_left)
+                local right = math.min(time_to_px(main_start_clamped), view_right)
+                if right > left then
+                  reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_UNUSED_SOURCE)
+                end
+              end
             end
-          end
 
-          -- Also check for negative start (looping from before source start)
-          local loop_from_end = 0
-          if item_start < 0 then
-            local underflow = -item_start
-            if underflow >= source_length then
-              loop_from_end = source_length
+            -- Check end of source (main_end to source_length or loop_from_end start)
+            local main_end_clamped = math.min(source_length, item_end)
+            if loop_from_end > 0 then
+              -- Source loops from beginning - check if there's a gap
+              local loop_start_time = source_length - loop_from_end
+              if main_end_clamped < loop_start_time then
+                local gap_start_px = time_to_px(main_end_clamped)
+                local gap_end_px = time_to_px(loop_start_time)
+                local left = math.max(gap_start_px, view_left)
+                local right = math.min(gap_end_px, view_right)
+                if right > left then
+                  reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_UNUSED_SOURCE)
+                end
+              end
             else
-              loop_from_end = underflow
-            end
-          end
-
-          -- Draw outside source overlay (before source start)
-          if source_start_px > view_left then
-            local left = view_left
-            local right = math.min(source_start_px, view_right)
-            if right > left then
-              reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_OUTSIDE_SOURCE)
-            end
-          end
-
-          -- Draw outside source overlay (after source end)
-          if source_end_px < view_right then
-            local left = math.max(source_end_px, view_left)
-            local right = view_right
-            if right > left then
-              reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_OUTSIDE_SOURCE)
-            end
-          end
-
-          -- Draw inactive regions within source bounds
-          -- Check beginning of source (0 to main_start or loop_end)
-          local main_start_clamped = math.max(0, item_start)
-          if loop_end > 0 then
-            -- Source loops - check if there's a gap between loop_end and main_start
-            if loop_end < main_start_clamped then
-              local gap_start_px = time_to_px(loop_end)
-              local gap_end_px = time_to_px(main_start_clamped)
-              local left = math.max(gap_start_px, view_left)
-              local right = math.min(gap_end_px, view_right)
-              if right > left then
-                reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_UNUSED_SOURCE)
-              end
-            end
-          else
-            -- No loop from end - unused from source start to item start
-            if main_start_clamped > 0 then
-              local left = math.max(source_start_px, view_left)
-              local right = math.min(time_to_px(main_start_clamped), view_right)
-              if right > left then
-                reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_UNUSED_SOURCE)
-              end
-            end
-          end
-
-          -- Check end of source (main_end to source_length or loop_from_end start)
-          local main_end_clamped = math.min(source_length, item_end)
-          if loop_from_end > 0 then
-            -- Source loops from beginning - check if there's a gap
-            local loop_start_time = source_length - loop_from_end
-            if main_end_clamped < loop_start_time then
-              local gap_start_px = time_to_px(main_end_clamped)
-              local gap_end_px = time_to_px(loop_start_time)
-              local left = math.max(gap_start_px, view_left)
-              local right = math.min(gap_end_px, view_right)
-              if right > left then
-                reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_UNUSED_SOURCE)
-              end
-            end
-          else
-            -- No loop from start - unused from item end to source end
-            if main_end_clamped < source_length then
-              local left = math.max(time_to_px(main_end_clamped), view_left)
-              local right = math.min(source_end_px, view_right)
-              if right > left then
-                reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_UNUSED_SOURCE)
+              -- No loop from start - unused from item end to source end
+              if main_end_clamped < source_length then
+                local left = math.max(time_to_px(main_end_clamped), view_left)
+                local right = math.min(source_end_px, view_right)
+                if right > left then
+                  reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, right, wave_y + waveform_height, COLOR_UNUSED_SOURCE)
+                end
               end
             end
           end
@@ -977,7 +1054,8 @@ local function loop()
               end
               num_env_points = reaper.CountEnvelopePoints(env)
               -- Envelope points are shifted in realtime during drag, so always use live offset
-              local env_time_offset = start_offset
+              -- In looped mode, use unwrapped offset so points align with virtual coordinates
+              local env_time_offset = is_looped_item and state.unwrapped_start_offset or start_offset
               for i = 0, num_env_points - 1 do
                 local retval, ept_time, ept_value, ept_shape, ept_tension, ept_selected = reaper.GetEnvelopePoint(env, i)
                 if retval then
@@ -992,12 +1070,14 @@ local function loop()
 
             -- Draw envelope overlay on waveform
             local env_colors = config.ENV_COLORS[state.envelope_type] or config.ENV_COLORS.Volume
+            local env_anchor_end = is_looped_item and ext_end or source_length
+            local env_anchor_start = is_looped_item and ext_start or nil
             drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_env_points,
               wave_x, wave_y, waveform_width, waveform_height,
               time_to_px, view_start, view_length,
-              mouse_x, mouse_y, config, state, source_length,
+              mouse_x, mouse_y, config, state, env_anchor_end,
               env_scaling, env_max_raw, env_min_raw, state.envelope_type,
-              snap_to_grid_if_enabled, env_colors)
+              snap_to_grid_if_enabled, env_colors, env_anchor_start)
 
           end
 
@@ -1395,9 +1475,8 @@ local function loop()
             reaper.ImGui_EndPopup(ctx)
           end
 
-          -- Zoom helpers - constrained to source bounds (0 to source_length)
-          local zoom_base_view_length = source_length
-          local range_center = source_length / 2
+          -- Zoom helpers
+          local zoom_base_view_length = ext_length
 
           -- Min zoom = 1.0 (shows full source), max zoom = 500
           local min_zoom = 1.0
@@ -1414,10 +1493,10 @@ local function loop()
 
             state.pan_offset = time_under_cursor - range_center + new_view_length * (0.5 - cursor_fraction)
 
-            -- Clamp pan to keep view within source bounds (0 to source_length)
+            -- Clamp pan to keep view within bounds
             local half_view = new_view_length / 2
-            local min_pan = -range_center + half_view  -- view_start = 0
-            local max_pan = source_length - range_center - half_view  -- view_end = source_length
+            local min_pan = -range_center + half_view
+            local max_pan = ext_end - range_center - half_view
             if min_pan > max_pan then min_pan, max_pan = max_pan, min_pan end
             state.pan_offset = math.max(min_pan, math.min(max_pan, state.pan_offset))
           end
@@ -1480,7 +1559,7 @@ local function loop()
                 -- Clamp pan to valid range
                 local half_view = new_view_length / 2
                 local min_pan = -range_center + half_view
-                local max_pan = source_length - range_center - half_view
+                local max_pan = ext_end - range_center - half_view
                 if min_pan > max_pan then min_pan, max_pan = max_pan, min_pan end
                 state.pan_offset = math.max(min_pan, math.min(max_pan, state.pan_offset))
               end
@@ -1529,10 +1608,10 @@ local function loop()
             local mouse_delta_px = mouse_x - state.pan_start_mouse_x
             local delta_time = -(mouse_delta_px / waveform_width) * view_length
             state.pan_offset = state.pan_start_offset + delta_time
-            -- Pan limits: keep view within source bounds (0 to source_length)
+            -- Pan limits: keep view within bounds
             local half_view = view_length / 2
             local min_pan = -range_center + half_view
-            local max_pan = source_length - range_center - half_view
+            local max_pan = ext_end - range_center - half_view
             if min_pan > max_pan then min_pan, max_pan = max_pan, min_pan end
             state.pan_offset = math.max(min_pan, math.min(max_pan, state.pan_offset))
           end
@@ -1664,8 +1743,9 @@ local function loop()
             end
           end
 
-          -- Start marker dragging (skip if fade drag already started this click)
+          -- Start marker dragging (skip if fade drag already started this click, or if looped)
           if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_marker_area
+              and not is_looped_item
               and not state.dragging_fade_in and not state.dragging_fade_out
               and not state.is_ruler_dragging and not state.is_panning then
             if near_start then
@@ -1699,8 +1779,9 @@ local function loop()
             end
           end
 
-          -- Alt+click in free zone: initiate zone drag (slides both markers)
+          -- Alt+click in free zone: initiate zone drag (slides both markers, disabled when looped)
           if reaper.ImGui_IsMouseClicked(ctx, 0) and alt_held and mouse_in_free_zone
+              and not is_looped_item
               and not state.dragging_start and not state.dragging_end
               and not state.dragging_fade_in and not state.dragging_fade_out
               and not state.dragging_fade_curve_in and not state.dragging_fade_curve_out
@@ -1912,6 +1993,10 @@ local function loop()
             local is_pitch = (env_name == "Pitch")
             local is_pan = (env_name == "Pan")
             local is_centered = is_pitch or is_pan
+            -- Envelope coordinate helpers for looped items
+            local env_offset = is_looped_item and state.unwrapped_start_offset or start_offset
+            local env_time_min = is_looped_item and ext_start or 0
+            local env_time_max = is_looped_item and ext_end or source_length
             local env_max_raw = is_pitch and 24.0 or (is_pan and 1.0 or reaper.ScaleToEnvelopeMode(is_centered and 0 or 1, 2.0))
             local env_min_raw = is_pitch and -24.0 or (is_pan and -1.0 or 0)
 
@@ -1951,8 +2036,8 @@ local function loop()
                 -- Insert first point
                 local src_time = px_to_time(mouse_x)
                 local raw_val = mouse_y_to_raw(mouse_y)
-                src_time = math.max(0, math.min(source_length, src_time))
-                local take_time = src_time - start_offset
+                src_time = math.max(env_time_min, math.min(env_time_max, src_time))
+                local take_time = src_time - env_offset
                 reaper.InsertEnvelopePoint(env, take_time, raw_val, 0, 0, false, true)
                 reaper.Envelope_SortPoints(env)
                 state.env_freehand_last_take_time = take_time
@@ -1966,8 +2051,8 @@ local function loop()
                 if env then
                   local src_time = px_to_time(mouse_x)
                   local raw_val = mouse_y_to_raw(mouse_y)
-                  src_time = math.max(0, math.min(source_length, src_time))
-                  local take_time = src_time - start_offset
+                  src_time = math.max(env_time_min, math.min(env_time_max, src_time))
+                  local take_time = src_time - env_offset
                   -- Delete existing points in swept range (overwrite mode)
                   -- Protect our last inserted point, delete everything else up through current pos
                   local prev_t = state.env_freehand_last_take_time
@@ -2033,7 +2118,7 @@ local function loop()
                     end
                   end
                   local snapped_src = snap_to_grid_if_enabled(state.envelope_hover_time)
-                  local take_time = snapped_src - start_offset
+                  local take_time = snapped_src - env_offset
                   reaper.InsertEnvelopePoint(env, take_time, state.envelope_hover_value, 0, 0, false, true)
                   reaper.Envelope_SortPoints(env)
                   -- Find the index of the point we just inserted (match time AND value for same-time nodes)
@@ -2075,7 +2160,7 @@ local function loop()
               if env then
                 local seg_pt_idx = -1
                 local np = reaper.CountEnvelopePoints(env)
-                local hover_take_time = state.envelope_hover_time - start_offset
+                local hover_take_time = state.envelope_hover_time - env_offset
                 for pi = 0, np - 2 do
                   local ret1, t1 = reaper.GetEnvelopePoint(env, pi)
                   local ret2, t2 = reaper.GetEnvelopePoint(env, pi + 1)
@@ -2115,7 +2200,7 @@ local function loop()
                 -- hover_time falls between two points; we need the first point's REAPER index
                 local seg_pt_idx = -1
                 local np = reaper.CountEnvelopePoints(env)
-                local hover_take_time = state.envelope_hover_time - start_offset
+                local hover_take_time = state.envelope_hover_time - env_offset
                 for pi = 0, np - 2 do
                   local ret1, t1 = reaper.GetEnvelopePoint(env, pi)
                   local ret2, t2 = reaper.GetEnvelopePoint(env, pi + 1)
@@ -2160,7 +2245,7 @@ local function loop()
               local env = reaper.GetTakeEnvelopeByName(take, env_name)
               if env then
                 local np = reaper.CountEnvelopePoints(env)
-                local hover_take_time = state.envelope_hover_time - start_offset
+                local hover_take_time = state.envelope_hover_time - env_offset
                 local found = false
 
                 -- Check implicit left segment (before first REAPER point)
@@ -2251,10 +2336,10 @@ local function loop()
                 if env then
                   local new_source_time = px_to_time(mouse_x)
                   local new_raw = mouse_y_to_raw(mouse_y)
-                  new_source_time = math.max(0, math.min(source_length, new_source_time))
+                  new_source_time = math.max(env_time_min, math.min(env_time_max, new_source_time))
                   new_source_time = snap_to_grid_if_enabled(new_source_time)
                   -- Convert source time to take time
-                  local take_time = new_source_time - start_offset
+                  local take_time = new_source_time - env_offset
                   reaper.SetEnvelopePoint(env, state.env_drag_node_idx, take_time, new_raw, 0, 0, false, true)
                   reaper.Envelope_SortPoints(env)
                   -- Re-find the point after sort (index may have changed)
