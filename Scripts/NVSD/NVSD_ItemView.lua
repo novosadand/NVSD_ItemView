@@ -558,13 +558,14 @@ local function loop()
           if playrate == 0 then playrate = 1 end  -- Guard against division by zero
           local item_vol = reaper.GetMediaItemInfo_Value(item, "D_VOL")
 
-          -- Fade values (use effective length: max of manual and auto-crossfade)
+          -- Fade values: when auto-crossfade is active, use auto (reflects actual overlap);
+          -- otherwise use manual. This avoids stale manual values inflating the display.
           local fade_in_len_manual = reaper.GetMediaItemInfo_Value(item, "D_FADEINLEN")
           local fade_in_len_auto = reaper.GetMediaItemInfo_Value(item, "D_FADEINLEN_AUTO")
           local fade_out_len_manual = reaper.GetMediaItemInfo_Value(item, "D_FADEOUTLEN")
           local fade_out_len_auto = reaper.GetMediaItemInfo_Value(item, "D_FADEOUTLEN_AUTO")
-          local fade_in_len = math.max(fade_in_len_manual, fade_in_len_auto)
-          local fade_out_len = math.max(fade_out_len_manual, fade_out_len_auto)
+          local fade_in_len = fade_in_len_auto > 0 and fade_in_len_auto or fade_in_len_manual
+          local fade_out_len = fade_out_len_auto > 0 and fade_out_len_auto or fade_out_len_manual
           local fade_in_shape = math.floor(reaper.GetMediaItemInfo_Value(item, "C_FADEINSHAPE") + 0.5)
           local fade_out_shape = math.floor(reaper.GetMediaItemInfo_Value(item, "C_FADEOUTSHAPE") + 0.5)
           local fade_in_dir = reaper.GetMediaItemInfo_Value(item, "D_FADEINDIR")
@@ -1509,6 +1510,39 @@ local function loop()
               state.fade_drag_start_view_length = view_length
               state.fade_drag_start_auto = fade_in_len_auto
               state.fade_drag_start_auto_other = fade_out_len_auto
+              -- Find adjacent left item for crossfade extension
+              state.fade_drag_xfade_item = nil
+              if fade_in_len_auto > 0 then
+                local track = reaper.GetMediaItem_Track(item)
+                local num_items = reaper.CountTrackMediaItems(track)
+                for i = 0, num_items - 1 do
+                  local other = reaper.GetTrackMediaItem(track, i)
+                  if other ~= item then
+                    local other_pos = reaper.GetMediaItemInfo_Value(other, "D_POSITION")
+                    local other_len = reaper.GetMediaItemInfo_Value(other, "D_LENGTH")
+                    local other_end = other_pos + other_len
+                    if other_end > item_position and other_pos < item_position then
+                      local other_take = reaper.GetActiveTake(other)
+                      if other_take then
+                        local other_source = reaper.GetMediaItemTake_Source(other_take)
+                        local other_source_len = reaper.GetMediaSourceLength(other_source)
+                        local other_startoffs = reaper.GetMediaItemTakeInfo_Value(other_take, "D_STARTOFFS")
+                        local other_playrate = reaper.GetMediaItemTakeInfo_Value(other_take, "D_PLAYRATE")
+                        local source_used = other_startoffs + other_len * other_playrate
+                        state.fade_drag_xfade_item = other
+                        state.fade_drag_xfade_length = other_len
+                        state.fade_drag_xfade_max_ext = math.max(0, (other_source_len - source_used) / other_playrate)
+                        state.fade_drag_xfade_pos = other_pos
+                        state.fade_drag_xfade_startoffs = other_startoffs
+                        state.fade_drag_xfade_playrate = other_playrate
+                        state.fade_drag_xfade_fade_auto = reaper.GetMediaItemInfo_Value(other, "D_FADEOUTLEN_AUTO")
+                      end
+                      break
+                    end
+                  end
+                end
+              end
+              state.fade_drag_xfade_env_shift = 0
               if not state.undo_block_open then
                 state.undo_block_open = "fade_in"
               end
@@ -1520,6 +1554,36 @@ local function loop()
               state.fade_drag_start_view_length = view_length
               state.fade_drag_start_auto = fade_out_len_auto
               state.fade_drag_start_auto_other = fade_in_len_auto
+              -- Find adjacent right item for crossfade extension
+              state.fade_drag_xfade_item = nil
+              if fade_out_len_auto > 0 then
+                local track = reaper.GetMediaItem_Track(item)
+                local item_end_pos = item_position + item_length
+                local num_items = reaper.CountTrackMediaItems(track)
+                for i = 0, num_items - 1 do
+                  local other = reaper.GetTrackMediaItem(track, i)
+                  if other ~= item then
+                    local other_pos = reaper.GetMediaItemInfo_Value(other, "D_POSITION")
+                    if other_pos >= item_position and other_pos < item_end_pos then
+                      local other_take = reaper.GetActiveTake(other)
+                      if other_take then
+                        local other_len = reaper.GetMediaItemInfo_Value(other, "D_LENGTH")
+                        local other_startoffs = reaper.GetMediaItemTakeInfo_Value(other_take, "D_STARTOFFS")
+                        local other_playrate = reaper.GetMediaItemTakeInfo_Value(other_take, "D_PLAYRATE")
+                        state.fade_drag_xfade_item = other
+                        state.fade_drag_xfade_length = other_len
+                        state.fade_drag_xfade_max_ext = math.max(0, other_startoffs / other_playrate)
+                        state.fade_drag_xfade_pos = other_pos
+                        state.fade_drag_xfade_startoffs = other_startoffs
+                        state.fade_drag_xfade_playrate = other_playrate
+                        state.fade_drag_xfade_fade_auto = reaper.GetMediaItemInfo_Value(other, "D_FADEINLEN_AUTO")
+                      end
+                      break
+                    end
+                  end
+                end
+              end
+              state.fade_drag_xfade_env_shift = 0
               if not state.undo_block_open then
                 state.undo_block_open = "fade_out"
               end
@@ -2007,6 +2071,7 @@ local function loop()
             state.marker_drag_activated = false
             state.dragging_fade_in = false
             state.dragging_fade_out = false
+            state.fade_drag_xfade_item = nil
             state.dragging_fade_curve_in = false
             state.dragging_fade_curve_out = false
             state.dragging_env_node = false
@@ -2223,15 +2288,26 @@ local function loop()
             local delta_time = (delta_px / waveform_width) * state.fade_drag_start_view_length
             local fi = math.max(0, state.fade_drag_start_value + delta_time / playrate)
             fi = math.min(fi, item_length)
+            -- Crossfade resize: extend or contract adjacent item to match fade size
+            local xfade_item = state.fade_drag_xfade_item
+            if xfade_item and reaper.ValidatePtr(xfade_item, "MediaItem*") and state.fade_drag_start_auto > 0 then
+              -- extension > 0 = grow crossfade, < 0 = shrink crossfade
+              local extension = fi - state.fade_drag_start_auto
+              extension = math.min(extension, state.fade_drag_xfade_max_ext)
+              fi = state.fade_drag_start_auto + extension
+              -- Adjust left item's length (no position/startoffs change, so envelopes stay put)
+              reaper.SetMediaItemInfo_Value(xfade_item, "D_LENGTH", state.fade_drag_xfade_length + extension)
+              reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN_AUTO", fi)
+              if state.fade_drag_xfade_fade_auto > 0 then
+                reaper.SetMediaItemInfo_Value(xfade_item, "D_FADEOUTLEN_AUTO", fi)
+              end
+            elseif state.fade_drag_start_auto > 0 then
+              reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN_AUTO", math.min(fi, state.fade_drag_start_auto))
+            end
             -- Push fade-out: cap at remaining space, but never grow past its initial value
             local fo = math.min(state.fade_drag_start_other, math.max(0, item_length - fi))
             reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
-            -- Also update auto-crossfade length so REAPER reflects the change
-            if state.fade_drag_start_auto > 0 then
-              reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN_AUTO", math.min(fi, state.fade_drag_start_auto))
-            end
             reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
-            -- Shrink the other side's auto if pushed
             if state.fade_drag_start_auto_other > 0 and fo < state.fade_drag_start_auto_other then
               reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN_AUTO", fo)
             end
@@ -2241,12 +2317,53 @@ local function loop()
             local delta_time = (delta_px / waveform_width) * state.fade_drag_start_view_length
             local fo = math.max(0, state.fade_drag_start_value + delta_time / playrate)
             fo = math.min(fo, item_length)
+            -- Crossfade resize: extend or contract adjacent item to match fade size
+            local xfade_item = state.fade_drag_xfade_item
+            if xfade_item and reaper.ValidatePtr(xfade_item, "MediaItem*") and state.fade_drag_start_auto > 0 then
+              -- extension > 0 = grow crossfade, < 0 = shrink crossfade
+              local extension = fo - state.fade_drag_start_auto
+              extension = math.min(extension, state.fade_drag_xfade_max_ext)
+              fo = state.fade_drag_start_auto + extension
+              -- Adjust right item: move position and startoffs to keep audio aligned
+              reaper.SetMediaItemInfo_Value(xfade_item, "D_POSITION", state.fade_drag_xfade_pos - extension)
+              reaper.SetMediaItemInfo_Value(xfade_item, "D_LENGTH", state.fade_drag_xfade_length + extension)
+              local adj_take = reaper.GetActiveTake(xfade_item)
+              if adj_take then
+                reaper.SetMediaItemTakeInfo_Value(adj_take, "D_STARTOFFS",
+                  state.fade_drag_xfade_startoffs - extension * state.fade_drag_xfade_playrate)
+              end
+              reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN_AUTO", fo)
+              if state.fade_drag_xfade_fade_auto > 0 then
+                reaper.SetMediaItemInfo_Value(xfade_item, "D_FADEINLEN_AUTO", fo)
+              end
+              -- Shift adjacent item's envelopes to stay audio-anchored (compensate D_STARTOFFS change)
+              local target_shift = extension * state.fade_drag_xfade_playrate
+              local delta_shift = target_shift - state.fade_drag_xfade_env_shift
+              if math.abs(delta_shift) > 0.000001 then
+                if adj_take then
+                  local env_names = { "Volume", "Pitch", "Pan" }
+                  for _, ename in ipairs(env_names) do
+                    local e = reaper.GetTakeEnvelopeByName(adj_take, ename)
+                    if e then
+                      local np = reaper.CountEnvelopePoints(e)
+                      for ei = 0, np - 1 do
+                        local ret, pt_time, pt_val, pt_shape, pt_tension, pt_sel = reaper.GetEnvelopePoint(e, ei)
+                        if ret then
+                          reaper.SetEnvelopePoint(e, ei, pt_time + delta_shift, pt_val, pt_shape, pt_tension, pt_sel, true)
+                        end
+                      end
+                      reaper.Envelope_SortPoints(e)
+                    end
+                  end
+                end
+                state.fade_drag_xfade_env_shift = target_shift
+              end
+            elseif state.fade_drag_start_auto > 0 then
+              reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN_AUTO", math.min(fo, state.fade_drag_start_auto))
+            end
             -- Push fade-in: cap at remaining space, but never grow past its initial value
             local fi = math.min(state.fade_drag_start_other, math.max(0, item_length - fo))
             reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
-            if state.fade_drag_start_auto > 0 then
-              reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN_AUTO", math.min(fo, state.fade_drag_start_auto))
-            end
             reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
             if state.fade_drag_start_auto_other > 0 and fi < state.fade_drag_start_auto_other then
               reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN_AUTO", fi)
