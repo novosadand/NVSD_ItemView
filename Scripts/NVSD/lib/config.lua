@@ -81,6 +81,10 @@ config.PITCH_KNOB_RADIUS = 16
 config.PITCH_MIN = -48
 config.PITCH_MAX = 48
 
+-- Region selection overlay
+config.COLOR_SELECTION = 0x66AAFF30        -- semi-transparent blue overlay
+config.COLOR_SELECTION_EDGE = 0x66AAFFAA   -- selection edge lines
+
 -- Default colors (0xRRGGBBAA format)
 local DEFAULT_COLORS = {
   waveform = 0x5A9F5AFF,

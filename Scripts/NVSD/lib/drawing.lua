@@ -1497,8 +1497,11 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
     pts[#pts + 1] = { time = source_length, value = end_val, implicit = true, idx = -1, shape = 0, tension = 0 }
   end
 
-  -- Sort by time
-  table.sort(pts, function(a, b) return a.time < b.time end)
+  -- Sort by time, using REAPER index as tiebreaker for same-time nodes (stable order)
+  table.sort(pts, function(a, b)
+    if a.time ~= b.time then return a.time < b.time end
+    return a.idx < b.idx
+  end)
 
   local n_pts = #pts
 
@@ -1510,7 +1513,7 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
     for i = 1, n_pts - 1 do
       if t >= pts[i].time and t <= pts[i + 1].time then
         local seg_len = pts[i + 1].time - pts[i].time
-        if seg_len < 0.0001 then return pts[i].value end
+        if seg_len < 0.0001 then return pts[i + 1].value end
         local frac = (t - pts[i].time) / seg_len
         local curved_frac = apply_shape(frac, pts[i].shape, pts[i].tension)
         return pts[i].value + curved_frac * (pts[i + 1].value - pts[i].value)
@@ -1629,16 +1632,42 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
       px = px + config.ENV_DASH_LENGTH + config.ENV_DASH_GAP
     end
   elseif has_path then
-    -- Solid line via PathLineTo
+    -- Solid line via PathLineTo, segment-based with pixel-stepping for curves
     local line_step = math.max(1, math.floor(waveform_width / 400))
-    for px = 0, waveform_width, line_step do
-      local t = view_start + (px / waveform_width) * view_length
-      local v = interp_value(t)
-      DL_PathLineTo(draw_list, wave_x + px, value_to_y(v))
+    local view_end_t = view_start + view_length
+
+    -- Emit the starting value at the left edge
+    DL_PathLineTo(draw_list, wave_x, value_to_y(interp_value(view_start)))
+
+    -- Walk through segments, emitting exact node positions and pixel-stepping between them
+    for i = 1, n_pts do
+      local pt = pts[i]
+      if pt.time > view_end_t then break end
+
+      -- Emit this node's exact position (creates vertical lines for same-time nodes)
+      if pt.time >= view_start then
+        local npx = (pt.time - view_start) / view_length * waveform_width
+        DL_PathLineTo(draw_list, wave_x + npx, value_to_y(pt.value))
+      end
+
+      -- Pixel-step through the segment to the next node (for curved shapes)
+      if i < n_pts then
+        local seg_len = pts[i + 1].time - pt.time
+        if seg_len >= 0.0001 and (pt.shape ~= 0 or pt.tension ~= 0) then
+          local t_start = math.max(pt.time, view_start)
+          local t_end = math.min(pts[i + 1].time, view_end_t)
+          local px_start = math.max(0, (t_start - view_start) / view_length * waveform_width)
+          local px_end = math.min(waveform_width, (t_end - view_start) / view_length * waveform_width)
+          for px = px_start + line_step, px_end - 1, line_step do
+            local t = view_start + (px / waveform_width) * view_length
+            DL_PathLineTo(draw_list, wave_x + px, value_to_y(interp_value(t)))
+          end
+        end
+      end
     end
-    -- Final point
-    local v_end = interp_value(view_end)
-    DL_PathLineTo(draw_list, wave_x + waveform_width, value_to_y(v_end))
+
+    -- Final point at right edge
+    DL_PathLineTo(draw_list, wave_x + waveform_width, value_to_y(interp_value(view_end_t)))
     DL_PathStroke(draw_list, env_colors.line, 0, config.ENV_LINE_THICKNESS)
   end
 
@@ -1666,36 +1695,89 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
       end
     end
 
-    -- If not hovering a node, check segment proximity
+    -- If not hovering a node, find segment by time containment + neighbor check at boundaries
     if state.env_node_hovered_idx < 0 then
       local mouse_t = view_start + ((mouse_x - wave_x) / waveform_width) * view_length
-      local line_y = value_to_y(interp_value(mouse_t))
-      local dist_to_line = math.abs(mouse_y - line_y)
-      local threshold = no_user_nodes and 20 or 12
+      local threshold = no_user_nodes and 20 or 14
 
-      if dist_to_line <= threshold then
-        -- Find which segment
-        for i = 1, n_pts - 1 do
-          if mouse_t >= pts[i].time and mouse_t <= pts[i + 1].time then
-            state.envelope_hovered_segment = i - 1
-            -- Snap hover time to grid if snap function provided
-            local snapped_t = (snap_time_fn and state.env_snap_enabled) and snap_time_fn(mouse_t) or mouse_t
-            state.envelope_hover_x = time_to_px(snapped_t)
-            local hover_raw = interp_value(snapped_t)
-            -- Pitch: snap hover preview to nearest semitone
-            if is_pitch and state.env_snap_enabled then hover_raw = math.floor(hover_raw + 0.5) end
-            state.envelope_hover_y = value_to_y(hover_raw)
-            state.envelope_hover_value = hover_raw
-            state.envelope_hover_time = snapped_t
-            break
+      -- Helper: point-to-segment distance in pixel space
+      local function seg_dist(i)
+        local x1 = time_to_px(pts[i].time)
+        local y1 = value_to_y(pts[i].value)
+        local x2 = time_to_px(pts[i + 1].time)
+        local y2 = value_to_y(pts[i + 1].value)
+        local dx = x2 - x1
+        local dy = y2 - y1
+        local len_sq = dx * dx + dy * dy
+        local tp = len_sq > 0 and ((mouse_x - x1) * dx + (mouse_y - y1) * dy) / len_sq or 0
+        tp = math.max(0, math.min(1, tp))
+        local px = x1 + tp * dx
+        local py = y1 + tp * dy
+        return math.sqrt((mouse_x - px) ^ 2 + (mouse_y - py) ^ 2)
+      end
+
+      -- Step 1: find segment containing mouse_t by strict time containment
+      local primary_i = -1
+      for i = 1, n_pts - 1 do
+        if pts[i + 1].time - pts[i].time >= 0.0001
+            and mouse_t >= pts[i].time and mouse_t <= pts[i + 1].time then
+          primary_i = i
+          break
+        end
+      end
+
+      -- Step 2: compare with neighbors near node boundaries (handles same-time transitions)
+      if primary_i > 0 then
+        local best_i = primary_i
+        local best_dist = seg_dist(primary_i)
+        local boundary_px = 20
+
+        -- Near left boundary? Check previous non-zero-length segment
+        if math.abs(mouse_x - time_to_px(pts[primary_i].time)) < boundary_px then
+          local prev = primary_i - 1
+          while prev >= 1 and pts[prev + 1].time - pts[prev].time < 0.0001 do
+            prev = prev - 1
           end
+          if prev >= 1 then
+            local d = seg_dist(prev)
+            if d < best_dist then best_i = prev; best_dist = d end
+          end
+        end
+
+        -- Near right boundary? Check next non-zero-length segment
+        if math.abs(mouse_x - time_to_px(pts[primary_i + 1].time)) < boundary_px then
+          local nxt = primary_i + 1
+          while nxt < n_pts and pts[nxt + 1].time - pts[nxt].time < 0.0001 do
+            nxt = nxt + 1
+          end
+          if nxt < n_pts then
+            local d = seg_dist(nxt)
+            if d < best_dist then best_i = nxt; best_dist = d end
+          end
+        end
+
+        if best_dist <= threshold then
+          state.envelope_hovered_segment = best_i - 1
+          local seg_t = math.max(pts[best_i].time, math.min(pts[best_i + 1].time, mouse_t))
+          local snapped_t = (snap_time_fn and state.env_snap_enabled) and snap_time_fn(seg_t) or seg_t
+          snapped_t = math.max(pts[best_i].time, math.min(pts[best_i + 1].time, snapped_t))
+          state.envelope_hover_x = time_to_px(snapped_t)
+          local hover_raw = interp_value(snapped_t)
+          if is_pitch and state.env_snap_enabled then hover_raw = math.floor(hover_raw + 0.5) end
+          state.envelope_hover_y = value_to_y(hover_raw)
+          state.envelope_hover_value = hover_raw
+          state.envelope_hover_time = snapped_t
         end
       end
     end
   end
 
-  -- 3b. Highlight hovered segment
-  if state.envelope_hovered_segment >= 0 and has_path and not state.dragging_env_node then
+  -- 3b. Highlight hovered segment (during alt-hover for tension editing or shift-hover for segment drag)
+  local alt_for_highlight = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
+  local shift_for_highlight = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
+  local show_seg_highlight = (alt_for_highlight or shift_for_highlight or state.env_segment_dragging)
+      and not state.dragging_env_node
+  if state.envelope_hovered_segment >= 0 and has_path and show_seg_highlight then
     local seg_idx = state.envelope_hovered_segment + 1  -- convert 0-based to 1-based pts index
     if seg_idx >= 1 and seg_idx < n_pts then
       local view_end_t = view_start + view_length
@@ -1704,12 +1786,24 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
       if t_end > t_start then
         local px_start = math.max(0, (t_start - view_start) / view_length * waveform_width)
         local px_end = math.min(waveform_width, (t_end - view_start) / view_length * waveform_width)
-        local line_step = math.max(1, math.floor(waveform_width / 400))
-        for px = px_start, px_end, line_step do
-          local t = view_start + (px / waveform_width) * view_length
-          DL_PathLineTo(draw_list, wave_x + px, value_to_y(interp_value(t)))
+        -- Start point: use exact node value to avoid interp_value mismatch at same-time nodes
+        local start_y = (t_start == pts[seg_idx].time)
+            and value_to_y(pts[seg_idx].value)
+            or value_to_y(interp_value(t_start))
+        DL_PathLineTo(draw_list, wave_x + px_start, start_y)
+        -- Pixel-step only for curved segments
+        if pts[seg_idx].shape ~= 0 or pts[seg_idx].tension ~= 0 then
+          local line_step = math.max(1, math.floor(waveform_width / 400))
+          for px = px_start + line_step, px_end - 1, line_step do
+            local t = view_start + (px / waveform_width) * view_length
+            DL_PathLineTo(draw_list, wave_x + px, value_to_y(interp_value(t)))
+          end
         end
-        DL_PathLineTo(draw_list, wave_x + px_end, value_to_y(interp_value(view_start + (px_end / waveform_width) * view_length)))
+        -- End point: use exact node value
+        local end_y = (t_end == pts[seg_idx + 1].time)
+            and value_to_y(pts[seg_idx + 1].value)
+            or value_to_y(interp_value(t_end))
+        DL_PathLineTo(draw_list, wave_x + px_end, end_y)
         DL_PathStroke(draw_list, env_colors.line_hover, 0, config.ENV_LINE_THICKNESS + 1)
       end
     end
@@ -1729,10 +1823,12 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
     end
   end
 
-  -- 5. Preview circle + tooltip on segment hover (hidden during tension drag and alt-hover)
+  -- 5. Preview circle + tooltip on segment hover (hidden during tension drag, alt-hover, shift-hover)
   local alt_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
+  local shift_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
   if state.envelope_hovered_segment >= 0 and state.env_node_hovered_idx < 0
-      and not state.dragging_env_node and not state.env_tension_dragging and not alt_held then
+      and not state.dragging_env_node and not state.env_tension_dragging
+      and not state.env_segment_dragging and not alt_held and not shift_held then
     DL_AddCircleFilled(draw_list, state.envelope_hover_x, state.envelope_hover_y,
       config.ENV_NODE_RADIUS, env_colors.preview, 16)
 

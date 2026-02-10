@@ -141,12 +141,30 @@ state.env_tension_lock_y = nil        -- cursor lock Y for tension drag
 state.env_tension_last_y = nil        -- last frame Y for delta calc
 state.env_tension_cumulative_y = 0    -- accumulated Y delta (cursor-locked)
 state.env_snap_enabled = true         -- pitch snap to semitones (Ctrl+4 toggle)
+state.env_segment_dragging = false    -- shift+drag to move segment (both nodes) vertically
+state.env_segment_idx1 = -1           -- REAPER point index of segment start node
+state.env_segment_idx2 = -1           -- REAPER point index of segment end node
+state.env_segment_start_mouse_y = 0   -- mouse Y at drag start
+state.env_segment_start_val1 = 0      -- value of start node at drag start
+state.env_segment_start_val2 = 0      -- value of end node at drag start
+state.env_segment_activated = false   -- true once mouse exceeds threshold
 
 -- Audio preview state (CF_Preview API from SWS extension)
 state.preview_cursor_pos = nil       -- source time (seconds) where preview starts
 state.preview_handle = nil           -- CF_Preview handle (userdata)
 state.preview_active = false         -- currently playing preview
 state.preview_item = nil             -- item being previewed (for validation)
+
+-- Region selection state (click+drag in waveform to select a portion)
+state.selecting_region = false           -- true during active selection drag
+state.selection_drag_activated = false   -- true once mouse moves past threshold
+state.selection_start_time = 0           -- source time of selection start edge
+state.selection_end_time = 0             -- source time of selection end edge
+state.selection_start_mouse_x = 0        -- mouse X at click (for threshold check)
+state.region_selected = false            -- true when a completed selection exists
+state.region_sel_start = 0               -- finalized selection start (source time)
+state.region_sel_end = 0                 -- finalized selection end (source time)
+state.region_sel_item = nil              -- item the selection belongs to
 
 -- Unified drag control state
 state.drag_controls = {
