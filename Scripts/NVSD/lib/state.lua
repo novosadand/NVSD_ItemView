@@ -119,6 +119,17 @@ state.env_node_hovered_idx = -1         -- index of hovered existing node
 state.env_freehand_drawing = false      -- ctrl+drag freehand envelope painting
 state.env_freehand_last_x = 0          -- last mouse X to detect movement
 state.env_freehand_last_take_time = 0  -- last inserted take time (for overwrite range)
+state.env_tension_dragging = false     -- alt+drag to adjust segment tension
+state.env_tension_point_idx = -1       -- REAPER envelope point index whose tension we're editing
+state.env_tension_start_mouse_y = 0
+state.env_tension_start_value = 0      -- starting tension before drag
+state.env_tension_activated = false    -- true once mouse exceeds threshold
+state.env_tension_descending = false   -- true if segment goes downward (v1 > v2)
+state.env_tension_lock_x = nil        -- cursor lock X for tension drag
+state.env_tension_lock_y = nil        -- cursor lock Y for tension drag
+state.env_tension_last_y = nil        -- last frame Y for delta calc
+state.env_tension_cumulative_y = 0    -- accumulated Y delta (cursor-locked)
+state.env_snap_enabled = true         -- pitch snap to semitones (Ctrl+4 toggle)
 
 -- Audio preview state (CF_Preview API from SWS extension)
 state.preview_cursor_pos = nil       -- source time (seconds) where preview starts

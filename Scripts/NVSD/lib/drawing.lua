@@ -604,10 +604,7 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   local tab_padding_h = 10
   local tab_gap = 2
 
-  local tabs = { "Sample" }
-  if state and state.warp_mode then
-    tabs[#tabs + 1] = "Envelopes"
-  end
+  local tabs = { "Sample", "Envelopes" }
 
   -- Measure total width of all tabs, then center the group
   local tab_widths = {}
@@ -1282,11 +1279,13 @@ end
 -- Draw envelope editor bottom bar with type dropdown
 function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
                                      mouse_x, mouse_y, config, state)
-  -- Background (same as time ruler)
+  -- Background (always visible)
   reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, config.COLOR_RULER_BG)
   reaper.ImGui_DrawList_AddLine(draw_list, x, y, x + width, y, config.COLOR_GRID_BAR, 1)
 
-  -- Dropdown button
+  -- Dropdown button only when on Envelopes tab
+  if state.active_view_tab ~= "envelopes" then return end
+
   local btn_w = 100
   local btn_h = height - 4
   local btn_x = x + 4
@@ -1368,7 +1367,8 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
                                         wave_x, wave_y, waveform_width, waveform_height,
                                         time_to_px, view_start, view_length,
                                         mouse_x, mouse_y, config, state, source_length,
-                                        env_scaling, env_max_raw, env_min_raw, is_pitch)
+                                        env_scaling, env_max_raw, env_min_raw, is_pitch,
+                                        snap_time_fn)
   local DL_AddLine = reaper.ImGui_DrawList_AddLine
   local DL_PathLineTo = reaper.ImGui_DrawList_PathLineTo
   local DL_PathStroke = reaper.ImGui_DrawList_PathStroke
@@ -1411,6 +1411,29 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
     end
   end
 
+  -- Shape interpolation: apply envelope point shape to a linear fraction
+  local function apply_shape(frac, shape, tension)
+    if shape == 0 then return frac end -- Linear
+    if shape == 1 then return 0 end -- Square (step: stays at start value)
+    if shape == 2 then return 3 * frac * frac - 2 * frac * frac * frac end -- Slow start/end
+    if shape == 3 then return 1 - (1 - frac) * (1 - frac) end -- Fast start
+    if shape == 4 then return frac * frac end -- Fast end
+    if shape == 5 then -- Bezier (tension-controlled)
+      if math.abs(tension) < 0.001 then return frac end
+      if frac <= 0 then return 0 end
+      if frac >= 1 then return 1 end
+      -- Symmetric power curve with bounded exponent (matches REAPER's visual)
+      -- exp(|t|*2.7) maps tension ±1 to power ~15, pronounced curves
+      local power = math.exp(math.abs(tension) * 2.7)
+      if tension > 0 then
+        return frac ^ power
+      else
+        return 1 - (1 - frac) ^ power
+      end
+    end
+    return frac
+  end
+
   -- Default raw value for implicit anchors
   -- Volume: 0 dB (fader unity). Pitch: 0 semitones
   local default_raw = is_pitch and 0 or reaper.ScaleToEnvelopeMode(env_scaling, 1.0)
@@ -1423,20 +1446,19 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
 
   for i = 1, num_points do
     local p = env_points[i]
-    pts[#pts + 1] = { time = p.time, value = p.value, implicit = false, idx = i - 1 }
+    pts[#pts + 1] = { time = p.time, value = p.value, implicit = false, idx = i - 1,
+                       shape = p.shape or 0, tension = p.tension or 0 }
     if math.abs(p.time) < 0.001 then has_start = true end
     if math.abs(p.time - source_length) < 0.001 then has_end = true end
   end
 
   if not has_start then
-    -- Extend first point's value flat to the left (matches REAPER's behavior)
     local start_val = (#pts > 0) and pts[1].value or default_raw
-    table.insert(pts, 1, { time = 0, value = start_val, implicit = true, idx = -1 })
+    table.insert(pts, 1, { time = 0, value = start_val, implicit = true, idx = -1, shape = 0, tension = 0 })
   end
   if not has_end then
-    -- Extend last point's value flat to the right (matches REAPER's behavior)
     local end_val = (#pts > 0) and pts[#pts].value or default_raw
-    pts[#pts + 1] = { time = source_length, value = end_val, implicit = true, idx = -1 }
+    pts[#pts + 1] = { time = source_length, value = end_val, implicit = true, idx = -1, shape = 0, tension = 0 }
   end
 
   -- Sort by time
@@ -1444,7 +1466,7 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
 
   local n_pts = #pts
 
-  -- Helper: interpolate raw value at a given time
+  -- Helper: interpolate raw value at a given time (respects shape/tension)
   local function interp_value(t)
     if n_pts == 0 then return default_raw end
     if t <= pts[1].time then return pts[1].value end
@@ -1454,10 +1476,56 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
         local seg_len = pts[i + 1].time - pts[i].time
         if seg_len < 0.0001 then return pts[i].value end
         local frac = (t - pts[i].time) / seg_len
-        return pts[i].value + frac * (pts[i + 1].value - pts[i].value)
+        local curved_frac = apply_shape(frac, pts[i].shape, pts[i].tension)
+        return pts[i].value + curved_frac * (pts[i + 1].value - pts[i].value)
       end
     end
     return default_raw
+  end
+
+  -- 0. Pitch: draw semitone grid lines + left label column
+  if is_pitch then
+    local gutter_w = config.PITCH_LABEL_WIDTH
+    local gutter_x = wave_x - gutter_w
+
+    -- Label column background
+    DL_AddRectFilled(draw_list, gutter_x, wave_y, wave_x, wave_y + waveform_height, config.COLOR_WAVEFORM_BG)
+    -- Separator line between label column and waveform
+    DL_AddLine(draw_list, wave_x, wave_y, wave_x, wave_y + waveform_height, config.COLOR_ENV_GRID, 1)
+
+    -- Determine label interval so they don't overlap (need ~12px vertical spacing)
+    local px_per_st = waveform_height / env_range
+    local label_interval = math.max(1, math.ceil(12 / px_per_st))
+
+    for st = math.ceil(env_min_raw), math.floor(env_max_raw) do
+      local ly = value_to_y(st)
+      if ly >= wave_y and ly <= wave_y + waveform_height then
+        -- Grid line across waveform
+        local color
+        if st == 0 then
+          color = config.COLOR_ENV_GRID_CENTER
+        elseif st % 12 == 0 then
+          color = config.COLOR_ENV_GRID_OCTAVE
+        else
+          color = config.COLOR_ENV_GRID
+        end
+        DL_AddLine(draw_list, wave_x, ly, wave_x + waveform_width, ly, color, 1)
+
+        -- Label in gutter (at adaptive interval, always show 0)
+        if st == 0 or st % label_interval == 0 then
+          local label = st == 0 and "0" or string.format("%+d", st)
+          local tw = reaper.ImGui_CalcTextSize(ctx, label)
+          local label_color
+          if st == 0 then label_color = config.COLOR_ENV_GRID_CENTER
+          elseif st % 12 == 0 then label_color = config.COLOR_ENV_GRID_LABEL
+          else label_color = config.COLOR_ENV_GRID end
+          -- Right-align in gutter
+          DL_AddText(draw_list, gutter_x + gutter_w - tw - 3, ly - 6, label_color, label)
+          -- Tick mark connecting label to grid line
+          DL_AddLine(draw_list, wave_x - 3, ly, wave_x, ly, color, 1)
+        end
+      end
+    end
   end
 
   -- 1. Fill area (column-by-column, 2px step)
@@ -1474,12 +1542,6 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
     if fill_bot - fill_top >= 1 then
       DL_AddLine(draw_list, wave_x + px, fill_top, wave_x + px, fill_bot, config.COLOR_ENV_FILL, step)
     end
-  end
-
-  -- Pitch: draw center reference line (0 semitones)
-  if is_pitch then
-    local cy = value_to_y(0)
-    DL_AddLine(draw_list, wave_x, cy, wave_x + waveform_width, cy, config.COLOR_ENV_LINE_DASHED, 1)
   end
 
   -- 2. Envelope line
@@ -1545,13 +1607,39 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
         for i = 1, n_pts - 1 do
           if mouse_t >= pts[i].time and mouse_t <= pts[i + 1].time then
             state.envelope_hovered_segment = i - 1
-            state.envelope_hover_x = mouse_x
-            state.envelope_hover_y = line_y
-            state.envelope_hover_value = interp_value(mouse_t)
-            state.envelope_hover_time = mouse_t
+            -- Snap hover time to grid if snap function provided
+            local snapped_t = (snap_time_fn and state.env_snap_enabled) and snap_time_fn(mouse_t) or mouse_t
+            state.envelope_hover_x = time_to_px(snapped_t)
+            local hover_raw = interp_value(snapped_t)
+            -- Pitch: snap hover preview to nearest semitone
+            if is_pitch and state.env_snap_enabled then hover_raw = math.floor(hover_raw + 0.5) end
+            state.envelope_hover_y = value_to_y(hover_raw)
+            state.envelope_hover_value = hover_raw
+            state.envelope_hover_time = snapped_t
             break
           end
         end
+      end
+    end
+  end
+
+  -- 3b. Highlight hovered segment
+  if state.envelope_hovered_segment >= 0 and has_path and not state.dragging_env_node then
+    local seg_idx = state.envelope_hovered_segment + 1  -- convert 0-based to 1-based pts index
+    if seg_idx >= 1 and seg_idx < n_pts then
+      local view_end_t = view_start + view_length
+      local t_start = math.max(pts[seg_idx].time, view_start)
+      local t_end = math.min(pts[seg_idx + 1].time, view_end_t)
+      if t_end > t_start then
+        local px_start = math.max(0, (t_start - view_start) / view_length * waveform_width)
+        local px_end = math.min(waveform_width, (t_end - view_start) / view_length * waveform_width)
+        local line_step = math.max(1, math.floor(waveform_width / 400))
+        for px = px_start, px_end, line_step do
+          local t = view_start + (px / waveform_width) * view_length
+          DL_PathLineTo(draw_list, wave_x + px, value_to_y(interp_value(t)))
+        end
+        DL_PathLineTo(draw_list, wave_x + px_end, value_to_y(interp_value(view_start + (px_end / waveform_width) * view_length)))
+        DL_PathStroke(draw_list, config.COLOR_ENV_LINE_HOVER, 0, config.ENV_LINE_THICKNESS + 1)
       end
     end
   end
@@ -1570,9 +1658,10 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
     end
   end
 
-  -- 5. Preview circle + tooltip on segment hover
+  -- 5. Preview circle + tooltip on segment hover (hidden during tension drag and alt-hover)
+  local alt_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
   if state.envelope_hovered_segment >= 0 and state.env_node_hovered_idx < 0
-      and not state.dragging_env_node then
+      and not state.dragging_env_node and not state.env_tension_dragging and not alt_held then
     DL_AddCircleFilled(draw_list, state.envelope_hover_x, state.envelope_hover_y,
       config.ENV_NODE_RADIUS, config.COLOR_ENV_PREVIEW_NODE, 16)
 

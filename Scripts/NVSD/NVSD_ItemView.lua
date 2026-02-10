@@ -316,6 +316,11 @@ local function loop()
       state.pan_offset = 0
     end
 
+    -- Ctrl+4: toggle envelope snap (pitch semitones)
+    if reaper_is_active and ctrl_held and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_4()) then
+      state.env_snap_enabled = not state.env_snap_enabled
+    end
+
     -- Refresh colors only when settings change
     if settings.colors_dirty then
       config.refresh_colors()
@@ -338,6 +343,7 @@ local function loop()
         fade_out = "NVSD_ItemView: Adjust fade out",
         env_node = "NVSD_ItemView: Move envelope point",
         env_freehand = "NVSD_ItemView: Draw envelope freehand",
+        env_tension = "NVSD_ItemView: Adjust envelope curve",
       }
       local msg = undo_messages[state.undo_block_open] or "NVSD_ItemView: Edit"
       reaper.Undo_OnStateChangeEx(msg, -1, -1)
@@ -360,6 +366,23 @@ local function loop()
       state.preview_handle = nil
       state.preview_active = false
       state.preview_item = nil
+      -- Auto-switch to Envelopes tab if the new item has active take envelopes
+      if selected_item then
+        local sel_take = reaper.GetActiveTake(selected_item)
+        if sel_take then
+          local vol_env = reaper.GetTakeEnvelopeByName(sel_take, "Volume")
+          local pitch_env = reaper.GetTakeEnvelopeByName(sel_take, "Pitch")
+          if vol_env or pitch_env then
+            state.active_view_tab = "envelopes"
+            -- Prefer Pitch if only Pitch exists, otherwise default to Volume
+            if pitch_env and not vol_env then
+              state.envelope_type = "Pitch"
+            else
+              state.envelope_type = "Volume"
+            end
+          end
+        end
+      end
     end
     if reaper_is_active then
       state.last_selected_item = selected_item
@@ -570,19 +593,20 @@ local function loop()
 
           -- Get available space for waveform
           local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
-          local envelope_bar_height = (state.active_view_tab == "envelopes") and config.ENVELOPE_BAR_HEIGHT or 0
+          local envelope_bar_height = config.ENVELOPE_BAR_HEIGHT
           local waveform_height = math.max(50, avail_h - (config.WAVEFORM_MARGIN_V * 2) - config.INFO_BAR_HEIGHT - config.RULER_HEIGHT - config.TIME_RULER_HEIGHT - envelope_bar_height)
           local panel_height = config.INFO_BAR_HEIGHT + config.RULER_HEIGHT + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height
 
           local total_left_width = config.LEFT_COLUMN_WIDTH + config.LEFT_PANEL_WIDTH
-          local waveform_width = math.max(100, avail_w - (config.WAVEFORM_MARGIN_H * 2) - total_left_width)
+          local pitch_gutter = (state.active_view_tab == "envelopes" and state.envelope_type == "Pitch") and config.PITCH_LABEL_WIDTH or 0
+          local waveform_width = math.max(100, avail_w - (config.WAVEFORM_MARGIN_H * 2) - total_left_width - pitch_gutter)
 
           local cursor_x, cursor_y = reaper.ImGui_GetCursorScreenPos(ctx)
           local left_col_x = cursor_x + config.WINDOW_PADDING
           local left_col_y = cursor_y + config.WAVEFORM_MARGIN_V
           local panel_x = left_col_x + config.LEFT_COLUMN_WIDTH
           local panel_y = cursor_y + config.WAVEFORM_MARGIN_V
-          local wave_x = cursor_x + total_left_width + config.WAVEFORM_MARGIN_H
+          local wave_x = cursor_x + total_left_width + config.WAVEFORM_MARGIN_H + pitch_gutter
           local info_bar_y = cursor_y + config.WAVEFORM_MARGIN_V
           local ruler_y = info_bar_y + config.INFO_BAR_HEIGHT
           local wave_y = ruler_y + config.RULER_HEIGHT
@@ -618,7 +642,7 @@ local function loop()
                                   or state.dragging_fade_in or state.dragging_fade_out
                                   or state.dragging_fade_curve_in or state.dragging_fade_curve_out
                                   or state.fx_dragging or state.dragging_env_node
-                                  or state.env_freehand_drawing
+                                  or state.env_freehand_drawing or state.env_tension_dragging
           local user_dragging_in_reaper = mouse_is_down and not we_are_dragging
 
           -- Get file path (used by info bar)
@@ -714,10 +738,7 @@ local function loop()
             settings_ui.open(settings)
           end
 
-          -- Auto-switch back to sample tab when warp is turned off
-          if not state.warp_mode and state.active_view_tab == "envelopes" then
-            state.active_view_tab = "sample"
-          end
+          -- (Envelopes tab is always available, no auto-switch needed)
 
           -- Right-click menu (deferred: fade handle right-click checked after hover detection)
           local right_clicked = reaper_is_active and reaper.ImGui_IsMouseClicked(ctx, 1)
@@ -856,13 +877,60 @@ local function loop()
           -- Draw bottom time ruler
           drawing.draw_time_ruler(draw_list, wave_x, time_ruler_y, waveform_width, config.TIME_RULER_HEIGHT, view_start, view_length, config, utils)
 
-          -- Draw envelope editor (bar + overlay) when active
-          if state.active_view_tab == "envelopes" then
-            -- Draw envelope control bar
-            drawing.draw_envelope_bar(draw_list, ctx, wave_x, envelope_bar_y,
-              waveform_width, config.ENVELOPE_BAR_HEIGHT,
-              mouse_x, mouse_y, config, state)
+          -- Draw bottom bar (always visible, dropdown only on envelopes tab)
+          drawing.draw_envelope_bar(draw_list, ctx, wave_x, envelope_bar_y,
+            waveform_width, config.ENVELOPE_BAR_HEIGHT,
+            mouse_x, mouse_y, config, state)
 
+          -- Helper: snap time to nearest source boundary
+          local function snap_to_source_boundary(t, src_len, threshold_time)
+            if not state.env_snap_enabled then return t end
+            local nearest_boundary = math.floor(t / src_len + 0.5) * src_len
+            if math.abs(t - nearest_boundary) <= threshold_time then
+              return nearest_boundary
+            end
+            return t
+          end
+
+          -- Helper: snap source time to finest visible grid subdivision
+          -- snap_offset: override start_offset for snapping (use drag_start_offset during marker drags)
+          local function snap_to_grid_if_enabled(source_t, snap_offset)
+            if not state.env_snap_enabled then return source_t end
+            local snap_enabled = reaper.GetToggleCommandState(1157) == 1
+            if not snap_enabled then return source_t end
+
+            local offset = snap_offset or start_offset
+            local project_t = utils.source_to_project_time(source_t, item_position, offset, playrate)
+
+            -- Compute finest visible grid subdivision (same logic as grid display)
+            local bpm, bpi = reaper.GetProjectTimeSignature2(0, project_t)
+            local beats_per_bar = math.floor(bpi)
+            if beats_per_bar < 1 then beats_per_bar = 4 end
+            local avg_bar_duration = 60 / bpm * beats_per_bar
+            local px_per_bar = (avg_bar_duration / view_length) * waveform_width
+            local px_per_beat = px_per_bar / beats_per_bar
+
+            local finest_sub = 1
+            while (px_per_beat / (finest_sub * 2)) >= 24 do
+              finest_sub = finest_sub * 2
+            end
+
+            -- Snap in beat space: get beat position, round to nearest subdivision
+            local snap_unit = 1 / finest_sub
+            local beat_in_measure, measure = reaper.TimeMap2_timeToBeats(0, project_t)
+            local snapped_beat = math.floor(beat_in_measure / snap_unit + 0.5) * snap_unit
+            local snapped_measure = measure
+            if snapped_beat >= beats_per_bar then
+              snapped_beat = snapped_beat - beats_per_bar
+              snapped_measure = measure + 1
+            end
+
+            local snapped_project_t = reaper.TimeMap2_beatsToTime(0, snapped_beat, snapped_measure)
+            return utils.project_to_source_time(snapped_project_t, item_position, offset, playrate)
+          end
+
+          -- Draw envelope overlay when envelopes tab is active
+          if state.active_view_tab == "envelopes" then
             -- Read envelope points from REAPER (raw values for fader-scaled display)
             local env_name = state.envelope_type == "Pitch" and "Pitch" or "Volume"
             local is_pitch = (state.envelope_type == "Pitch")
@@ -879,10 +947,10 @@ local function loop()
                 env_max_raw = reaper.ScaleToEnvelopeMode(env_scaling, 2.0)
               end
               num_env_points = reaper.CountEnvelopePoints(env)
-              -- During alt-drag (both markers moving), use the original start_offset
+              -- During any marker drag, freeze envelope to original offset
               -- so the envelope stays anchored to the same audio content visually.
               local env_time_offset = start_offset
-              if (state.dragging_start or state.dragging_end) and state.marker_drag_activated and alt_held then
+              if (state.dragging_start or state.dragging_end) and state.marker_drag_activated then
                 env_time_offset = state.drag_start_offset
               end
               for i = 0, num_env_points - 1 do
@@ -902,7 +970,8 @@ local function loop()
               wave_x, wave_y, waveform_width, waveform_height,
               time_to_px, view_start, view_length,
               mouse_x, mouse_y, config, state, source_length,
-              env_scaling, env_max_raw, env_min_raw, is_pitch)
+              env_scaling, env_max_raw, env_min_raw, is_pitch,
+              snap_to_grid_if_enabled)
 
           end
 
@@ -1145,7 +1214,7 @@ local function loop()
 
           -- Cursor feedback (alt_held cached at top of frame)
           -- Fade grabs use Hand cursor to distinguish from marker's ResizeEW
-          if state.dragging_fade_curve_in or state.dragging_fade_curve_out then
+          if state.dragging_fade_curve_in or state.dragging_fade_curve_out or state.env_tension_dragging then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
           elseif state.dragging_fade_in or state.dragging_fade_out then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
@@ -1165,6 +1234,12 @@ local function loop()
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
           elseif state.is_panning then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())
+          elseif state.active_view_tab == "envelopes" and alt_held and reaper_is_active
+              and state.env_node_hovered_idx >= 0 then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_NotAllowed())
+          elseif state.active_view_tab == "envelopes" and alt_held and reaper_is_active
+              and state.envelope_hovered_segment >= 0 and state.env_node_hovered_idx < 0 then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
           elseif state.active_view_tab == "envelopes" and mouse_in_waveform
               and reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl()) then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
@@ -1202,7 +1277,9 @@ local function loop()
               local cx, cy = reaper.ImGui_GetCursorScreenPos(ctx)
               if reaper.ImGui_Selectable(ctx, "##fadein" .. i, selected, 0, icon_item_w, icon_item_h) then
                 reaper.Undo_BeginBlock()
+                local cur_dir = reaper.GetMediaItemInfo_Value(item, "D_FADEINDIR")
                 reaper.SetMediaItemInfo_Value(item, "C_FADEINSHAPE", i)
+                reaper.SetMediaItemInfo_Value(item, "D_FADEINDIR", cur_dir)
                 reaper.UpdateArrange()
                 reaper.Undo_EndBlock("NVSD_ItemView: Change fade in shape", 4)
               end
@@ -1218,7 +1295,9 @@ local function loop()
               local cx, cy = reaper.ImGui_GetCursorScreenPos(ctx)
               if reaper.ImGui_Selectable(ctx, "##fadeout" .. i, selected, 0, icon_item_w, icon_item_h) then
                 reaper.Undo_BeginBlock()
+                local cur_dir = reaper.GetMediaItemInfo_Value(item, "D_FADEOUTDIR")
                 reaper.SetMediaItemInfo_Value(item, "C_FADEOUTSHAPE", i)
+                reaper.SetMediaItemInfo_Value(item, "D_FADEOUTDIR", cur_dir)
                 reaper.UpdateArrange()
                 reaper.Undo_EndBlock("NVSD_ItemView: Change fade out shape", 4)
               end
@@ -1472,7 +1551,10 @@ local function loop()
             -- Helper: convert mouse Y to envelope raw value (works for both Volume and Pitch)
             local function mouse_y_to_raw(my)
               local raw = env_min_raw + (env_max_raw - env_min_raw) * (1 - (my - wave_y) / waveform_height)
-              return math.max(env_min_raw, math.min(env_max_raw, raw))
+              raw = math.max(env_min_raw, math.min(env_max_raw, raw))
+              -- Pitch: snap to whole semitones (if snap enabled)
+              if is_pitch and state.env_snap_enabled then raw = math.floor(raw + 0.5) end
+              return raw
             end
 
             -- Ctrl+left-click: start freehand envelope drawing
@@ -1583,7 +1665,8 @@ local function loop()
                       reaper.DeleteEnvelopePointEx(env, -1, di)
                     end
                   end
-                  local take_time = state.envelope_hover_time - start_offset
+                  local snapped_src = snap_to_grid_if_enabled(state.envelope_hover_time)
+                  local take_time = snapped_src - start_offset
                   reaper.InsertEnvelopePoint(env, take_time, state.envelope_hover_value, 0, 0, false, true)
                   reaper.Envelope_SortPoints(env)
                   -- Find the index of the point we just inserted
@@ -1614,10 +1697,95 @@ local function loop()
               end
             end
 
+            -- Alt+double-click on curved segment: reset curve to linear
+            if reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and alt_held
+                and state.envelope_hovered_segment >= 0
+                and state.env_node_hovered_idx < 0
+                and not state.dragging_env_node
+                and not state.env_tension_dragging then
+              local env = reaper.GetTakeEnvelopeByName(take, env_name)
+              if env then
+                local seg_pt_idx = -1
+                local np = reaper.CountEnvelopePoints(env)
+                local hover_take_time = state.envelope_hover_time - start_offset
+                for pi = 0, np - 2 do
+                  local ret1, t1 = reaper.GetEnvelopePoint(env, pi)
+                  local ret2, t2 = reaper.GetEnvelopePoint(env, pi + 1)
+                  if ret1 and ret2 and hover_take_time >= t1 - 0.001 and hover_take_time <= t2 + 0.001 then
+                    seg_pt_idx = pi
+                    break
+                  end
+                end
+                if seg_pt_idx >= 0 then
+                  local ret, pt_time, pt_value, pt_shape, _, pt_sel = reaper.GetEnvelopePoint(env, seg_pt_idx)
+                  if ret and pt_shape == 5 then
+                    reaper.Undo_BeginBlock()
+                    reaper.SetEnvelopePoint(env, seg_pt_idx, pt_time, pt_value, 0, 0, pt_sel, true)
+                    reaper.Envelope_SortPoints(env)
+                    reaper.UpdateArrange()
+                    reaper.Undo_EndBlock("NVSD_ItemView: Reset envelope curve", -1)
+                  end
+                end
+              end
+            end
+
+            -- Alt+click on segment (not node): start tension drag (skip on double-click)
+            if reaper.ImGui_IsMouseClicked(ctx, 0) and alt_held
+                and not reaper.ImGui_IsMouseDoubleClicked(ctx, 0)
+                and state.envelope_hovered_segment >= 0
+                and state.env_node_hovered_idx < 0
+                and not state.dragging_env_node
+                and not state.env_tension_dragging then
+              -- Find which point controls this segment's shape
+              -- envelope_hovered_segment is the segment index in the pts list;
+              -- we need the REAPER point index of the segment's start point.
+              -- The drawing code sets hovered_segment = i-1 where i is the pts index.
+              -- We need the REAPER idx from the corresponding pts entry.
+              local env = reaper.GetTakeEnvelopeByName(take, env_name)
+              if env then
+                -- Find the point whose shape controls this segment
+                -- hover_time falls between two points; we need the first point's REAPER index
+                local seg_pt_idx = -1
+                local np = reaper.CountEnvelopePoints(env)
+                local hover_take_time = state.envelope_hover_time - start_offset
+                for pi = 0, np - 2 do
+                  local ret1, t1 = reaper.GetEnvelopePoint(env, pi)
+                  local ret2, t2 = reaper.GetEnvelopePoint(env, pi + 1)
+                  if ret1 and ret2 and hover_take_time >= t1 - 0.001 and hover_take_time <= t2 + 0.001 then
+                    seg_pt_idx = pi
+                    break
+                  end
+                end
+                if seg_pt_idx >= 0 then
+                  local ret, _, pt_value, pt_shape, pt_tension = reaper.GetEnvelopePoint(env, seg_pt_idx)
+                  local ret2, _, next_value = reaper.GetEnvelopePoint(env, seg_pt_idx + 1)
+                  if ret and ret2 then
+                    state.env_tension_dragging = true
+                    state.env_tension_point_idx = seg_pt_idx
+                    state.env_tension_start_mouse_y = mouse_y
+                    state.env_tension_start_value = (pt_shape == 5) and pt_tension or 0
+                    state.env_tension_descending = (next_value < pt_value)
+                    state.env_tension_activated = false
+                    if state.has_js_extension then
+                      local sx, sy = reaper.GetMousePosition()
+                      state.env_tension_lock_x = sx
+                      state.env_tension_lock_y = sy
+                      state.env_tension_last_y = sy
+                      state.env_tension_cumulative_y = 0
+                    end
+                    if not state.undo_block_open then
+                      state.undo_block_open = "env_tension"
+                    end
+                  end
+                end
+              end
+            end
+
             -- Alt+click or right-click: delete hovered node
             if ((reaper.ImGui_IsMouseClicked(ctx, 1)) or (reaper.ImGui_IsMouseClicked(ctx, 0) and alt_held))
                 and state.env_node_hovered_idx >= 0
-                and not state.dragging_env_node then
+                and not state.dragging_env_node
+                and not state.env_tension_dragging then
               local env = reaper.GetTakeEnvelopeByName(take, env_name)
               if env then
                 reaper.Undo_BeginBlock()
@@ -1642,6 +1810,7 @@ local function loop()
                   local new_source_time = px_to_time(mouse_x)
                   local new_raw = mouse_y_to_raw(mouse_y)
                   new_source_time = math.max(0, math.min(source_length, new_source_time))
+                  new_source_time = snap_to_grid_if_enabled(new_source_time)
                   -- Convert source time to take time
                   local take_time = new_source_time - start_offset
                   reaper.SetEnvelopePoint(env, state.env_drag_node_idx, take_time, new_raw, 0, 0, false, true)
@@ -1656,6 +1825,42 @@ local function loop()
                     end
                   end
                   reaper.UpdateArrange()
+                end
+              end
+            end
+
+            -- Tension drag: update curve shape while alt+dragging on segment (with cursor lock)
+            if state.env_tension_dragging and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
+              -- Cursor lock: accumulate delta via JS extension
+              if state.has_js_extension and state.env_tension_lock_x then
+                local cur_x, cur_y = reaper.GetMousePosition()
+                state.env_tension_last_y = state.env_tension_last_y or cur_y
+                local delta = cur_y - state.env_tension_last_y
+                if delta ~= 0 then
+                  state.env_tension_cumulative_y = state.env_tension_cumulative_y + delta
+                end
+                state.env_tension_last_y = state.env_tension_lock_y
+                reaper.JS_Mouse_SetPosition(state.env_tension_lock_x, state.env_tension_lock_y)
+              end
+              local dy = state.has_js_extension and state.env_tension_cumulative_y or (mouse_y - state.env_tension_start_mouse_y)
+              -- Flip direction for descending segments so drag-up always curves up visually
+              if state.env_tension_descending then dy = -dy end
+              if not state.env_tension_activated and math.abs(dy) >= 4 then
+                state.env_tension_activated = true
+              end
+              if state.env_tension_activated then
+                local env = reaper.GetTakeEnvelopeByName(take, env_name)
+                if env then
+                  -- Map drag distance to tension: full waveform height = range of 2 (-1 to +1)
+                  local sensitivity = 2.0 / waveform_height
+                  local new_tension = state.env_tension_start_value + dy * sensitivity
+                  new_tension = math.max(-1, math.min(1, new_tension))
+                  local ret, pt_time, pt_value, _, _, pt_sel = reaper.GetEnvelopePoint(env, state.env_tension_point_idx)
+                  if ret then
+                    reaper.SetEnvelopePoint(env, state.env_tension_point_idx, pt_time, pt_value, 5, new_tension, pt_sel, true)
+                    reaper.Envelope_SortPoints(env)
+                    reaper.UpdateArrange()
+                  end
                 end
               end
             end
@@ -1683,7 +1888,8 @@ local function loop()
           -- End dragging
           if reaper.ImGui_IsMouseReleased(ctx, 0) then
             if (state.dragging_start or state.dragging_end) and state.marker_drag_activated then
-              -- After alt-drag (both markers), shift envelope points to match new offset
+              -- After any marker drag that changed D_STARTOFFS, shift envelope points
+              -- to maintain their source-audio position (envelope stays anchored to the audio).
               local offset_delta = start_offset - state.drag_start_offset
               if math.abs(offset_delta) > 0.000001 then
                 local env_names = { "Volume", "Pitch" }
@@ -1762,6 +1968,14 @@ local function loop()
               state.env_freehand_drawing = false
               reaper.UpdateArrange()
             end
+            state.env_tension_dragging = false
+            state.env_tension_activated = false
+            state.env_tension_point_idx = -1
+            state.env_tension_descending = false
+            state.env_tension_lock_x = nil
+            state.env_tension_lock_y = nil
+            state.env_tension_last_y = nil
+            state.env_tension_cumulative_y = 0
           end
 
           -- Mouse button 4/5 quick marker positioning
@@ -1816,51 +2030,6 @@ local function loop()
                 reaper.Undo_EndBlock("NVSD_ItemView: Set end marker", -1)
               end
             end
-          end
-
-          -- Helper: snap time to nearest source boundary
-          local function snap_to_source_boundary(t, src_len, threshold_time)
-            local nearest_boundary = math.floor(t / src_len + 0.5) * src_len
-            if math.abs(t - nearest_boundary) <= threshold_time then
-              return nearest_boundary
-            end
-            return t
-          end
-
-          -- Helper: snap source time to finest visible grid subdivision
-          -- snap_offset: override start_offset for snapping (use drag_start_offset during marker drags)
-          local function snap_to_grid_if_enabled(source_t, snap_offset)
-            local snap_enabled = reaper.GetToggleCommandState(1157) == 1
-            if not snap_enabled then return source_t end
-
-            local offset = snap_offset or start_offset
-            local project_t = utils.source_to_project_time(source_t, item_position, offset, playrate)
-
-            -- Compute finest visible grid subdivision (same logic as grid display)
-            local bpm, bpi = reaper.GetProjectTimeSignature2(0, project_t)
-            local beats_per_bar = math.floor(bpi)
-            if beats_per_bar < 1 then beats_per_bar = 4 end
-            local avg_bar_duration = 60 / bpm * beats_per_bar
-            local px_per_bar = (avg_bar_duration / view_length) * waveform_width
-            local px_per_beat = px_per_bar / beats_per_bar
-
-            local finest_sub = 1
-            while (px_per_beat / (finest_sub * 2)) >= 24 do
-              finest_sub = finest_sub * 2
-            end
-
-            -- Snap in beat space: get beat position, round to nearest subdivision
-            local snap_unit = 1 / finest_sub
-            local beat_in_measure, measure = reaper.TimeMap2_timeToBeats(0, project_t)
-            local snapped_beat = math.floor(beat_in_measure / snap_unit + 0.5) * snap_unit
-            local snapped_measure = measure
-            if snapped_beat >= beats_per_bar then
-              snapped_beat = snapped_beat - beats_per_bar
-              snapped_measure = measure + 1
-            end
-
-            local snapped_project_t = reaper.TimeMap2_beatsToTime(0, snapped_beat, snapped_measure)
-            return utils.project_to_source_time(snapped_project_t, item_position, offset, playrate)
           end
 
           local snap_threshold_time = (config.SNAP_THRESHOLD_PX / waveform_width) * view_length
