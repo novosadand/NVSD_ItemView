@@ -51,12 +51,12 @@ config.ENV_COLORS = {
     preview    = 0xFFFFFF88,
   },
   Pitch = {
-    line       = 0x8B7BDDFF,
-    line_dash  = 0x8B7BDD99,
-    fill       = 0x8B7BDD20,
-    node_hover = 0xB0A0EEFF,
-    node_border= 0x8B7BDDFF,
-    line_hover = 0xC0B0FFFF,
+    line       = 0x5B8BE0FF,
+    line_dash  = 0x5B8BE099,
+    fill       = 0x5B8BE020,
+    node_hover = 0x7BABF0FF,
+    node_border= 0x5B8BE0FF,
+    line_hover = 0x9BCBFFFF,
     preview    = 0xFFFFFF88,
   },
   Pan = {
@@ -84,6 +84,11 @@ config.ENV_DASH_GAP = 4
 config.PITCH_KNOB_RADIUS = 16
 config.PITCH_MIN = -48
 config.PITCH_MAX = 48
+config.PITCH_FULL_RANGE = 48       -- visible window size (always 48 semitones)
+config.PITCH_MAX_SEMITONES = 48    -- absolute max semitone value
+config.PITCH_SCROLL_SPEED = 4     -- semitones per mousewheel tick
+config.PITCH_AUTO_SCROLL_EDGE = 30    -- pixels from edge where auto-scroll kicks in
+config.PITCH_AUTO_SCROLL_RATE = 0.5   -- semitones per frame at edge (scales linearly to edge)
 
 -- Region selection overlay
 config.COLOR_SELECTION = 0x66AAFF30        -- semi-transparent blue overlay

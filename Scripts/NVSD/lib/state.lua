@@ -123,6 +123,12 @@ state.envelope_lock = false  -- Lock envelopes in place when dragging markers
 -- Envelope overlay visibility (true = show envelope overlay on waveform)
 state.envelopes_visible = true
 
+-- Pitch vertical scroll state
+state.pitch_view_offset = 0              -- semitones offset from center (0 = default, + = shift up, - = shift down)
+state.pitch_gutter_dragging = false      -- dragging the pitch label column to scroll
+state.pitch_gutter_drag_start_y = 0      -- mouse Y at drag start
+state.pitch_gutter_drag_start_offset = 0 -- pitch_view_offset at drag start
+
 -- Envelope editor state
 state.envelope_type = "Volume"           -- "Volume" or "Pitch"
 state.envelope_dropdown_open = false

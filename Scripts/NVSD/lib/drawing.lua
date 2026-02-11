@@ -1341,6 +1341,9 @@ function drawing.draw_envelope_dropdown(draw_list, ctx, x, y, height,
       if item_name == "Hide" then
         state.envelopes_visible = false
       else
+        if state.envelope_type ~= item_name then
+          state.pitch_view_offset = 0  -- reset scroll when switching envelope type
+        end
         state.envelope_type = item_name
         state.envelopes_visible = true
       end
@@ -1366,7 +1369,8 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
                                         time_to_px, view_start, view_length,
                                         mouse_x, mouse_y, config, state, source_length,
                                         env_scaling, env_max_raw, env_min_raw, env_type,
-                                        snap_time_fn, env_colors, anchor_start)
+                                        snap_time_fn, env_colors, anchor_start,
+                                        pitch_view_min, pitch_view_max)
   local DL_AddLine = reaper.ImGui_DrawList_AddLine
   local DL_PathLineTo = reaper.ImGui_DrawList_PathLineTo
   local DL_PathStroke = reaper.ImGui_DrawList_PathStroke
@@ -1389,17 +1393,23 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
   env_colors = env_colors or config.ENV_COLORS.Volume
 
   env_min_raw = env_min_raw or 0
-  local env_range = env_max_raw - env_min_raw
+
+  -- For pitch with scrolling: use view window for coordinate mapping
+  -- Nodes can exist in the full env_min_raw..env_max_raw range but the visible
+  -- window is pitch_view_min..pitch_view_max (always 48 semitones wide)
+  local view_min = pitch_view_min or env_min_raw
+  local view_max = pitch_view_max or env_max_raw
+  local env_range = view_max - view_min
 
   -- Coordinate mapping: raw envelope values to pixels
   -- Volume: 0 (bottom) to max_raw (top)
-  -- Pitch: -24 (bottom) to +24 (top), 0 at center
+  -- Pitch: view_min (bottom) to view_max (top), scrollable
   local function value_to_y(raw)
-    return wave_y + waveform_height * (1 - (raw - env_min_raw) / env_range)
+    return wave_y + waveform_height * (1 - (raw - view_min) / env_range)
   end
 
   local function y_to_value(py)
-    local raw = env_min_raw + env_range * (1 - (py - wave_y) / waveform_height)
+    local raw = view_min + env_range * (1 - (py - wave_y) / waveform_height)
     if raw < env_min_raw then raw = env_min_raw end
     if raw > env_max_raw then raw = env_max_raw end
     return raw
@@ -1524,7 +1534,10 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
     return default_raw
   end
 
-  -- 0. Pitch/Pan: draw grid lines + left label column
+  -- Clip all envelope drawing to the waveform area (including gutter)
+  reaper.ImGui_DrawList_PushClipRect(draw_list, wave_x - config.PITCH_LABEL_WIDTH, wave_y, wave_x + waveform_width, wave_y + waveform_height, true)
+
+  -- 0. Draw grid lines + left label column (all envelope types)
   if is_pitch then
     local gutter_w = config.PITCH_LABEL_WIDTH
     local gutter_x = wave_x - gutter_w
@@ -1538,7 +1551,7 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
     local px_per_st = waveform_height / env_range
     local label_interval = math.max(1, math.ceil(12 / px_per_st))
 
-    for st = math.ceil(env_min_raw), math.floor(env_max_raw) do
+    for st = math.ceil(view_min), math.floor(view_max) do
       local ly = value_to_y(st)
       if ly >= wave_y and ly <= wave_y + waveform_height then
         -- Grid line across waveform
@@ -1599,6 +1612,49 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
         local tw = reaper.ImGui_CalcTextSize(ctx, label)
         local label_color = (raw_val == 0) and config.COLOR_ENV_GRID_CENTER or config.COLOR_ENV_GRID_LABEL
         DL_AddText(draw_list, gutter_x + gutter_w - tw - 3, ly - 6, label_color, label)
+        DL_AddLine(draw_list, wave_x - 3, ly, wave_x, ly, color, 1)
+      end
+    end
+  else
+    -- Volume: dB labels
+    local gutter_w = config.PITCH_LABEL_WIDTH
+    local gutter_x = wave_x - gutter_w
+
+    DL_AddRectFilled(draw_list, gutter_x, wave_y, wave_x, wave_y + waveform_height, config.COLOR_WAVEFORM_BG)
+    DL_AddLine(draw_list, wave_x, wave_y, wave_x, wave_y + waveform_height, config.COLOR_ENV_GRID, 1)
+
+    local db_marks = { {-1e9, "-inf"}, {-60, "-60"}, {-48, "-48"}, {-36, "-36"}, {-24, "-24"}, {-18, "-18"}, {-12, "-12"}, {-6, "-6"}, {0, "0 dB"}, {6, "+6"} }
+    if waveform_height < 120 then
+      db_marks = { {-1e9, "-inf"}, {-48, "-48"}, {-24, "-24"}, {-12, "-12"}, {0, "0 dB"}, {6, "+6"} }
+    end
+
+    for _, mark in ipairs(db_marks) do
+      local db_val, label = mark[1], mark[2]
+      local raw
+      if db_val < -900 then
+        raw = 0
+      else
+        local linear = 10 ^ (db_val / 20)
+        raw = reaper.ScaleToEnvelopeMode(env_scaling, linear)
+      end
+      local ly = value_to_y(raw)
+      if ly >= wave_y and ly <= wave_y + waveform_height then
+        local color
+        if db_val == 0 then
+          color = config.COLOR_ENV_GRID_CENTER
+        elseif db_val == -12 or db_val == -24 or db_val == 6 then
+          color = config.COLOR_ENV_GRID_OCTAVE
+        else
+          color = config.COLOR_ENV_GRID
+        end
+        DL_AddLine(draw_list, wave_x, ly, wave_x + waveform_width, ly, color, 1)
+        local tw = reaper.ImGui_CalcTextSize(ctx, label)
+        local label_color = (db_val == 0) and config.COLOR_ENV_GRID_CENTER or config.COLOR_ENV_GRID_LABEL
+        -- Clamp label Y to stay within waveform bounds (text is ~12px tall)
+        local text_y = ly - 6
+        if text_y < wave_y then text_y = wave_y end
+        if text_y + 12 > wave_y + waveform_height then text_y = wave_y + waveform_height - 12 end
+        DL_AddText(draw_list, gutter_x + gutter_w - tw - 3, text_y, label_color, label)
         DL_AddLine(draw_list, wave_x - 3, ly, wave_x, ly, color, 1)
       end
     end
@@ -1919,6 +1975,8 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
       end
     end
   end
+
+  reaper.ImGui_DrawList_PopClipRect(draw_list)
 end
 
 return drawing

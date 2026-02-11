@@ -58,21 +58,50 @@ local should_reload = false
 local function ensure_take_envelope(item, take, env_name)
   local env = reaper.GetTakeEnvelopeByName(take, env_name)
   if env then return env end
-  -- Try action first
-  reaper.SetMediaItemSelected(item, true)
-  reaper.SetActiveTake(take)
+  -- Try action first (only for types with known action IDs)
   local action_ids = { Volume = 40693, Pitch = 40714, Pan = 40694 }
-  local action_id = action_ids[env_name] or 40693
-  reaper.Main_OnCommand(action_id, 0)
-  env = reaper.GetTakeEnvelopeByName(take, env_name)
-  if env then return env end
+  local action_id = action_ids[env_name]
+  if action_id then
+    reaper.SetMediaItemSelected(item, true)
+    reaper.SetActiveTake(take)
+    reaper.Main_OnCommand(action_id, 0)
+    env = reaper.GetTakeEnvelopeByName(take, env_name)
+    if env then return env end
+  end
   -- Fallback: inject envelope via item state chunk
   local chunk_tag = ({ Volume = "VOLENV2", Pitch = "PITCHENV", Pan = "PANENV2" })[env_name]
   if not chunk_tag then return nil end
   local _, chunk = reaper.GetItemStateChunk(item, "", false)
   if chunk:find("<" .. chunk_tag) then return reaper.GetTakeEnvelopeByName(take, env_name) end
   local env_chunk = "<" .. chunk_tag .. "\nACT 1 -1\nVIS 1 1 1\nLANEHEIGHT 0 0\nARM 0\nDEFSHAPE 0 -1 -1\nPT 0 0 0\n>\n"
-  -- Find the item's closing > (last > in chunk) and insert before it
+  -- Find the active take's GUID and inject envelope inside that take section
+  local take_guid = reaper.BR_GetMediaItemTakeGUID(take)
+  if take_guid then
+    local guid_str = "{" .. take_guid .. "}"
+    local take_pos = chunk:find(guid_str, 1, true)
+    if take_pos then
+      -- Find the next ">" that closes this take section (after all nested blocks)
+      -- Walk forward from take_pos to find the take's closing ">"
+      local depth = 0
+      local insert_pos = nil
+      for i = take_pos, #chunk do
+        local c = chunk:sub(i, i)
+        if c == "<" then depth = depth + 1
+        elseif c == ">" then
+          if depth > 0 then depth = depth - 1
+          else insert_pos = i; break end
+        end
+      end
+      if insert_pos then
+        chunk = chunk:sub(1, insert_pos - 1) .. env_chunk .. chunk:sub(insert_pos)
+        reaper.SetItemStateChunk(item, chunk, false)
+        reaper.UpdateItemInProject(item)
+        reaper.UpdateArrange()
+        return reaper.GetTakeEnvelopeByName(take, env_name)
+      end
+    end
+  end
+  -- Last resort: insert before item's closing >
   local last_close = chunk:match(".*()>")
   if last_close then
     chunk = chunk:sub(1, last_close - 1) .. env_chunk .. chunk:sub(last_close)
@@ -734,7 +763,7 @@ local function loop()
               or config.LEFT_PANEL_WIDTH
 
           local total_left_width = config.LEFT_COLUMN_WIDTH + effective_panel_width
-          local pitch_gutter = (state.envelopes_visible and (state.envelope_type == "Pitch" or state.envelope_type == "Pan")) and config.PITCH_LABEL_WIDTH or 0
+          local pitch_gutter = state.envelopes_visible and config.PITCH_LABEL_WIDTH or 0
           local waveform_width = math.max(100, avail_w - (config.WAVEFORM_MARGIN_H * 2) - total_left_width - pitch_gutter)
 
           local cursor_x, cursor_y = reaper.ImGui_GetCursorScreenPos(ctx)
@@ -909,6 +938,7 @@ local function loop()
                                   or state.env_segment_dragging or state.env_multi_dragging
                                   or state.env_rect_selecting
                                   or state.selecting_region
+                                  or state.pitch_gutter_dragging
           local user_dragging_in_reaper = mouse_is_down and not we_are_dragging
 
           -- Get file path (used by info bar)
@@ -926,6 +956,8 @@ local function loop()
             state.prev_raw_start_offset = nil
             state.prev_ext_start = nil
             state.prev_ext_end = nil
+            -- Reset pitch scroll
+            state.pitch_view_offset = 0
           end
 
           -- Detect external ext changes (undo, REAPER edits) and reset pan_offset
@@ -1257,8 +1289,8 @@ local function loop()
             local num_env_points = 0
             -- Default scaling: Volume=fader(1), Pitch/Pan=linear(0)
             local env_scaling = is_centered and 0 or 1
-            local env_max_raw = is_pitch and 24.0 or (is_pan and 1.0 or reaper.ScaleToEnvelopeMode(env_scaling, 2.0))
-            local env_min_raw = is_pitch and -24.0 or (is_pan and -1.0 or 0)
+            local env_max_raw = is_pitch and 48.0 or (is_pan and 1.0 or reaper.ScaleToEnvelopeMode(env_scaling, 2.0))
+            local env_min_raw = is_pitch and -48.0 or (is_pan and -1.0 or 0)
             if env then
               env_scaling = reaper.GetEnvelopeScalingMode(env)
               if not is_centered then
@@ -1291,12 +1323,15 @@ local function loop()
             local env_colors = config.ENV_COLORS[state.envelope_type] or config.ENV_COLORS.Volume
             local env_anchor_end = is_looped_item and ext_end or source_length
             local env_anchor_start = is_looped_item and ext_start or nil
+            local pitch_view_min = is_pitch and (-24 + state.pitch_view_offset) or nil
+            local pitch_view_max = is_pitch and (24 + state.pitch_view_offset) or nil
             drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_env_points,
               wave_x, wave_y, waveform_width, waveform_height,
               time_to_px, view_start, view_length,
               mouse_x, mouse_y, config, state, env_anchor_end,
               env_scaling, env_max_raw, env_min_raw, state.envelope_type,
-              snap_to_grid_if_enabled, env_colors, env_anchor_start)
+              snap_to_grid_if_enabled, env_colors, env_anchor_start,
+              pitch_view_min, pitch_view_max)
 
           end
 
@@ -1469,6 +1504,9 @@ local function loop()
           -- Skip hover detection when REAPER isn't the active window (prevents stale mouse positions)
           local mouse_in_marker_area = reaper_is_active
               and mouse_x >= wave_x - config.MARKER_WIDTH and mouse_x <= wave_x + waveform_width + config.MARKER_WIDTH
+              and mouse_y >= wave_y and mouse_y <= wave_y + waveform_height
+          local mouse_in_pitch_gutter = state.envelope_type == "Pitch" and state.envelopes_visible and reaper_is_active
+              and mouse_x >= wave_x - config.PITCH_LABEL_WIDTH and mouse_x < wave_x
               and mouse_y >= wave_y and mouse_y <= wave_y + waveform_height
 
           local near_start = reaper_is_active and utils.is_near_marker(mouse_x, start_marker_x, config.MARKER_WIDTH)
@@ -1646,6 +1684,8 @@ local function loop()
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
           elseif state.selecting_region and state.selection_drag_activated then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
+          elseif mouse_in_pitch_gutter or state.pitch_gutter_dragging then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
           end
 
           -- Right-click: fade shape menus or generic context menu
@@ -1735,13 +1775,16 @@ local function loop()
             state.pan_offset = math.max(min_pan, math.min(max_pan, state.pan_offset))
           end
 
-          -- Ctrl+mouse wheel zoom
+          -- Ctrl+mouse wheel zoom / pitch vertical scroll
           local wheel = reaper.ImGui_GetMouseWheel(ctx)
           if wheel ~= 0 and mouse_in_view then
             if ctrl_held then
               local zoom_factor = 1.15
               local new_zoom = wheel > 0 and (state.zoom_level * zoom_factor) or (state.zoom_level / zoom_factor)
               zoom_to_cursor(new_zoom, mouse_x)
+            elseif state.envelope_type == "Pitch" and state.envelopes_visible and mouse_in_waveform then
+              state.pitch_view_offset = state.pitch_view_offset + wheel * config.PITCH_SCROLL_SPEED
+              state.pitch_view_offset = math.max(-24, math.min(24, state.pitch_view_offset))
             end
           end
 
@@ -1848,6 +1891,25 @@ local function loop()
             local max_pan = ext_end - range_center - half_view
             if min_pan > max_pan then min_pan, max_pan = max_pan, min_pan end
             state.pan_offset = math.max(min_pan, math.min(max_pan, state.pan_offset))
+          end
+
+          -- Pitch gutter drag to scroll vertical view
+          if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_pitch_gutter and not we_are_dragging then
+            state.pitch_gutter_dragging = true
+            state.pitch_gutter_drag_start_y = mouse_y
+            state.pitch_gutter_drag_start_offset = state.pitch_view_offset
+          end
+
+          if state.pitch_gutter_dragging then
+            if reaper.ImGui_IsMouseDown(ctx, 0) then
+              local dy = mouse_y - state.pitch_gutter_drag_start_y
+              -- Convert pixel delta to semitones: waveform_height spans 48 semitones
+              local st_delta = (dy / waveform_height) * 48
+              state.pitch_view_offset = state.pitch_gutter_drag_start_offset + st_delta
+              state.pitch_view_offset = math.max(-24, math.min(24, state.pitch_view_offset))
+            else
+              state.pitch_gutter_dragging = false
+            end
           end
 
           -- Start fade curvature drag (alt+click inside fade body)
@@ -2279,16 +2341,38 @@ local function loop()
             end
             local env_time_min = is_extended_view and ext_start or 0
             local env_time_max = is_extended_view and ext_end or source_length
-            local env_max_raw = is_pitch and 24.0 or (is_pan and 1.0 or reaper.ScaleToEnvelopeMode(is_centered and 0 or 1, 2.0))
-            local env_min_raw = is_pitch and -24.0 or (is_pan and -1.0 or 0)
+            local env_max_raw = is_pitch and 48.0 or (is_pan and 1.0 or reaper.ScaleToEnvelopeMode(is_centered and 0 or 1, 2.0))
+            local env_min_raw = is_pitch and -48.0 or (is_pan and -1.0 or 0)
+
+            -- View window for pitch (scrollable) - maps mouse Y to the visible 48-semitone window
+            local view_min = is_pitch and (-24 + state.pitch_view_offset) or env_min_raw
+            local view_max = is_pitch and (24 + state.pitch_view_offset) or env_max_raw
 
             -- Helper: convert mouse Y to envelope raw value
             local function mouse_y_to_raw(my)
-              local raw = env_min_raw + (env_max_raw - env_min_raw) * (1 - (my - wave_y) / waveform_height)
-              raw = math.max(env_min_raw, math.min(env_max_raw, raw))
+              local raw = view_min + (view_max - view_min) * (1 - (my - wave_y) / waveform_height)
+              raw = math.max(env_min_raw, math.min(env_max_raw, raw))  -- clamp to full range, not view
               -- Pitch: snap to whole semitones (if snap enabled)
               if is_pitch and state.env_snap_enabled then raw = math.floor(raw + 0.5) end
               return raw
+            end
+
+            -- Auto-scroll pitch view when mouse approaches waveform edges during drag
+            local function pitch_auto_scroll(my)
+              if not is_pitch then return end
+              local edge = config.PITCH_AUTO_SCROLL_EDGE
+              local top_edge = wave_y + edge
+              local bot_edge = wave_y + waveform_height - edge
+              if my < top_edge then
+                local factor = math.min((top_edge - my) / edge, 1.5)
+                state.pitch_view_offset = state.pitch_view_offset + config.PITCH_AUTO_SCROLL_RATE * factor
+              elseif my > bot_edge then
+                local factor = math.min((my - bot_edge) / edge, 1.5)
+                state.pitch_view_offset = state.pitch_view_offset - config.PITCH_AUTO_SCROLL_RATE * factor
+              end
+              state.pitch_view_offset = math.max(-24, math.min(24, state.pitch_view_offset))
+              view_min = is_pitch and (-24 + state.pitch_view_offset) or env_min_raw
+              view_max = is_pitch and (24 + state.pitch_view_offset) or env_max_raw
             end
 
             -- Ctrl+left-click: start freehand envelope drawing
@@ -2300,8 +2384,8 @@ local function loop()
                 and not state.is_ruler_dragging and not state.is_panning then
               -- Create or get envelope
               local env = ensure_take_envelope(item, take, env_name)
-              if env and env_name == "Volume" then
-                -- Check if this was freshly created (only default points)
+              if env then
+                -- Clean up default points from freshly created envelope
                 local np = reaper.CountEnvelopePoints(env)
                 if np <= 1 then
                   for di = np - 1, 0, -1 do
@@ -2328,6 +2412,7 @@ local function loop()
 
             -- Freehand drawing: insert points while Ctrl+dragging
             if state.env_freehand_drawing and reaper.ImGui_IsMouseDown(ctx, 0) then
+              pitch_auto_scroll(mouse_y)
               if math.abs(mouse_x - state.env_freehand_last_x) >= 1 then
                 local env = reaper.GetTakeEnvelopeByName(take, env_name)
                 if env then
@@ -2521,64 +2606,100 @@ local function loop()
                 and not state.env_segment_dragging then
               state.env_selected_nodes = {}
               local env = reaper.GetTakeEnvelopeByName(take, env_name)
-              if env then
-                local np = reaper.CountEnvelopePoints(env)
-                local hover_take_time = state.envelope_hover_time - env_offset
-                local found = false
 
-                -- Check implicit left segment (before first REAPER point)
-                if np > 0 and not found then
-                  local ret0, t0, v0 = reaper.GetEnvelopePoint(env, 0)
-                  if ret0 and hover_take_time < t0 + 0.001 then
-                    state.env_segment_dragging = true
-                    state.env_segment_idx1 = -1  -- implicit anchor
-                    state.env_segment_idx2 = 0
-                    state.env_segment_start_mouse_y = mouse_y
-                    state.env_segment_start_val1 = v0  -- implicit has same value
-                    state.env_segment_start_val2 = v0
-                    state.env_segment_activated = false
-                    if not state.undo_block_open then
-                      state.undo_block_open = "env_segment"
-                    end
-                    found = true
+              -- Create envelope if clicking on default line (no envelope exists yet)
+              if not env then
+                env = ensure_take_envelope(item, take, env_name)
+                -- Clean up default points for a fresh start
+                if env then
+                  local del_count = reaper.CountEnvelopePoints(env)
+                  for di = del_count - 1, 0, -1 do
+                    reaper.DeleteEnvelopePointEx(env, -1, di)
                   end
                 end
+              end
 
-                -- Check segments between consecutive REAPER points
-                if not found then
-                  for pi = 0, np - 2 do
-                    local ret1, t1, v1 = reaper.GetEnvelopePoint(env, pi)
-                    local ret2, t2, v2 = reaper.GetEnvelopePoint(env, pi + 1)
-                    if ret1 and ret2 and hover_take_time >= t1 - 0.001 and hover_take_time <= t2 + 0.001 then
+              if env then
+                local np = reaper.CountEnvelopePoints(env)
+
+                -- No points (default line): create anchor points and start segment drag
+                if np == 0 then
+                  local actual_scaling = reaper.GetEnvelopeScalingMode(env)
+                  local default_val = is_centered and 0 or reaper.ScaleToEnvelopeMode(actual_scaling, 1.0)
+                  local t_start = env_time_min - env_offset
+                  local t_end = env_time_max - env_offset
+                  reaper.InsertEnvelopePoint(env, t_start, default_val, 0, 0, false, true)
+                  reaper.InsertEnvelopePoint(env, t_end, default_val, 0, 0, false, true)
+                  reaper.Envelope_SortPoints(env)
+                  state.env_segment_dragging = true
+                  state.env_segment_idx1 = 0
+                  state.env_segment_idx2 = 1
+                  state.env_segment_start_mouse_y = mouse_y
+                  state.env_segment_start_val1 = default_val
+                  state.env_segment_start_val2 = default_val
+                  state.env_segment_activated = false
+                  if not state.undo_block_open then
+                    state.undo_block_open = "env_segment"
+                  end
+                  reaper.UpdateArrange()
+                else
+                  local hover_take_time = state.envelope_hover_time - env_offset
+                  local found = false
+
+                  -- Check implicit left segment (before first REAPER point)
+                  if np > 0 and not found then
+                    local ret0, t0, v0 = reaper.GetEnvelopePoint(env, 0)
+                    if ret0 and hover_take_time < t0 + 0.001 then
                       state.env_segment_dragging = true
-                      state.env_segment_idx1 = pi
-                      state.env_segment_idx2 = pi + 1
+                      state.env_segment_idx1 = -1  -- implicit anchor
+                      state.env_segment_idx2 = 0
                       state.env_segment_start_mouse_y = mouse_y
-                      state.env_segment_start_val1 = v1
-                      state.env_segment_start_val2 = v2
+                      state.env_segment_start_val1 = v0  -- implicit has same value
+                      state.env_segment_start_val2 = v0
                       state.env_segment_activated = false
                       if not state.undo_block_open then
                         state.undo_block_open = "env_segment"
                       end
                       found = true
-                      break
                     end
                   end
-                end
 
-                -- Check implicit right segment (after last REAPER point)
-                if np > 0 and not found then
-                  local retN, tN, vN = reaper.GetEnvelopePoint(env, np - 1)
-                  if retN and hover_take_time > tN - 0.001 then
-                    state.env_segment_dragging = true
-                    state.env_segment_idx1 = np - 1
-                    state.env_segment_idx2 = -1  -- implicit anchor
-                    state.env_segment_start_mouse_y = mouse_y
-                    state.env_segment_start_val1 = vN
-                    state.env_segment_start_val2 = vN  -- implicit has same value
-                    state.env_segment_activated = false
-                    if not state.undo_block_open then
-                      state.undo_block_open = "env_segment"
+                  -- Check segments between consecutive REAPER points
+                  if not found then
+                    for pi = 0, np - 2 do
+                      local ret1, t1, v1 = reaper.GetEnvelopePoint(env, pi)
+                      local ret2, t2, v2 = reaper.GetEnvelopePoint(env, pi + 1)
+                      if ret1 and ret2 and hover_take_time >= t1 - 0.001 and hover_take_time <= t2 + 0.001 then
+                        state.env_segment_dragging = true
+                        state.env_segment_idx1 = pi
+                        state.env_segment_idx2 = pi + 1
+                        state.env_segment_start_mouse_y = mouse_y
+                        state.env_segment_start_val1 = v1
+                        state.env_segment_start_val2 = v2
+                        state.env_segment_activated = false
+                        if not state.undo_block_open then
+                          state.undo_block_open = "env_segment"
+                        end
+                        found = true
+                        break
+                      end
+                    end
+                  end
+
+                  -- Check implicit right segment (after last REAPER point)
+                  if np > 0 and not found then
+                    local retN, tN, vN = reaper.GetEnvelopePoint(env, np - 1)
+                    if retN and hover_take_time > tN - 0.001 then
+                      state.env_segment_dragging = true
+                      state.env_segment_idx1 = np - 1
+                      state.env_segment_idx2 = -1  -- implicit anchor
+                      state.env_segment_start_mouse_y = mouse_y
+                      state.env_segment_start_val1 = vN
+                      state.env_segment_start_val2 = vN  -- implicit has same value
+                      state.env_segment_activated = false
+                      if not state.undo_block_open then
+                        state.undo_block_open = "env_segment"
+                      end
                     end
                   end
                 end
@@ -2600,7 +2721,7 @@ local function loop()
                 just_created = env ~= nil
               end
               if env then
-                if just_created and env_name == "Volume" then
+                if just_created then
                   local del_count = reaper.CountEnvelopePoints(env)
                   for di = del_count - 1, 0, -1 do
                     reaper.DeleteEnvelopePointEx(env, -1, di)
@@ -2650,7 +2771,7 @@ local function loop()
               local env = reaper.GetTakeEnvelopeByName(take, env_name)
               if not env then
                 env = ensure_take_envelope(item, take, env_name)
-                if env and env_name == "Volume" then
+                if env then
                   for di = reaper.CountEnvelopePoints(env) - 1, 0, -1 do
                     reaper.DeleteEnvelopePointEx(env, -1, di)
                   end
@@ -2715,6 +2836,7 @@ local function loop()
                 state.env_drag_activated = true
               end
               if state.env_drag_activated then
+                pitch_auto_scroll(mouse_y)
                 local env = reaper.GetTakeEnvelopeByName(take, env_name)
                 if env then
                   local new_source_time = px_to_time(mouse_x)
@@ -2746,10 +2868,11 @@ local function loop()
                 state.env_segment_activated = true
               end
               if state.env_segment_activated then
+                pitch_auto_scroll(mouse_y)
                 local env = reaper.GetTakeEnvelopeByName(take, env_name)
                 if env then
-                  -- Convert pixel delta to value delta
-                  local val_per_px = (env_max_raw - env_min_raw) / waveform_height
+                  -- Convert pixel delta to value delta (use view window for coordinate mapping)
+                  local val_per_px = (view_max - view_min) / waveform_height
                   local delta_val = -dy * val_per_px  -- negative because Y increases downward
 
                   -- Clamp: only consider real nodes (idx >= 0) for range limiting
@@ -2869,6 +2992,7 @@ local function loop()
                 end
               end
               if state.env_multi_drag_activated then
+                pitch_auto_scroll(mouse_y)
                 local m_env_name = state.env_multi_drag_env_name or env_name
                 local m_env_offset = state.env_multi_drag_env_offset or env_offset
                 local env = reaper.GetTakeEnvelopeByName(take, m_env_name)
@@ -2964,7 +3088,7 @@ local function loop()
                     if ret then
                       local src_time = pt_time + sel_env_offset
                       local px = time_to_px(src_time)
-                      local py = wave_y + waveform_height * (1 - (pt_value - env_min_raw) / (env_max_raw - env_min_raw))
+                      local py = wave_y + waveform_height * (1 - (pt_value - view_min) / (view_max - view_min))
                       if px >= rect_x1 and px <= rect_x2 and py >= rect_y1 and py <= rect_y2 then
                         table.insert(state.env_selected_nodes, {src_time = src_time, value = pt_value})
                       end
