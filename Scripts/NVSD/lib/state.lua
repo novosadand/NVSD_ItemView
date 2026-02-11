@@ -99,6 +99,7 @@ state.was_mouse_down = false
 -- Sticky item state
 state.sticky_item = nil
 state.last_selected_item = nil
+state.remembered_item = nil  -- Last displayed item (persists when REAPER selection goes to nil)
 state.sticky_validation_counter = 0
 state.sticky_item_valid = false
 state.last_item_count = -1  -- Track item count for sticky validation optimization

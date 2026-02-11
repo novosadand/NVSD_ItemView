@@ -340,24 +340,24 @@ local function loop()
     -- Get selected item
     local selected_item = reaper.GetSelectedMediaItem(0, 0)
 
-    -- Clear sticky when selection changes (skip when REAPER is unfocused to prevent spurious resets)
+    -- Clear sticky when selection changes to a DIFFERENT item (not when deselecting to nil).
+    -- Skip when REAPER is unfocused to prevent spurious resets.
     if reaper_is_active and selected_item ~= state.last_selected_item then
-      state.sticky_item = nil
-      state.sticky_item_valid = false
-      state.sticky_validation_counter = 0
-      -- Clear preview on item change
-      if state.preview_active and state.preview_handle then
-        reaper.CF_Preview_Stop(state.preview_handle)
-      end
-      state.preview_cursor_pos = nil
-      state.preview_handle = nil
-      state.preview_active = false
-      state.preview_item = nil
-      -- Clear region selection on item change
-      state.region_selected = false
-      state.selecting_region = false
-      -- Auto-switch to Envelopes tab if the new item has active take envelopes
       if selected_item then
+        -- Switched to a different item: clear sticky, preview, region, auto-switch envelopes
+        state.sticky_item = nil
+        state.sticky_item_valid = false
+        state.sticky_validation_counter = 0
+        if state.preview_active and state.preview_handle then
+          reaper.CF_Preview_Stop(state.preview_handle)
+        end
+        state.preview_cursor_pos = nil
+        state.preview_handle = nil
+        state.preview_active = false
+        state.preview_item = nil
+        state.region_selected = false
+        state.selecting_region = false
+        -- Auto-switch to Envelopes tab if the new item has active take envelopes
         local sel_take = reaper.GetActiveTake(selected_item)
         if sel_take then
           local vol_env = reaper.GetTakeEnvelopeByName(sel_take, "Volume")
@@ -377,6 +377,8 @@ local function loop()
           end
         end
       end
+      -- When deselecting (selected_item == nil), do NOT clear sticky/state.
+      -- The remembered_item will keep the script showing the last item.
     end
     if reaper_is_active then
       state.last_selected_item = selected_item
@@ -442,6 +444,15 @@ local function loop()
       item = selected_item
     end
 
+    -- Priority 4: Use remembered item (last displayed item, persists through deselect)
+    if not item and state.remembered_item then
+      if reaper.ValidatePtr(state.remembered_item, "MediaItem*") then
+        item = state.remembered_item
+      else
+        state.remembered_item = nil
+      end
+    end
+
     -- Clear zoom/pan state when no item is shown (so next item shows full view)
     -- Guard with reaper_is_active to prevent spurious clearing on alt-tab
     if reaper_is_active and not item then
@@ -455,6 +466,12 @@ local function loop()
       item = nil
       state.sticky_item = nil
       state.sticky_item_valid = false
+      state.remembered_item = nil
+    end
+
+    -- Remember the current item so it persists through deselection
+    if item then
+      state.remembered_item = item
     end
 
     if item then
@@ -1858,7 +1875,8 @@ local function loop()
             end
             if state.selection_drag_activated then
               local raw_time = px_to_time(mouse_x)
-              raw_time = math.max(0, math.min(source_length, raw_time))
+              -- Clamp to visible view bounds (allows selecting in looped regions)
+              raw_time = math.max(view_start, math.min(view_start + view_length, raw_time))
               state.selection_end_time = snap_to_grid_if_enabled(raw_time)
             end
           end
@@ -1870,9 +1888,11 @@ local function loop()
               -- Normalize so start <= end
               local s = math.min(state.selection_start_time, state.selection_end_time)
               local e = math.max(state.selection_start_time, state.selection_end_time)
-              -- Clamp to source bounds
-              s = math.max(0, math.min(source_length, s))
-              e = math.max(0, math.min(source_length, e))
+              -- Clamp to item extent (allows looped regions)
+              local clamp_min = (is_looped_item or is_extended_drag) and ext_start or 0
+              local clamp_max = (is_looped_item or is_extended_drag) and ext_end or source_length
+              s = math.max(clamp_min, math.min(clamp_max, s))
+              e = math.max(clamp_min, math.min(clamp_max, e))
               if e - s > 0.001 then  -- minimum 1ms selection
                 state.region_selected = true
                 state.region_sel_start = s
@@ -1897,6 +1917,10 @@ local function loop()
             local sel_e = state.region_sel_end
             local new_length = (sel_e - sel_s) / playrate
             local new_startoffs = sel_s - section_offset
+            -- Wrap D_STARTOFFS for looped/extended selections
+            if source_length > 0 then
+              new_startoffs = new_startoffs % source_length
+            end
 
             reaper.PreventUIRefresh(1)
 
@@ -3110,11 +3134,19 @@ local function loop()
             else
               -- Start preview from cursor position (or item start if no cursor set)
               local pos = state.preview_cursor_pos or start_offset
+              -- Wrap to source coordinates for looped/extended items
+              local source_pos = pos
+              if source_length > 0 then
+                source_pos = pos % source_length
+                if source_pos < 0 then source_pos = source_pos + source_length end
+              end
               local handle = reaper.CF_CreatePreview(source)
               if handle then
-                reaper.CF_Preview_SetValue(handle, "D_POSITION", pos)
+                reaper.CF_Preview_SetValue(handle, "D_POSITION", source_pos)
                 reaper.CF_Preview_SetValue(handle, "D_VOLUME", item_vol)
-                reaper.CF_Preview_SetValue(handle, "B_LOOP", 0)
+                -- Loop when playing in a looped/extended item so preview crosses source boundaries
+                local needs_loop = is_looped_item or is_extended_drag
+                reaper.CF_Preview_SetValue(handle, "B_LOOP", needs_loop and 1 or 0)
                 local track = reaper.GetMediaItemTrack(item)
                 if track then
                   reaper.CF_Preview_SetOutputTrack(handle, 0, track)
@@ -3123,6 +3155,9 @@ local function loop()
                 state.preview_handle = handle
                 state.preview_active = true
                 state.preview_item = item
+                -- Track virtual position for looped playhead drawing
+                state.preview_virtual_start = pos
+                state.preview_start_realtime = reaper.time_precise()
               end
             end
           end
@@ -3137,13 +3172,22 @@ local function loop()
             else
               local retval, pos = reaper.CF_Preview_GetValue(state.preview_handle, "D_POSITION")
               if retval then
+                -- Compute virtual playhead position (supports looped items)
+                local virtual_pos
+                if state.preview_virtual_start and state.preview_start_realtime then
+                  local elapsed = reaper.time_precise() - state.preview_start_realtime
+                  virtual_pos = state.preview_virtual_start + elapsed
+                else
+                  virtual_pos = pos
+                end
                 -- Draw moving preview playhead
-                local preview_px = time_to_px(pos)
+                local preview_px = time_to_px(virtual_pos)
                 if preview_px >= wave_x and preview_px <= wave_x + waveform_width then
                   drawing.draw_preview_playhead(draw_list, preview_px, wave_y, waveform_height)
                 end
-                -- Auto-stop when past source end
-                if pos >= source_length then
+                -- Auto-stop: past item extent for looped, past source end for normal
+                local stop_pos = (is_looped_item or is_extended_drag) and ext_end or source_length
+                if virtual_pos >= stop_pos then
                   reaper.CF_Preview_Stop(state.preview_handle)
                   state.preview_handle = nil
                   state.preview_active = false
