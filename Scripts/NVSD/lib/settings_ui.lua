@@ -151,20 +151,14 @@ local function draw_swatch(ctx, color, size)
   reaper.ImGui_Dummy(ctx, size, size)
 end
 
--- Convert 0xRRGGBBAA integer to {r, g, b, a} floats (0..1)
-local function color_int_to_floats(c)
-  return ((c >> 24) & 0xFF) / 255,
-         ((c >> 16) & 0xFF) / 255,
-         ((c >> 8) & 0xFF) / 255,
-         (c & 0xFF) / 255
+-- Convert 0xRRGGBBAA to 0xRRGGBB (strip alpha) for ColorEdit3
+local function color_rgba_to_rgb(c)
+  return (c >> 8) & 0xFFFFFF
 end
 
--- Convert {r, g, b, a} floats (0..1) to 0xRRGGBBAA integer
-local function color_floats_to_int(r, g, b, a)
-  return (math.floor(r * 255 + 0.5) << 24) |
-         (math.floor(g * 255 + 0.5) << 16) |
-         (math.floor(b * 255 + 0.5) << 8) |
-         math.floor(a * 255 + 0.5)
+-- Convert 0xRRGGBB back to 0xRRGGBBAA (add full alpha)
+local function color_rgb_to_rgba(c)
+  return (c << 8) | 0xFF
 end
 
 -- Draw custom theme color editor
@@ -200,18 +194,16 @@ local function draw_custom_color_editor(ctx, settings)
   reaper.ImGui_Spacing(ctx)
 
   -- Color groups with collapsing headers
-  local flags_no_inputs = reaper.ImGui_ColorEditFlags_NoInputs()
-  local flags_no_alpha = reaper.ImGui_ColorEditFlags_NoAlpha()
-  local edit_flags = flags_no_inputs | flags_no_alpha
+  local edit_flags = reaper.ImGui_ColorEditFlags_NoInputs()
 
   for _, group in ipairs(COLOR_GROUPS) do
     if reaper.ImGui_CollapsingHeader(ctx, group.name) then
       for _, entry in ipairs(group.keys) do
         local c = custom_theme.colors[entry.key] or 0xFFFFFFFF
-        local r, g, b = color_int_to_floats(c)
-        local rv, nr, ng, nb = reaper.ImGui_ColorEdit3(ctx, entry.label .. "##" .. entry.key, r, g, b, edit_flags)
+        local rgb = color_rgba_to_rgb(c)
+        local rv, new_rgb = reaper.ImGui_ColorEdit3(ctx, entry.label .. "##" .. entry.key, rgb, edit_flags)
         if rv then
-          custom_theme.colors[entry.key] = color_floats_to_int(nr, ng, nb, 1.0)
+          custom_theme.colors[entry.key] = color_rgb_to_rgba(new_rgb)
           settings.save_custom_colors(custom_theme.colors)
           settings.colors_dirty = true
         end
