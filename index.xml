@@ -233,6 +233,19 @@ Built-in gain, pitch, WARP, reverse, customizable shortcuts, and 8 color themes.
         <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/b683951/Scripts/NVSD/lib/settings.lua</source>
         <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/b683951/Scripts/NVSD/lib/settings_ui.lua</source>
       </version>
+      <version name="1.0.18" author="NVSD" time="2026-02-11T00:00:00Z">
+        <changelog><![CDATA[Appearance tab facelift: table layout with aligned columns, 3-segment color bars (bg|waveform|accent), hover tooltips for descriptions, cleaner user/built-in theme separation]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/10c3566/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/10c3566/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/10c3566/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/10c3566/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/10c3566/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/10c3566/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/10c3566/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/10c3566/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/10c3566/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/10c3566/Scripts/NVSD/lib/settings_ui.lua</source>
+      </version>
     </reapack>
   </category>
 </index>
