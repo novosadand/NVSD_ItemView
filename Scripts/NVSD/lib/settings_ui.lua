@@ -182,12 +182,21 @@ local function derive_color(base, factor)
   return (r << 24) | (g << 16) | (b << 8) | 0xFF
 end
 
+-- Add a fixed brightness offset to each RGB channel (preserves color tint)
+local function offset_color(base, offset)
+  local r = math.max(0, math.min(255, ((base >> 24) & 0xFF) + offset))
+  local g = math.max(0, math.min(255, ((base >> 16) & 0xFF) + offset))
+  local b = math.max(0, math.min(255, ((base >> 8) & 0xFF) + offset))
+  return (r << 24) | (g << 16) | (b << 8) | 0xFF
+end
+
 -- Auto-derive: each core color cascades to its related colors
--- Factor < 1.0 = darken (multiply), > 1.0 = lighten (blend toward white), 1.0 = same
+-- "add" entries use fixed offset (matching how preset themes space bg colors)
+-- numeric entries use multiplicative factor
 local AUTO_DERIVE = {
   waveform_bg   = {
-    {"centerline", 1.55}, {"ruler_bg", 1.33}, {"info_bar_bg", 1.1},
-    {"grid_bar", 1.93}, {"grid_beat", 1.41},
+    {"centerline", 16, "add"}, {"ruler_bg", 10, "add"}, {"info_bar_bg", 3, "add"},
+    {"grid_bar", 28, "add"}, {"grid_beat", 12, "add"},
   },
   waveform      = {{"waveform_inactive", 0.65}, {"border", 0.85}},
   markers       = {
@@ -202,7 +211,11 @@ local function apply_auto_derive(colors, key)
   local derived_list = AUTO_DERIVE[key]
   if derived_list then
     for _, d in ipairs(derived_list) do
-      colors[d[1]] = derive_color(colors[key], d[2])
+      if d[3] == "add" then
+        colors[d[1]] = offset_color(colors[key], d[2])
+      else
+        colors[d[1]] = derive_color(colors[key], d[2])
+      end
     end
   end
 end
