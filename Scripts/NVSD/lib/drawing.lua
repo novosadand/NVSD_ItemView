@@ -768,6 +768,7 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
   pixel_step = pixel_step or 1
 
   local item_end = start_offset + source_item_length
+  local is_looped = source_item_length > source_length
   local view_end = view_start + view_length
 
   -- NOTE: Waveform BG is drawn by the caller before draw_grid_lines, so grid lines appear between bg and waveform
@@ -867,7 +868,7 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
       -- Color type
       local in_active = t >= start_offset and t <= item_end
       if in_active then
-        col_colors[i] = (t < 0 or t >= source_length) and 3 or 1
+        col_colors[i] = (not is_looped and (t < 0 or t >= source_length)) and 3 or 1
       else
         col_colors[i] = 2
       end

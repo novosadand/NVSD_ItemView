@@ -92,6 +92,10 @@ state.last_zoomed_item = nil
 state.prev_raw_start_offset = nil  -- Previous frame's raw start_offset (for wrap detection)
 state.unwrapped_start_offset = nil -- Accumulated unwrapped start_offset
 state.is_looped_view = false       -- Whether the view is currently in looped/extended mode
+state.post_drag_ext_start = nil    -- Saved ext_start from drag (persists after release)
+state.post_drag_ext_end = nil      -- Saved ext_end from drag (persists after release)
+state.prev_ext_start = nil         -- Previous frame's ext_start (for external change detection)
+state.prev_ext_end = nil           -- Previous frame's ext_end (for external change detection)
 
 -- Mouse tracking
 state.was_mouse_down = false

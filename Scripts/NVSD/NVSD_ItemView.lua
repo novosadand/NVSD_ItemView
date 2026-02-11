@@ -703,6 +703,8 @@ local function loop()
             state.unwrapped_start_offset = nil
             state.prev_raw_start_offset = nil
             state.unwrap_tracked_item = item
+            state.post_drag_ext_start = nil
+            state.post_drag_ext_end = nil
           end
 
           if (state.dragging_start or state.dragging_end) and state.marker_drag_activated then
@@ -744,30 +746,65 @@ local function loop()
                 delta = delta + source_length
               end
               state.unwrapped_start_offset = state.unwrapped_start_offset + delta
+              if state.post_drag_ext_start ~= nil then
+                state.post_drag_ext_start = state.post_drag_ext_start + delta
+                state.post_drag_ext_end = state.post_drag_ext_end + delta
+              end
             end
             state.prev_raw_start_offset = start_offset
           else
-            -- Not looped: reset tracking
-            state.unwrapped_start_offset = nil
-            state.prev_raw_start_offset = nil
+            -- Not looped: reset tracking (but preserve if post-drag ext is set,
+            -- since snapping to source boundary can make source_item_length == source_length
+            -- even though the item was just extended past the boundary)
+            if state.post_drag_ext_start == nil then
+              state.unwrapped_start_offset = nil
+              state.prev_raw_start_offset = nil
+            end
           end
 
           state.is_looped_view = is_looped_item
 
           -- Extended view range (virtual source time coordinates)
           local ext_start, ext_end, ext_length
-          if (state.dragging_start or state.dragging_end) and state.marker_drag_activated then
-            -- During active drag: compute ext from drag state for real-time view updates
+          if (state.dragging_start or state.dragging_end) then
+            -- During drag (including pre-activation): compute ext from drag state
+            -- Always include [0, source_length] so dragging a marker inward doesn't shrink the view
             local ds = state.drag_current_start
             local de = state.drag_current_end
             if ds < 0 or de > source_length then
-              ext_start = ds
-              ext_end = de
-              ext_length = de - ds
+              ext_start = math.min(ds, 0)
+              ext_end = math.max(de, source_length)
+              ext_length = ext_end - ext_start
             else
               ext_start = 0
               ext_end = source_length
               ext_length = source_length
+            end
+          elseif state.post_drag_ext_start ~= nil then
+            -- After drag release: use saved ext for seamless transition
+            local pds = state.post_drag_ext_start
+            local pde = state.post_drag_ext_end
+            -- Validate: post-drag ext should match current item length (within tolerance)
+            local expected_length = pde - pds
+            if math.abs(source_item_length - expected_length) < 0.001 then
+              if pds < 0 or pde > source_length then
+                ext_start = math.min(pds, 0)
+                ext_end = math.max(pde, source_length)
+                ext_length = ext_end - ext_start
+              else
+                ext_start = 0; ext_end = source_length; ext_length = source_length
+              end
+            else
+              -- Item changed externally (undo, REAPER edit): discard saved ext
+              state.post_drag_ext_start = nil
+              state.post_drag_ext_end = nil
+              if is_looped_item then
+                ext_start = state.unwrapped_start_offset
+                ext_end = state.unwrapped_start_offset + source_item_length
+                ext_length = source_item_length
+              else
+                ext_start = 0; ext_end = source_length; ext_length = source_length
+              end
             end
           elseif is_looped_item then
             ext_start = state.unwrapped_start_offset
@@ -818,7 +855,18 @@ local function loop()
             -- Reset wrap tracking for new item
             state.unwrapped_start_offset = nil
             state.prev_raw_start_offset = nil
+            state.prev_ext_start = nil
+            state.prev_ext_end = nil
           end
+
+          -- Detect external ext changes (undo, REAPER edits) and reset pan_offset
+          if not (state.dragging_start or state.dragging_end) and state.prev_ext_start ~= nil then
+            if math.abs(ext_start - state.prev_ext_start) > 0.001 or math.abs(ext_end - state.prev_ext_end) > 0.001 then
+              state.pan_offset = 0
+            end
+          end
+          state.prev_ext_start = ext_start
+          state.prev_ext_end = ext_end
 
           -- Compute view bounds
           local view_length = ext_length / state.zoom_level
@@ -837,9 +885,10 @@ local function loop()
           local pixel_step = user_dragging_in_reaper and 2 or 1
           local num_view_samples = math.max(1, math.floor(waveform_width / pixel_step))
 
-          local is_extended_drag = (state.dragging_start or state.dragging_end)
-              and state.marker_drag_activated
-              and (state.drag_current_start < 0 or state.drag_current_end > source_length)
+          -- Single source of truth: does the ext range extend past source boundaries?
+          -- Replaces the old is_extended_drag / is_post_drag_looped / is_looped_item checks
+          -- for peak loading, overlay skip, envelope bounds, etc.
+          local is_extended_view = ext_start < -0.0001 or ext_end > source_length + 0.0001
 
           local need_reload = state.view_peaks == nil
               or source ~= state.view_source
@@ -850,7 +899,7 @@ local function loop()
 
           if need_reload and view_length > 0 then
             local peaks_result, num_ch
-            if (is_looped_item or is_extended_drag) and not is_reversed then
+            if is_extended_view and not is_reversed then
               peaks_result, num_ch = utils.get_peaks_for_range_looped(source, view_start, view_length, num_view_samples, source_length)
             else
               -- For reversed display, load peaks from the mirrored source range
@@ -875,6 +924,9 @@ local function loop()
           if (state.dragging_start or state.dragging_end) and state.drag_current_start ~= nil then
             view_offset = state.drag_current_start
             view_item_length = state.drag_current_end - state.drag_current_start
+          elseif state.post_drag_ext_start ~= nil then
+            view_offset = state.post_drag_ext_start
+            view_item_length = state.post_drag_ext_end - state.post_drag_ext_start
           elseif is_looped_item then
             view_offset = state.unwrapped_start_offset or start_offset
             view_item_length = source_item_length
@@ -927,6 +979,9 @@ local function loop()
             render_start = state.drag_current_start
             render_end = state.drag_current_end
             -- No clamping: markers can go past source boundaries during drag
+          elseif state.post_drag_ext_start ~= nil then
+            render_start = state.post_drag_ext_start
+            render_end = state.post_drag_ext_end
           elseif is_looped_item then
             -- Markers at item boundaries in virtual time
             render_start = ext_start
@@ -955,7 +1010,7 @@ local function loop()
             grid_view_start, view_length, item_position, grid_offset, grid_playrate, config, utils)
 
           -- Draw overlays on inactive regions (skip in looped/extending mode - entire view is item content)
-          if not is_looped_item and not is_extended_drag then
+          if not is_extended_view then
             local COLOR_UNUSED_SOURCE = 0x00000038
             local COLOR_OUTSIDE_SOURCE = 0x00000058
 
@@ -1843,10 +1898,22 @@ local function loop()
               and not state.dragging_fade_in and not state.dragging_fade_out
               and not state.is_ruler_dragging and not state.is_panning then
             if near_start then
+              -- Compute drag_offset from post_drag_ext BEFORE clearing it (handles the case
+              -- where snap_to_source_boundary made source_item_length == source_length exactly,
+              -- causing is_looped_item to be false even though the item was just extended)
+              local drag_offset
+              if state.post_drag_ext_start ~= nil then
+                drag_offset = state.post_drag_ext_start
+              elseif is_looped_item then
+                drag_offset = state.unwrapped_start_offset or start_offset
+              else
+                drag_offset = start_offset
+              end
+              state.post_drag_ext_start = nil
+              state.post_drag_ext_end = nil
               state.dragging_start = true
               state.drag_alt_latched = alt_held
               state.marker_drag_activated = false
-              local drag_offset = is_looped_item and state.unwrapped_start_offset or start_offset
               state.drag_start_offset = drag_offset
               state.drag_start_length = item_length
               state.drag_start_mouse_x = mouse_x
@@ -1858,10 +1925,19 @@ local function loop()
               state.drag_start_fade_in = fade_in_len
               state.drag_start_fade_out = fade_out_len
             elseif near_end then
+              local drag_offset
+              if state.post_drag_ext_start ~= nil then
+                drag_offset = state.post_drag_ext_start
+              elseif is_looped_item then
+                drag_offset = state.unwrapped_start_offset or start_offset
+              else
+                drag_offset = start_offset
+              end
+              state.post_drag_ext_start = nil
+              state.post_drag_ext_end = nil
               state.dragging_end = true
               state.drag_alt_latched = alt_held
               state.marker_drag_activated = false
-              local drag_offset = is_looped_item and state.unwrapped_start_offset or start_offset
               state.drag_start_offset = drag_offset
               state.drag_start_length = item_length
               state.drag_start_mouse_x = mouse_x
@@ -1882,6 +1958,8 @@ local function loop()
               and not state.dragging_fade_in and not state.dragging_fade_out
               and not state.dragging_fade_curve_in and not state.dragging_fade_curve_out
               and not state.is_ruler_dragging and not state.is_panning then
+            state.post_drag_ext_start = nil
+            state.post_drag_ext_end = nil
             state.dragging_zone = true
             state.dragging_start = true  -- reuse marker drag machinery
             state.drag_alt_latched = true
@@ -1947,8 +2025,8 @@ local function loop()
               local s = math.min(state.selection_start_time, state.selection_end_time)
               local e = math.max(state.selection_start_time, state.selection_end_time)
               -- Clamp to item extent (allows looped regions)
-              local clamp_min = (is_looped_item or is_extended_drag) and ext_start or 0
-              local clamp_max = (is_looped_item or is_extended_drag) and ext_end or source_length
+              local clamp_min = is_extended_view and ext_start or 0
+              local clamp_max = is_extended_view and ext_end or source_length
               s = math.max(clamp_min, math.min(clamp_max, s))
               e = math.max(clamp_min, math.min(clamp_max, e))
               if e - s > 0.001 then  -- minimum 1ms selection
@@ -2100,13 +2178,15 @@ local function loop()
             local env_offset
             if state.dragging_start or state.dragging_end then
               env_offset = state.drag_current_start or start_offset
+            elseif state.post_drag_ext_start ~= nil then
+              env_offset = state.post_drag_ext_start
             elseif is_looped_item then
               env_offset = state.unwrapped_start_offset or start_offset
             else
               env_offset = start_offset
             end
-            local env_time_min = (is_looped_item or is_extended_drag) and ext_start or 0
-            local env_time_max = (is_looped_item or is_extended_drag) and ext_end or source_length
+            local env_time_min = is_extended_view and ext_start or 0
+            local env_time_max = is_extended_view and ext_end or source_length
             local env_max_raw = is_pitch and 24.0 or (is_pan and 1.0 or reaper.ScaleToEnvelopeMode(is_centered and 0 or 1, 2.0))
             local env_min_raw = is_pitch and -24.0 or (is_pan and -1.0 or 0)
 
@@ -2577,19 +2657,23 @@ local function loop()
           -- End dragging
           if reaper.ImGui_IsMouseReleased(ctx, 0) then
             if (state.dragging_start or state.dragging_end) and state.marker_drag_activated then
+              -- Save drag ext for seamless transition to non-drag view
+              state.post_drag_ext_start = state.drag_current_start
+              state.post_drag_ext_end = state.drag_current_end
+
               -- Envelope points are now shifted in realtime during drag, no batch shift needed
               local old_item_length = state.drag_start_length * state.drag_start_playrate
               local new_item_length = source_item_length
               local old_item_end = state.drag_start_offset + old_item_length
-              local new_item_end = start_offset + new_item_length
 
               local old_left = math.min(0, state.drag_start_offset)
               local old_right = math.max(source_length, old_item_end)
               local old_range_center = (old_left + old_right) / 2
               local old_base = old_right - old_left
 
-              local new_left = math.min(0, start_offset)
-              local new_right = math.max(source_length, new_item_end)
+              -- Use drag_current values (unwrapped coordinates) instead of REAPER's wrapped start_offset
+              local new_left = math.min(0, state.drag_current_start)
+              local new_right = math.max(source_length, state.drag_current_end)
               local new_range_center = (new_left + new_right) / 2
               local new_base = new_right - new_left
 
@@ -3210,7 +3294,7 @@ local function loop()
                 reaper.CF_Preview_SetValue(handle, "D_POSITION", source_pos)
                 reaper.CF_Preview_SetValue(handle, "D_VOLUME", item_vol)
                 -- Loop when playing in a looped/extended item so preview crosses source boundaries
-                local needs_loop = is_looped_item or is_extended_drag
+                local needs_loop = is_extended_view
                 reaper.CF_Preview_SetValue(handle, "B_LOOP", needs_loop and 1 or 0)
                 local track = reaper.GetMediaItemTrack(item)
                 if track then
@@ -3251,7 +3335,7 @@ local function loop()
                   drawing.draw_preview_playhead(draw_list, preview_px, wave_y, waveform_height)
                 end
                 -- Auto-stop: past item extent for looped, past source end for normal
-                local stop_pos = (is_looped_item or is_extended_drag) and ext_end or source_length
+                local stop_pos = is_extended_view and ext_end or source_length
                 if virtual_pos >= stop_pos then
                   reaper.CF_Preview_Stop(state.preview_handle)
                   state.preview_handle = nil
