@@ -186,6 +186,15 @@ local function loop()
       state.is_ruler_dragging = false
       state.fx_dragging = false
       state.fx_drag_activated = false
+      state.dragging_env_node = false
+      state.env_freehand_drawing = false
+      state.env_tension_dragging = false
+      state.env_segment_dragging = false
+      state.env_rect_selecting = false
+      state.env_rect_sel_activated = false
+      state.env_multi_dragging = false
+      state.env_multi_drag_activated = false
+      state.env_multi_drag_start_positions = {}
       state.undo_block_open = nil
       state.was_mouse_down = false
       state.invalidate_view_peaks()
@@ -245,6 +254,14 @@ local function loop()
     state.is_ruler_dragging = false
     state.fx_dragging = false
     state.fx_drag_activated = false
+    state.dragging_env_node = false
+    state.env_freehand_drawing = false
+    state.env_tension_dragging = false
+    state.env_segment_dragging = false
+    state.env_rect_selecting = false
+    state.env_rect_sel_activated = false
+    state.env_multi_dragging = false
+    state.env_multi_drag_activated = false
   end
 
   -- Auto-reload check (skip during mouse-down to avoid disk I/O lag)
@@ -327,12 +344,54 @@ local function loop()
       state.env_snap_enabled = not state.env_snap_enabled
     end
 
-    -- Escape: clear region selection first, close window if nothing to clear
+    -- Escape: clear node selection first, then region selection, then close
     if reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Escape()) then
-      if state.region_selected then
+      if #state.env_selected_nodes > 0 then
+        state.env_selected_nodes = {}
+      elseif state.region_selected then
         state.region_selected = false
       else
         open = false
+      end
+    end
+
+    -- Delete: remove selected envelope nodes
+    if reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Delete())
+        and #state.env_selected_nodes > 0 and state.envelopes_visible then
+      local env_n = state.env_selection_env_name
+      local sel_item = state.env_selection_item
+      if env_n and sel_item then
+        local sel_take = reaper.GetActiveTake(sel_item)
+        if sel_take then
+          local env = reaper.GetTakeEnvelopeByName(sel_take, env_n)
+          if env then
+            reaper.Undo_BeginBlock()
+            local sel_env_offset_value = state.env_selection_env_offset or 0
+            local indices_to_delete = {}
+            local count = reaper.CountEnvelopePoints(env)
+            for pi = 0, count - 1 do
+              local ret, pt_time, pt_value = reaper.GetEnvelopePoint(env, pi)
+              if ret then
+                local pt_src = pt_time + sel_env_offset_value
+                for _, sel in ipairs(state.env_selected_nodes) do
+                  if math.abs(pt_src - sel.src_time) < 0.0001
+                      and math.abs(pt_value - sel.value) < 0.0001 then
+                    table.insert(indices_to_delete, pi)
+                    break
+                  end
+                end
+              end
+            end
+            table.sort(indices_to_delete, function(a, b) return a > b end)
+            for _, idx in ipairs(indices_to_delete) do
+              reaper.DeleteEnvelopePointEx(env, -1, idx)
+            end
+            reaper.Envelope_SortPoints(env)
+            reaper.UpdateArrange()
+            reaper.Undo_EndBlock("NVSD_ItemView: Delete envelope points", -1)
+            state.env_selected_nodes = {}
+          end
+        end
       end
     end
 
@@ -363,7 +422,7 @@ local function loop()
           env_freehand = "NVSD_ItemView: Draw envelope freehand",
           env_tension = "NVSD_ItemView: Adjust envelope curve",
           env_segment = "NVSD_ItemView: Move envelope segment",
-          env_segment_click = "NVSD_ItemView: Create envelope point",
+          env_multi_node = "NVSD_ItemView: Move envelope points",
           slide_both = "NVSD_ItemView: Slide item",
         }
         local msg = undo_messages[state.undo_block_open] or "NVSD_ItemView: Edit"
@@ -707,6 +766,7 @@ local function loop()
             state.post_drag_ext_start = nil
             state.post_drag_ext_end = nil
             state.post_drag_start_offset = nil
+            state.env_selected_nodes = {}
           end
 
           if (state.dragging_start or state.dragging_end) and state.marker_drag_activated then
@@ -845,6 +905,8 @@ local function loop()
                                   or state.dragging_fade_curve_in or state.dragging_fade_curve_out
                                   or state.fx_dragging or state.dragging_env_node
                                   or state.env_freehand_drawing or state.env_tension_dragging
+                                  or state.env_segment_dragging or state.env_multi_dragging
+                                  or state.env_rect_selecting
                                   or state.selecting_region
           local user_dragging_in_reaper = mouse_is_down and not we_are_dragging
 
@@ -1562,11 +1624,15 @@ local function loop()
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
           elseif state.envelopes_visible and shift_held and reaper_is_active
               and state.envelope_hovered_segment >= 0 and state.env_node_hovered_idx < 0 then
-            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
           elseif state.envelopes_visible and shift_held and reaper_is_active
               and mouse_in_waveform and state.envelope_hovered_segment < 0
               and state.env_node_hovered_idx < 0 then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
+          elseif state.envelopes_visible and reaper_is_active
+              and state.envelope_hovered_segment >= 0 and state.env_node_hovered_idx < 0
+              and not alt_held and not shift_held then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
           elseif state.envelopes_visible and mouse_in_waveform
               and reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl()) then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
@@ -1582,7 +1648,7 @@ local function loop()
               reaper.ImGui_OpenPopup(ctx, "fade_in_shape_menu")
             elseif near_fade_out then
               reaper.ImGui_OpenPopup(ctx, "fade_out_shape_menu")
-            else
+            elseif not state.envelopes_visible then
               reaper.ImGui_OpenPopup(ctx, "context_menu")
             end
           end
@@ -2008,6 +2074,7 @@ local function loop()
             state.selection_end_time = state.selection_start_time
             -- Clear any existing finalized selection
             state.region_selected = false
+            state.env_selected_nodes = {}
           end
 
           -- Update region selection during drag
@@ -2181,6 +2248,11 @@ local function loop()
           -- Envelope node interaction (create/drag/delete)
           if state.envelopes_visible and take then
             local env_name = state.envelope_type  -- "Volume", "Pitch", or "Pan"
+            -- Clear node selection when envelope type changes
+            if state.env_selection_env_name and state.env_selection_env_name ~= env_name then
+              state.env_selected_nodes = {}
+              state.env_selection_env_name = nil
+            end
             local is_pitch = (env_name == "Pitch")
             local is_pan = (env_name == "Pan")
             local is_centered = is_pitch or is_pan
@@ -2283,69 +2355,71 @@ local function loop()
                 and not state.is_ruler_dragging and not state.is_panning then
 
               if state.env_node_hovered_idx >= 0 then
-                -- Start dragging existing node
-                local env = reaper.GetTakeEnvelopeByName(take, env_name)
-                if env then
-                  local retval, pt_time, pt_value = reaper.GetEnvelopePoint(env, state.env_node_hovered_idx)
-                  if retval then
-                    state.dragging_env_node = true
-                    state.env_drag_node_idx = state.env_node_hovered_idx
-                    state.env_drag_start_mouse_x = mouse_x
-                    state.env_drag_start_mouse_y = mouse_y
-                    state.env_drag_start_time = pt_time
-                    state.env_drag_start_value = pt_value
-                    state.env_drag_activated = false
-                    if not state.undo_block_open then
-                      state.undo_block_open = "env_node"
+                -- Check if hovered node is in the selection
+                local is_in_selection = false
+                if #state.env_selected_nodes > 0 then
+                  local env = reaper.GetTakeEnvelopeByName(take, env_name)
+                  if env then
+                    local ret, ht, hv = reaper.GetEnvelopePoint(env, state.env_node_hovered_idx)
+                    if ret then
+                      local h_src = ht + env_offset
+                      for _, sel in ipairs(state.env_selected_nodes) do
+                        if math.abs(h_src - sel.src_time) < 0.0001 and math.abs(hv - sel.value) < 0.0001 then
+                          is_in_selection = true
+                          break
+                        end
+                      end
                     end
                   end
                 end
 
-              elseif state.envelope_hovered_segment >= 0 then
-                -- Create new node on segment and immediately start dragging it
-                local env = reaper.GetTakeEnvelopeByName(take, env_name)
-                local just_created = false
-                if not env then
-                  env = ensure_take_envelope(item, take, env_name)
-                  just_created = env ~= nil
-                end
-                if env then
-                  -- Clear fader-scaled defaults for Volume (pitch default 0 is harmless)
-                  if just_created and env_name == "Volume" then
-                    local del_count = reaper.CountEnvelopePoints(env)
-                    for di = del_count - 1, 0, -1 do
-                      reaper.DeleteEnvelopePointEx(env, -1, di)
+                if is_in_selection then
+                  -- Start multi-node drag
+                  state.env_multi_dragging = true
+                  state.env_multi_drag_start_mouse_x = mouse_x
+                  state.env_multi_drag_start_mouse_y = mouse_y
+                  state.env_multi_drag_activated = false
+                  state.env_multi_drag_env_name = env_name
+                  state.env_multi_drag_env_offset = env_offset
+                  state.env_multi_drag_start_positions = {}
+                  local env = reaper.GetTakeEnvelopeByName(take, env_name)
+                  if env then
+                    local count = reaper.CountEnvelopePoints(env)
+                    for pi = 0, count - 1 do
+                      local ret, pt_time, pt_value = reaper.GetEnvelopePoint(env, pi)
+                      if ret then
+                        local pt_src = pt_time + env_offset
+                        for _, sel in ipairs(state.env_selected_nodes) do
+                          if math.abs(pt_src - sel.src_time) < 0.0001 and math.abs(pt_value - sel.value) < 0.0001 then
+                            table.insert(state.env_multi_drag_start_positions, {idx = pi, take_time = pt_time, value = pt_value})
+                            break
+                          end
+                        end
+                      end
                     end
                   end
-                  local snapped_src = snap_to_grid_if_enabled(state.envelope_hover_time)
-                  local take_time = snapped_src - env_offset
-                  reaper.InsertEnvelopePoint(env, take_time, state.envelope_hover_value, 0, 0, false, true)
-                  reaper.Envelope_SortPoints(env)
-                  -- Find the index of the point we just inserted (match time AND value for same-time nodes)
-                  local new_idx = -1
-                  local count = reaper.CountEnvelopePoints(env)
-                  for pi = 0, count - 1 do
-                    local retval, pt_time, pt_value = reaper.GetEnvelopePoint(env, pi)
-                    if retval and math.abs(pt_time - take_time) < 0.0001
-                       and math.abs(pt_value - state.envelope_hover_value) < 0.0001 then
-                      new_idx = pi
-                      break
+                  if not state.undo_block_open then
+                    state.undo_block_open = "env_multi_node"
+                  end
+                else
+                  -- Clear selection, start normal single-node drag
+                  state.env_selected_nodes = {}
+                  local env = reaper.GetTakeEnvelopeByName(take, env_name)
+                  if env then
+                    local retval, pt_time, pt_value = reaper.GetEnvelopePoint(env, state.env_node_hovered_idx)
+                    if retval then
+                      state.dragging_env_node = true
+                      state.env_drag_node_idx = state.env_node_hovered_idx
+                      state.env_drag_start_mouse_x = mouse_x
+                      state.env_drag_start_mouse_y = mouse_y
+                      state.env_drag_start_time = pt_time
+                      state.env_drag_start_value = pt_value
+                      state.env_drag_activated = false
+                      if not state.undo_block_open then
+                        state.undo_block_open = "env_node"
+                      end
                     end
                   end
-                  -- Immediately start dragging the new node
-                  if new_idx >= 0 then
-                    state.dragging_env_node = true
-                    state.env_drag_node_idx = new_idx
-                    state.env_drag_start_mouse_x = mouse_x
-                    state.env_drag_start_mouse_y = mouse_y
-                    state.env_drag_start_time = take_time
-                    state.env_drag_start_value = state.envelope_hover_value
-                    state.env_drag_activated = false
-                    if not state.undo_block_open then
-                      state.undo_block_open = "env_node"
-                    end
-                  end
-                  reaper.UpdateArrange()
                 end
               end
             end
@@ -2434,14 +2508,16 @@ local function loop()
               end
             end
 
-            -- Shift+click on segment (not node): start segment drag (move both nodes vertically)
-            if reaper.ImGui_IsMouseClicked(ctx, 0) and shift_held
+            -- Click on segment (no modifier): start segment drag (move both nodes vertically)
+            if reaper.ImGui_IsMouseClicked(ctx, 0) and not shift_held
                 and not alt_held
+                and not reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
                 and state.envelope_hovered_segment >= 0
                 and state.env_node_hovered_idx < 0
                 and not state.dragging_env_node
                 and not state.env_tension_dragging
                 and not state.env_segment_dragging then
+              state.env_selected_nodes = {}
               local env = reaper.GetTakeEnvelopeByName(take, env_name)
               if env then
                 local np = reaper.CountEnvelopePoints(env)
@@ -2459,10 +2535,6 @@ local function loop()
                     state.env_segment_start_val1 = v0  -- implicit has same value
                     state.env_segment_start_val2 = v0
                     state.env_segment_activated = false
-                    state.env_segment_click_src_time = state.envelope_hover_time
-                    state.env_segment_click_raw_value = mouse_y_to_raw(mouse_y)
-                    state.env_segment_click_env_name = env_name
-                    state.env_segment_click_env_offset = env_offset
                     if not state.undo_block_open then
                       state.undo_block_open = "env_segment"
                     end
@@ -2483,10 +2555,6 @@ local function loop()
                       state.env_segment_start_val1 = v1
                       state.env_segment_start_val2 = v2
                       state.env_segment_activated = false
-                      state.env_segment_click_src_time = state.envelope_hover_time
-                      state.env_segment_click_raw_value = mouse_y_to_raw(mouse_y)
-                      state.env_segment_click_env_name = env_name
-                      state.env_segment_click_env_offset = env_offset
                       if not state.undo_block_open then
                         state.undo_block_open = "env_segment"
                       end
@@ -2507,15 +2575,62 @@ local function loop()
                     state.env_segment_start_val1 = vN
                     state.env_segment_start_val2 = vN  -- implicit has same value
                     state.env_segment_activated = false
-                    state.env_segment_click_src_time = state.envelope_hover_time
-                    state.env_segment_click_raw_value = mouse_y_to_raw(mouse_y)
-                    state.env_segment_click_env_name = env_name
-                    state.env_segment_click_env_offset = env_offset
                     if not state.undo_block_open then
                       state.undo_block_open = "env_segment"
                     end
                   end
                 end
+              end
+            end
+
+            -- Shift+click on segment: create node and immediately start dragging
+            if reaper.ImGui_IsMouseClicked(ctx, 0) and shift_held
+                and not alt_held
+                and state.envelope_hovered_segment >= 0
+                and state.env_node_hovered_idx < 0
+                and not state.dragging_env_node
+                and not state.env_tension_dragging
+                and not state.env_segment_dragging then
+              local env = reaper.GetTakeEnvelopeByName(take, env_name)
+              local just_created = false
+              if not env then
+                env = ensure_take_envelope(item, take, env_name)
+                just_created = env ~= nil
+              end
+              if env then
+                if just_created and env_name == "Volume" then
+                  local del_count = reaper.CountEnvelopePoints(env)
+                  for di = del_count - 1, 0, -1 do
+                    reaper.DeleteEnvelopePointEx(env, -1, di)
+                  end
+                end
+                local snapped_src = snap_to_grid_if_enabled(state.envelope_hover_time)
+                local take_time = snapped_src - env_offset
+                reaper.InsertEnvelopePoint(env, take_time, state.envelope_hover_value, 0, 0, false, true)
+                reaper.Envelope_SortPoints(env)
+                local new_idx = -1
+                local count = reaper.CountEnvelopePoints(env)
+                for pi = 0, count - 1 do
+                  local retval, pt_time, pt_value = reaper.GetEnvelopePoint(env, pi)
+                  if retval and math.abs(pt_time - take_time) < 0.0001
+                     and math.abs(pt_value - state.envelope_hover_value) < 0.0001 then
+                    new_idx = pi
+                    break
+                  end
+                end
+                if new_idx >= 0 then
+                  state.dragging_env_node = true
+                  state.env_drag_node_idx = new_idx
+                  state.env_drag_start_mouse_x = mouse_x
+                  state.env_drag_start_mouse_y = mouse_y
+                  state.env_drag_start_time = take_time
+                  state.env_drag_start_value = state.envelope_hover_value
+                  state.env_drag_activated = false
+                  if not state.undo_block_open then
+                    state.undo_block_open = "env_node"
+                  end
+                end
+                reaper.UpdateArrange()
               end
             end
 
@@ -2552,8 +2667,8 @@ local function loop()
               end
             end
 
-            -- Alt+click or right-click: delete hovered node
-            if ((reaper.ImGui_IsMouseClicked(ctx, 1)) or (reaper.ImGui_IsMouseClicked(ctx, 0) and alt_held))
+            -- Alt+click: delete hovered node
+            if (reaper.ImGui_IsMouseClicked(ctx, 0) and alt_held)
                 and state.env_node_hovered_idx >= 0
                 and not state.dragging_env_node
                 and not state.env_tension_dragging
@@ -2687,6 +2802,116 @@ local function loop()
                 end
               end
             end
+
+            -- Right-click in waveform: start rectangle selection
+            if reaper.ImGui_IsMouseClicked(ctx, 1) and mouse_in_waveform
+                and state.envelopes_visible
+                and not state.env_rect_selecting
+                and state.env_node_hovered_idx < 0 then
+              state.env_rect_selecting = true
+              state.env_rect_sel_start_x = mouse_x
+              state.env_rect_sel_start_y = mouse_y
+              state.env_rect_sel_activated = false
+              state.env_rect_sel_env_name = env_name
+              state.env_rect_sel_env_offset = env_offset
+            end
+
+            -- Rectangle selection tracking
+            if state.env_rect_selecting and reaper.ImGui_IsMouseDown(ctx, 1) then
+              local dx = mouse_x - state.env_rect_sel_start_x
+              local dy = mouse_y - state.env_rect_sel_start_y
+              if not state.env_rect_sel_activated and (math.abs(dx) >= 4 or math.abs(dy) >= 4) then
+                state.env_rect_sel_activated = true
+              end
+            end
+
+            -- Multi-node drag update
+            if state.env_multi_dragging and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
+              local dx = mouse_x - state.env_multi_drag_start_mouse_x
+              local dy = mouse_y - state.env_multi_drag_start_mouse_y
+              if not state.env_multi_drag_activated and (math.abs(dx) >= 4 or math.abs(dy) >= 4) then
+                state.env_multi_drag_activated = true
+              end
+              if state.env_multi_drag_activated then
+                local m_env_name = state.env_multi_drag_env_name or env_name
+                local m_env_offset = state.env_multi_drag_env_offset or env_offset
+                local env = reaper.GetTakeEnvelopeByName(take, m_env_name)
+                if env then
+                  local start_src_t = px_to_time(state.env_multi_drag_start_mouse_x)
+                  local current_src_t = px_to_time(mouse_x)
+                  local dt = current_src_t - start_src_t
+                  local start_raw = mouse_y_to_raw(state.env_multi_drag_start_mouse_y)
+                  local current_raw = mouse_y_to_raw(mouse_y)
+                  local dv = current_raw - start_raw
+
+                  for _, pos in ipairs(state.env_multi_drag_start_positions) do
+                    local new_take_time = pos.take_time + dt
+                    local new_value = math.max(env_min_raw, math.min(env_max_raw, pos.value + dv))
+                    reaper.SetEnvelopePoint(env, pos.idx, new_take_time, new_value, 0, 0, false, true)
+                  end
+                  reaper.Envelope_SortPoints(env)
+
+                  -- Re-find indices after sort
+                  local count = reaper.CountEnvelopePoints(env)
+                  for _, pos in ipairs(state.env_multi_drag_start_positions) do
+                    local target_time = pos.take_time + dt
+                    local target_value = math.max(env_min_raw, math.min(env_max_raw, pos.value + dv))
+                    for pi = 0, count - 1 do
+                      local ret, pt_time, pt_value = reaper.GetEnvelopePoint(env, pi)
+                      if ret and math.abs(pt_time - target_time) < 0.0001
+                         and math.abs(pt_value - target_value) < 0.0001 then
+                        pos.idx = pi
+                        break
+                      end
+                    end
+                  end
+
+                  -- Update selection positions to match current node positions
+                  state.env_selected_nodes = {}
+                  for _, pos in ipairs(state.env_multi_drag_start_positions) do
+                    local new_src = (pos.take_time + dt) + m_env_offset
+                    local new_val = math.max(env_min_raw, math.min(env_max_raw, pos.value + dv))
+                    table.insert(state.env_selected_nodes, {src_time = new_src, value = new_val})
+                  end
+
+                  reaper.UpdateArrange()
+                end
+              end
+            end
+
+            -- Rectangle selection finalization
+            if reaper.ImGui_IsMouseReleased(ctx, 1) and state.env_rect_selecting then
+              if state.env_rect_sel_activated then
+                local rect_x1 = math.min(state.env_rect_sel_start_x, mouse_x)
+                local rect_x2 = math.max(state.env_rect_sel_start_x, mouse_x)
+                local rect_y1 = math.min(state.env_rect_sel_start_y, mouse_y)
+                local rect_y2 = math.max(state.env_rect_sel_start_y, mouse_y)
+
+                local sel_env_name = state.env_rect_sel_env_name or env_name
+                local sel_env_offset = state.env_rect_sel_env_offset or env_offset
+                local env = reaper.GetTakeEnvelopeByName(take, sel_env_name)
+                if env then
+                  state.env_selected_nodes = {}
+                  state.env_selection_env_name = sel_env_name
+                  state.env_selection_item = item
+                  state.env_selection_env_offset = sel_env_offset
+                  local count = reaper.CountEnvelopePoints(env)
+                  for pi = 0, count - 1 do
+                    local ret, pt_time, pt_value = reaper.GetEnvelopePoint(env, pi)
+                    if ret then
+                      local src_time = pt_time + sel_env_offset
+                      local px = time_to_px(src_time)
+                      local py = wave_y + waveform_height * (1 - (pt_value - env_min_raw) / (env_max_raw - env_min_raw))
+                      if px >= rect_x1 and px <= rect_x2 and py >= rect_y1 and py <= rect_y2 then
+                        table.insert(state.env_selected_nodes, {src_time = src_time, value = pt_value})
+                      end
+                    end
+                  end
+                end
+              end
+              state.env_rect_selecting = false
+              state.env_rect_sel_activated = false
+            end
           end
 
           -- Set preview cursor on click in waveform (when no drag/interaction started)
@@ -2797,32 +3022,18 @@ local function loop()
             state.env_tension_lock_y = nil
             state.env_tension_last_y = nil
             state.env_tension_cumulative_y = 0
-            -- Shift+click on segment without dragging: create node at click position
-            if state.env_segment_dragging and not state.env_segment_activated then
-              local seg_env_name = state.env_segment_click_env_name
-              if seg_env_name and state.env_segment_click_src_time then
-                local env = reaper.GetTakeEnvelopeByName(take, seg_env_name)
-                if env then
-                  local snapped_src = snap_to_grid_if_enabled(state.env_segment_click_src_time)
-                  local take_time = snapped_src - state.env_segment_click_env_offset
-                  reaper.InsertEnvelopePoint(env, take_time, state.env_segment_click_raw_value, 0, 0, false, true)
-                  reaper.Envelope_SortPoints(env)
-                  reaper.UpdateArrange()
-                end
-              end
-              -- Replace the segment drag undo with a create-point undo
-              if state.undo_block_open == "env_segment" then
-                state.undo_block_open = "env_segment_click"
-              end
+            -- Multi-node drag release
+            if state.env_multi_dragging then
+              state.env_multi_dragging = false
+              state.env_multi_drag_activated = false
+              state.env_multi_drag_start_positions = {}
             end
             state.env_segment_dragging = false
             state.env_segment_activated = false
             state.env_segment_idx1 = -1
             state.env_segment_idx2 = -1
-            state.env_segment_click_src_time = nil
-            state.env_segment_click_raw_value = nil
-            state.env_segment_click_env_name = nil
-            state.env_segment_click_env_offset = nil
+            state.env_rect_selecting = false
+            state.env_rect_sel_activated = false
           end
 
           -- Mouse button 4/5 quick marker positioning
@@ -3511,10 +3722,12 @@ local function loop()
     state.env_drag_node_idx = -1
     state.env_segment_dragging = false
     state.env_segment_activated = false
-    state.env_segment_click_src_time = nil
-    state.env_segment_click_raw_value = nil
-    state.env_segment_click_env_name = nil
-    state.env_segment_click_env_offset = nil
+    state.env_rect_selecting = false
+    state.env_rect_sel_activated = false
+    state.env_multi_dragging = false
+    state.env_multi_drag_activated = false
+    state.env_multi_drag_start_positions = {}
+    state.env_selected_nodes = {}
     state.undo_block_open = nil
     state.sticky_item = nil
     state.sticky_item_valid = false

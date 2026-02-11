@@ -70,6 +70,10 @@ config.ENV_COLORS = {
   },
 }
 
+config.COLOR_ENV_NODE_SELECTED = 0xFFDD44FF       -- bright yellow fill for selected nodes
+config.COLOR_ENV_SEL_RECT_FILL = 0x4488FF20        -- semi-transparent blue rect fill
+config.COLOR_ENV_SEL_RECT_BORDER = 0x6699FFAA      -- selection rect border
+
 config.ENV_NODE_RADIUS = 4
 config.ENV_NODE_HIT_RADIUS = 8
 config.ENV_LINE_THICKNESS = 2.0

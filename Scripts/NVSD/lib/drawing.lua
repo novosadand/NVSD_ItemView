@@ -1777,8 +1777,7 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
   -- 3b. Highlight hovered segment (during alt-hover for tension editing or shift-hover for segment drag)
   local alt_for_highlight = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
   local shift_for_highlight = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
-  local show_seg_highlight = (alt_for_highlight or shift_for_highlight or state.env_segment_dragging)
-      and not state.dragging_env_node
+  local show_seg_highlight = not state.dragging_env_node and not state.env_freehand_drawing
   if state.envelope_hovered_segment >= 0 and has_path and show_seg_highlight then
     local seg_idx = state.envelope_hovered_segment + 1  -- convert 0-based to 1-based pts index
     if seg_idx >= 1 and seg_idx < n_pts then
@@ -1818,19 +1817,41 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
       local node_py = value_to_y(pts[i].value)
       if node_px >= wave_x - config.ENV_NODE_RADIUS and node_px <= wave_x + waveform_width + config.ENV_NODE_RADIUS then
         local is_hovered = (pts[i].idx == state.env_node_hovered_idx)
-        local fill = is_hovered and env_colors.node_hover or config.COLOR_ENV_NODE
+        -- Check if this node is in the selection
+        local is_selected = false
+        for _, sel in ipairs(state.env_selected_nodes) do
+          if math.abs(pts[i].time - sel.src_time) < 0.0001
+              and math.abs(pts[i].value - sel.value) < 0.0001 then
+            is_selected = true
+            break
+          end
+        end
+        local fill
+        if is_hovered then fill = env_colors.node_hover
+        elseif is_selected then fill = config.COLOR_ENV_NODE_SELECTED
+        else fill = config.COLOR_ENV_NODE end
         DL_AddCircleFilled(draw_list, node_px, node_py, config.ENV_NODE_RADIUS, fill, 16)
         DL_AddCircle(draw_list, node_px, node_py, config.ENV_NODE_RADIUS, env_colors.node_border, 16, 1.5)
       end
     end
   end
 
-  -- 5. Preview circle + tooltip on segment hover (hidden during tension drag, alt-hover, shift-hover)
+  -- 4b. Selection rectangle during right-click drag
+  if state.env_rect_selecting and state.env_rect_sel_activated then
+    local rx1 = math.max(wave_x, math.min(state.env_rect_sel_start_x, mouse_x))
+    local ry1 = math.max(wave_y, math.min(state.env_rect_sel_start_y, mouse_y))
+    local rx2 = math.min(wave_x + waveform_width, math.max(state.env_rect_sel_start_x, mouse_x))
+    local ry2 = math.min(wave_y + waveform_height, math.max(state.env_rect_sel_start_y, mouse_y))
+    DL_AddRectFilled(draw_list, rx1, ry1, rx2, ry2, config.COLOR_ENV_SEL_RECT_FILL)
+    reaper.ImGui_DrawList_AddRect(draw_list, rx1, ry1, rx2, ry2, config.COLOR_ENV_SEL_RECT_BORDER, 0, 0, 1)
+  end
+
+  -- 5. Preview circle + tooltip on segment hover (only when shift held = create-node mode)
   local alt_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
   local shift_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
   if state.envelope_hovered_segment >= 0 and state.env_node_hovered_idx < 0
       and not state.dragging_env_node and not state.env_tension_dragging
-      and not state.env_segment_dragging and not alt_held and not shift_held then
+      and not state.env_segment_dragging and shift_held and not alt_held then
     DL_AddCircleFilled(draw_list, state.envelope_hover_x, state.envelope_hover_y,
       config.ENV_NODE_RADIUS, env_colors.preview, 16)
 

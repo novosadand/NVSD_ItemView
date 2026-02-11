@@ -161,6 +161,29 @@ state.env_segment_start_val1 = 0      -- value of start node at drag start
 state.env_segment_start_val2 = 0      -- value of end node at drag start
 state.env_segment_activated = false   -- true once mouse exceeds threshold
 
+-- Node selection (right-click rectangle)
+state.env_selected_nodes = {}          -- list of {src_time, value} pairs identifying selected points
+state.env_selection_env_name = nil     -- envelope name the selection applies to
+state.env_selection_item = nil         -- item the selection belongs to
+state.env_selection_env_offset = nil   -- env_offset at selection time (for delete handler)
+
+-- Right-click rectangle selection
+state.env_rect_selecting = false       -- right-click drag in progress
+state.env_rect_sel_start_x = 0        -- screen px at drag start
+state.env_rect_sel_start_y = 0        -- screen py at drag start
+state.env_rect_sel_activated = false   -- passed 4px movement threshold
+state.env_rect_sel_env_name = nil      -- saved for scoping
+state.env_rect_sel_env_offset = nil    -- saved for scoping
+
+-- Multi-node drag
+state.env_multi_dragging = false       -- dragging selected nodes as group
+state.env_multi_drag_start_mouse_x = 0
+state.env_multi_drag_start_mouse_y = 0
+state.env_multi_drag_activated = false
+state.env_multi_drag_start_positions = {}  -- snapshot of {idx, take_time, value} at drag start
+state.env_multi_drag_env_name = nil        -- saved for scoping
+state.env_multi_drag_env_offset = nil      -- saved for scoping
+
 -- Audio preview state (CF_Preview API from SWS extension)
 state.preview_cursor_pos = nil       -- source time (seconds) where preview starts
 state.preview_handle = nil           -- CF_Preview handle (userdata)
