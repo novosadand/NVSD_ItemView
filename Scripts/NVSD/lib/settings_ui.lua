@@ -139,13 +139,18 @@ function settings_ui.is_open()
   return ui_state.open
 end
 
--- Draw a small color swatch using DrawList
-local function draw_swatch(ctx, color, size)
+-- Draw a color palette bar (bg | waveform | accent) for theme preview
+local function draw_color_bar(ctx, colors, width, height)
   local draw_list = reaper.ImGui_GetWindowDrawList(ctx)
   local x, y = reaper.ImGui_GetCursorScreenPos(ctx)
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + size, y + size, color, 2)
-  reaper.ImGui_DrawList_AddRect(draw_list, x, y, x + size, y + size, 0x00000044, 2)
-  reaper.ImGui_Dummy(ctx, size, size)
+  local seg = math.floor(width / 3)
+  -- Three color segments
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + seg, y + height, colors.waveform_bg)
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, x + seg, y, x + seg * 2, y + height, colors.waveform)
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, x + seg * 2, y, x + width, y + height, colors.markers)
+  -- Rounded border on top
+  reaper.ImGui_DrawList_AddRect(draw_list, x, y, x + width, y + height, 0x00000044, 2)
+  reaper.ImGui_Dummy(ctx, width, height)
 end
 
 -- Convert 0xRRGGBBAA to 0xRRGGBB (strip alpha) for ColorEdit3
@@ -202,7 +207,7 @@ local function apply_auto_derive(colors, key)
   end
 end
 
--- Draw custom theme color editor (4 core colors + initialize from)
+-- Draw custom theme color editor (4 core colors in 2x2 grid + initialize from)
 local function draw_custom_color_editor(ctx, settings)
   local custom_theme = settings.get_theme("custom")
   if not custom_theme then return end
@@ -211,16 +216,15 @@ local function draw_custom_color_editor(ctx, settings)
   reaper.ImGui_Separator(ctx)
   reaper.ImGui_Spacing(ctx)
 
-  -- "Initialize from" combo: copy all colors from a preset theme
-  reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Initialize from:")
+  -- "Initialize from" combo
+  reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Start from:")
   reaper.ImGui_SameLine(ctx)
-  reaper.ImGui_SetNextItemWidth(ctx, 150)
+  reaper.ImGui_SetNextItemWidth(ctx, 140)
   if reaper.ImGui_BeginCombo(ctx, "##init_from", settings.THEMES[ui_state.custom_init_from + 1] and settings.THEMES[ui_state.custom_init_from + 1].name or "Select...") then
     for i, theme in ipairs(settings.THEMES) do
       if theme.id ~= "custom" then
         if reaper.ImGui_Selectable(ctx, theme.name, ui_state.custom_init_from == i - 1) then
           ui_state.custom_init_from = i - 1
-          -- Copy all colors from selected theme
           for _, key in ipairs(settings.COLOR_KEYS) do
             custom_theme.colors[key] = theme.colors[key]
           end
@@ -234,25 +238,84 @@ local function draw_custom_color_editor(ctx, settings)
 
   reaper.ImGui_Spacing(ctx)
 
-  -- 4 core color pickers (all derived colors update automatically)
+  -- 4 core color pickers in 2x2 grid
   local edit_flags = reaper.ImGui_ColorEditFlags_NoInputs()
-
-  for _, entry in ipairs(CORE_COLORS) do
-    local c = custom_theme.colors[entry.key] or 0xFFFFFFFF
-    local rgb = color_rgba_to_rgb(c)
-    local rv, new_rgb = reaper.ImGui_ColorEdit3(ctx, entry.label .. "##core_" .. entry.key, rgb, edit_flags)
-    if rv then
-      custom_theme.colors[entry.key] = color_rgb_to_rgba(new_rgb)
-      apply_auto_derive(custom_theme.colors, entry.key)
-      ui_state.custom_colors_dirty = true
-      settings.colors_dirty = true
+  if reaper.ImGui_BeginTable(ctx, "core_colors", 2, reaper.ImGui_TableFlags_None()) then
+    for i, entry in ipairs(CORE_COLORS) do
+      if (i - 1) % 2 == 0 then reaper.ImGui_TableNextRow(ctx) end
+      reaper.ImGui_TableNextColumn(ctx)
+      local c = custom_theme.colors[entry.key] or 0xFFFFFFFF
+      local rgb = color_rgba_to_rgb(c)
+      local rv, new_rgb = reaper.ImGui_ColorEdit3(ctx, entry.label .. "##core_" .. entry.key, rgb, edit_flags)
+      if rv then
+        custom_theme.colors[entry.key] = color_rgb_to_rgba(new_rgb)
+        apply_auto_derive(custom_theme.colors, entry.key)
+        ui_state.custom_colors_dirty = true
+        settings.colors_dirty = true
+      end
     end
+    reaper.ImGui_EndTable(ctx)
   end
+end
+
+-- Draw a single theme row inside a table (3 columns: radio+name, color bar, delete)
+local function draw_theme_row(ctx, theme, settings, bar_w, bar_h)
+  local is_selected = ui_state.pending_theme_id == theme.id
+
+  reaper.ImGui_TableNextRow(ctx)
+
+  -- Col 1: Radio + name
+  reaper.ImGui_TableNextColumn(ctx)
+  if reaper.ImGui_RadioButton(ctx, theme.name .. "##" .. theme.id, is_selected) then
+    -- When switching to Custom, copy colors from the previously selected theme
+    if theme.id == "custom" and ui_state.pending_theme_id ~= "custom" then
+      local prev_theme = settings.get_theme(ui_state.pending_theme_id)
+      local custom_theme = settings.get_theme("custom")
+      if prev_theme and custom_theme then
+        for _, key in ipairs(settings.COLOR_KEYS) do
+          custom_theme.colors[key] = prev_theme.colors[key]
+        end
+        settings.save_custom_colors(custom_theme.colors)
+      end
+    end
+    ui_state.pending_theme_id = theme.id
+    settings.current.theme_id = theme.id
+    settings.colors_dirty = true
+  end
+  -- Description as tooltip
+  if reaper.ImGui_IsItemHovered(ctx) and theme.description ~= "" then
+    reaper.ImGui_SetTooltip(ctx, theme.description)
+  end
+
+  -- Col 2: Color bar (vertically centered)
+  reaper.ImGui_TableNextColumn(ctx)
+  local cy = reaper.ImGui_GetCursorPosY(ctx)
+  reaper.ImGui_SetCursorPosY(ctx, cy + 2)
+  draw_color_bar(ctx, theme.colors, bar_w, bar_h)
+
+  -- Col 3: Delete button (user themes only)
+  reaper.ImGui_TableNextColumn(ctx)
+  if theme.user_theme then
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x00000000)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x66333399)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0xCC444499)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0x666666FF)
+    if reaper.ImGui_SmallButton(ctx, "x##del_" .. theme.id) then
+      ui_state.delete_confirm_id = theme.id
+    end
+    reaper.ImGui_PopStyleColor(ctx, 4)
+  end
+end
+
+-- Setup theme table columns (reused for both saved and preset tables)
+local function setup_theme_columns(ctx, bar_w)
+  reaper.ImGui_TableSetupColumn(ctx, "name", reaper.ImGui_TableColumnFlags_WidthStretch())
+  reaper.ImGui_TableSetupColumn(ctx, "preview", reaper.ImGui_TableColumnFlags_WidthFixed(), bar_w + 8)
+  reaper.ImGui_TableSetupColumn(ctx, "del", reaper.ImGui_TableColumnFlags_WidthFixed(), 22)
 end
 
 -- Draw Appearance tab content
 local function draw_appearance_tab(ctx, settings)
-  -- Cancel listening when switching to Appearance tab
   if ui_state.listening_for then
     stop_listening(settings)
   end
@@ -260,66 +323,51 @@ local function draw_appearance_tab(ctx, settings)
   local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
   if not reaper.ImGui_BeginChild(ctx, "appearance_scroll", avail_w, avail_h - 40) then return end
 
-  reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Theme")
-  reaper.ImGui_Spacing(ctx)
+  local bar_w = 84
+  local bar_h = 14
+  local tbl_flags = reaper.ImGui_TableFlags_None()
+  local open_delete_popup = false
 
-  local prev_was_user = false
+  -- Check if user themes exist
+  local has_user_themes = false
   for _, theme in ipairs(settings.THEMES) do
-    if prev_was_user and not theme.user_theme then
-      reaper.ImGui_Spacing(ctx)
-      reaper.ImGui_Separator(ctx)
-      reaper.ImGui_Spacing(ctx)
-      prev_was_user = false
-    end
-    if theme.user_theme then prev_was_user = true end
-    local is_selected = ui_state.pending_theme_id == theme.id
-
-    if reaper.ImGui_RadioButton(ctx, theme.name .. "##" .. theme.id, is_selected) then
-      -- When switching to Custom, copy colors from the previously selected theme
-      if theme.id == "custom" and ui_state.pending_theme_id ~= "custom" then
-        local prev_theme = settings.get_theme(ui_state.pending_theme_id)
-        local custom_theme = settings.get_theme("custom")
-        if prev_theme and custom_theme then
-          for _, key in ipairs(settings.COLOR_KEYS) do
-            custom_theme.colors[key] = prev_theme.colors[key]
-          end
-          settings.save_custom_colors(custom_theme.colors)
-        end
-      end
-      ui_state.pending_theme_id = theme.id
-      settings.current.theme_id = theme.id  -- Live preview
-      settings.colors_dirty = true
-    end
-
-    -- Color swatches on the same line
-    reaper.ImGui_SameLine(ctx, 160)
-    draw_swatch(ctx, theme.colors.waveform, 12)
-    reaper.ImGui_SameLine(ctx, 0, 4)
-    draw_swatch(ctx, theme.colors.markers, 12)
-    reaper.ImGui_SameLine(ctx, 0, 4)
-    draw_swatch(ctx, theme.colors.playhead, 12)
-
-    -- Description + delete button for user themes
-    reaper.ImGui_SameLine(ctx, 220)
-    if theme.user_theme then
-      reaper.ImGui_TextColored(ctx, COLORS.text_dim, theme.description)
-      -- Delete button (small X) on the same line
-      reaper.ImGui_SameLine(ctx, 0, 8)
-      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x00000000)
-      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x66333399)
-      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0xCC444499)
-      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0x999999FF)
-      if reaper.ImGui_SmallButton(ctx, "x##del_" .. theme.id) then
-        ui_state.delete_confirm_id = theme.id
-        reaper.ImGui_OpenPopup(ctx, "Delete Theme?##confirm")
-      end
-      reaper.ImGui_PopStyleColor(ctx, 4)
-    else
-      reaper.ImGui_TextColored(ctx, COLORS.text_dim, theme.description)
-    end
+    if theme.user_theme then has_user_themes = true; break end
   end
 
-  -- Delete confirmation modal
+  -- User-saved themes section
+  if has_user_themes then
+    reaper.ImGui_TextColored(ctx, COLORS.text_dim, "SAVED")
+    reaper.ImGui_Spacing(ctx)
+    if reaper.ImGui_BeginTable(ctx, "user_themes", 3, tbl_flags) then
+      setup_theme_columns(ctx, bar_w)
+      for _, theme in ipairs(settings.THEMES) do
+        if theme.user_theme then
+          draw_theme_row(ctx, theme, settings, bar_w, bar_h)
+          if ui_state.delete_confirm_id == theme.id then open_delete_popup = true end
+        end
+      end
+      reaper.ImGui_EndTable(ctx)
+    end
+    reaper.ImGui_Spacing(ctx)
+    reaper.ImGui_Separator(ctx)
+    reaper.ImGui_Spacing(ctx)
+  end
+
+  -- Built-in themes
+  if reaper.ImGui_BeginTable(ctx, "preset_themes", 3, tbl_flags) then
+    setup_theme_columns(ctx, bar_w)
+    for _, theme in ipairs(settings.THEMES) do
+      if not theme.user_theme then
+        draw_theme_row(ctx, theme, settings, bar_w, bar_h)
+      end
+    end
+    reaper.ImGui_EndTable(ctx)
+  end
+
+  -- Delete confirmation modal (must be at same ID scope, outside tables)
+  if open_delete_popup then
+    reaper.ImGui_OpenPopup(ctx, "Delete Theme?##confirm")
+  end
   if reaper.ImGui_BeginPopupModal(ctx, "Delete Theme?##confirm", nil, reaper.ImGui_WindowFlags_AlwaysAutoResize()) then
     local del_theme = ui_state.delete_confirm_id and settings.get_theme(ui_state.delete_confirm_id)
     local del_name = del_theme and del_theme.name or "this theme"
@@ -327,15 +375,14 @@ local function draw_appearance_tab(ctx, settings)
     reaper.ImGui_Spacing(ctx)
     if reaper.ImGui_Button(ctx, "Delete", 80, 0) then
       if ui_state.delete_confirm_id then
-        -- If we're deleting the active theme, switch to default
         if ui_state.pending_theme_id == ui_state.delete_confirm_id then
           ui_state.pending_theme_id = "default"
           settings.current.theme_id = "default"
           settings.colors_dirty = true
         end
         settings.delete_user_theme(ui_state.delete_confirm_id)
-        ui_state.delete_confirm_id = nil
       end
+      ui_state.delete_confirm_id = nil
       reaper.ImGui_CloseCurrentPopup(ctx)
     end
     reaper.ImGui_SameLine(ctx)
@@ -346,7 +393,7 @@ local function draw_appearance_tab(ctx, settings)
     reaper.ImGui_EndPopup(ctx)
   end
 
-  -- Custom theme color editor + save (only shown when Custom is selected)
+  -- Custom theme editor + save (only when Custom is selected)
   if ui_state.pending_theme_id == "custom" then
     draw_custom_color_editor(ctx, settings)
 
@@ -358,12 +405,11 @@ local function draw_appearance_tab(ctx, settings)
     if ui_state.show_save_input then
       reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Name:")
       reaper.ImGui_SameLine(ctx)
-      -- Auto-focus the input on first frame (must be before the widget)
       if not ui_state.save_input_focused then
         reaper.ImGui_SetKeyboardFocusHere(ctx, 0)
         ui_state.save_input_focused = true
       end
-      reaper.ImGui_SetNextItemWidth(ctx, 150)
+      reaper.ImGui_SetNextItemWidth(ctx, 140)
       local _, new_name = reaper.ImGui_InputText(ctx, "##save_theme_name", ui_state.save_theme_name)
       ui_state.save_theme_name = new_name
       reaper.ImGui_SameLine(ctx)
