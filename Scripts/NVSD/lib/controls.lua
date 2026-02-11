@@ -4,28 +4,24 @@
 local controls = {}
 
 -- Check if an external editor is configured in REAPER preferences ([extedit] section)
-local _ext_editor_cached = nil
 local function has_external_editor()
-  if _ext_editor_cached ~= nil then return _ext_editor_cached end
   local ini = reaper.get_ini_file()
-  if not ini then _ext_editor_cached = false; return false end
+  if not ini then return false end
   local f = io.open(ini, "r")
-  if not f then _ext_editor_cached = false; return false end
+  if not f then return false end
   local in_extedit = false
   for line in f:lines() do
     if line:match("^%[extedit%]") then
       in_extedit = true
     elseif in_extedit then
       if line:match("^%[") then break end  -- next section, no entries found
-      if line:match("^%d+=.+") then
+      if line:match("=.+") then
         f:close()
-        _ext_editor_cached = true
         return true
       end
     end
   end
   f:close()
-  _ext_editor_cached = false
   return false
 end
 controls.has_external_editor = has_external_editor
