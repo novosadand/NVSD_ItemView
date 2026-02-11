@@ -90,6 +90,27 @@ if not reaper.ImGui_CreateContext then
   return
 end
 
+-- Toggle action support: if script is already running, signal it to close and exit
+local _, _, toggle_section_id, toggle_cmd_id = reaper.get_action_context()
+if reaper.GetExtState("NVSD_ItemView", "running") == "1" then
+  reaper.SetExtState("NVSD_ItemView", "close_requested", "1", false)
+  return
+end
+reaper.SetExtState("NVSD_ItemView", "running", "1", false)
+reaper.DeleteExtState("NVSD_ItemView", "close_requested", false)
+if toggle_cmd_id > 0 then
+  reaper.SetToggleCommandState(toggle_section_id, toggle_cmd_id, 1)
+  reaper.RefreshToolbar2(toggle_section_id, toggle_cmd_id)
+end
+reaper.atexit(function()
+  reaper.SetExtState("NVSD_ItemView", "running", "0", false)
+  reaper.DeleteExtState("NVSD_ItemView", "close_requested", false)
+  if toggle_cmd_id > 0 then
+    reaper.SetToggleCommandState(toggle_section_id, toggle_cmd_id, 0)
+    reaper.RefreshToolbar2(toggle_section_id, toggle_cmd_id)
+  end
+end)
+
 -- Create ImGui context
 local ctx = reaper.ImGui_CreateContext("NVSD_ItemView")
 -- Attach a font to keep context alive across deferred frames (prevents GC on macOS)
@@ -236,6 +257,15 @@ local function loop()
     return
   end
 
+  -- Toggle close: another instance signaled us to close
+  if reaper.GetExtState("NVSD_ItemView", "close_requested") == "1" then
+    reaper.DeleteExtState("NVSD_ItemView", "close_requested", false)
+    if state.preview_active and state.preview_handle and reaper.CF_Preview_Stop then
+      reaper.CF_Preview_Stop(state.preview_handle)
+    end
+    return
+  end
+
   -- Window flags
   local window_flags = reaper.ImGui_WindowFlags_NoCollapse()
                      + reaper.ImGui_WindowFlags_NoScrollWithMouse()
@@ -297,9 +327,13 @@ local function loop()
       state.env_snap_enabled = not state.env_snap_enabled
     end
 
-    -- Escape: clear region selection
-    if reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Escape()) and state.region_selected then
-      state.region_selected = false
+    -- Escape: clear region selection first, close window if nothing to clear
+    if reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Escape()) then
+      if state.region_selected then
+        state.region_selected = false
+      else
+        open = false
+      end
     end
 
     -- Refresh colors only when settings change
