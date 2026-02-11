@@ -1206,7 +1206,7 @@ local function loop()
           -- Draw bottom bar (always visible, dropdown only on envelopes tab)
           drawing.draw_envelope_bar(draw_list, ctx, wave_x, envelope_bar_y,
             waveform_width, config.ENVELOPE_BAR_HEIGHT,
-            mouse_x, mouse_y, config, state)
+            mouse_x, mouse_y, config, state, settings)
 
           -- Helper: snap time to nearest source boundary
           local function snap_to_source_boundary(t, src_len, threshold_time)
@@ -1235,7 +1235,7 @@ local function loop()
             local px_per_beat = px_per_bar / beats_per_bar
 
             local finest_sub = 1
-            while (px_per_beat / (finest_sub * 2)) >= 24 do
+            while (px_per_beat / (finest_sub * 2)) >= 55 do
               finest_sub = finest_sub * 2
             end
 

@@ -230,10 +230,10 @@ local function compute_grid_params(x, width, view_start, view_length, item_posit
   local _, start_measures = reaper.TimeMap2_timeToBeats(0, project_start)
   local first_bar = math.floor(start_measures) - 1
 
-  local min_bar_spacing = 140
+  local min_spacing = 55  -- minimum px between grid lines at any level
   local avg_bar_duration = 60 / bpm * beats_per_bar
   local px_per_bar = (avg_bar_duration / view_length) * width
-  local bar_skip = math.max(1, math.ceil(min_bar_spacing / px_per_bar))
+  local bar_skip = math.max(1, math.ceil(min_spacing / px_per_bar))
   if bar_skip > 1 then
     local power = math.ceil(math.log(bar_skip) / math.log(2))
     bar_skip = 2 ^ power
@@ -242,8 +242,9 @@ local function compute_grid_params(x, width, view_start, view_length, item_posit
   local px_per_beat = px_per_bar / beats_per_bar
 
   -- Sub-beat subdivision depth (powers of 2: 2=eighths, 4=sixteenths, 8=32nds, etc.)
+  -- Each level only appears when its lines are at least min_spacing px apart
   local finest_sub = 1
-  while (px_per_beat / (finest_sub * 2)) >= 20 do
+  while (px_per_beat / (finest_sub * 2)) >= min_spacing do
     finest_sub = finest_sub * 2
   end
   local quarter_step = finest_sub >= 4 and (finest_sub / 4) or nil
@@ -297,11 +298,11 @@ end
 function drawing.draw_grid_lines(draw_list, x, wave_y, width, wave_height,
                                   view_start, view_length, item_position, start_offset, playrate, config, utils)
   local g = get_grid_params(x, width, view_start, view_length, item_position, start_offset, playrate, config, utils)
-  local show_beat_grid = g.px_per_beat >= 40
+  local show_beats = g.px_per_beat >= 55
   local DL_AddLine = reaper.ImGui_DrawList_AddLine
   local p2s = utils.project_to_source_time
 
-  -- Adaptive density: iterate at half bar_skip to show intermediate bar lines
+  -- Bar lines with adaptive skipping
   local draw_skip = (g.bar_skip >= 2) and (g.bar_skip / 2) or g.bar_skip
   local bar = g.first_bar - (g.first_bar % draw_skip)
   local iterations = 0
@@ -318,8 +319,8 @@ function drawing.draw_grid_lines(draw_list, x, wave_y, width, wave_height,
       DL_AddLine(draw_list, bar_px, wave_y, bar_px, wave_y + wave_height, bar_color, 1)
     end
 
-    -- Beat grid lines (only when showing every bar)
-    if show_beat_grid and g.bar_skip == 1 then
+    -- Beat grid lines (show when beats are spaced enough, regardless of bar_skip)
+    if show_beats then
       for beat = 1, g.beats_per_bar - 1 do
         local beat_project_time = reaper.TimeMap2_beatsToTime(0, beat, bar)
         if beat_project_time > g.project_end then break end
@@ -331,17 +332,20 @@ function drawing.draw_grid_lines(draw_list, x, wave_y, width, wave_height,
       end
     end
 
-    -- Sub-beat grid lines (only when showing every bar)
-    if g.finest_sub >= 2 and g.bar_skip == 1 then
+    -- Sub-beat grid lines (each subdivision level gated by its own spacing)
+    if g.finest_sub >= 2 then
       for beat = 0, g.beats_per_bar - 1 do
         for sub = 1, g.finest_sub - 1 do
-          local sub_project_time = reaper.TimeMap2_beatsToTime(0, beat + (sub / g.finest_sub), bar)
-          if sub_project_time > g.project_end then break end
-          local sub_source_time = p2s(sub_project_time, item_position, start_offset, playrate)
-          if sub_source_time >= g.view_start and sub_source_time <= g.view_end then
-            local is_quarter = g.quarter_step and (sub % g.quarter_step == 0)
-            local grid_col = is_quarter and config.COLOR_GRID_BEAT or g.sub_grid_color
-            DL_AddLine(draw_list, g.time_to_px(sub_source_time), wave_y, g.time_to_px(sub_source_time), wave_y + wave_height, grid_col, 1)
+          -- Skip lines that are already drawn as beat lines
+          if sub % g.finest_sub ~= 0 then
+            local sub_project_time = reaper.TimeMap2_beatsToTime(0, beat + (sub / g.finest_sub), bar)
+            if sub_project_time > g.project_end then break end
+            local sub_source_time = p2s(sub_project_time, item_position, start_offset, playrate)
+            if sub_source_time >= g.view_start and sub_source_time <= g.view_end then
+              local is_quarter = g.quarter_step and (sub % g.quarter_step == 0)
+              local grid_col = is_quarter and config.COLOR_GRID_BEAT or g.sub_grid_color
+              DL_AddLine(draw_list, g.time_to_px(sub_source_time), wave_y, g.time_to_px(sub_source_time), wave_y + wave_height, grid_col, 1)
+            end
           end
         end
       end
@@ -358,9 +362,9 @@ function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler
 
   local g = get_grid_params(x, width, view_start, view_length, item_position, start_offset, playrate, config, utils)
   local show_beat_labels = g.px_per_beat >= 70
-  local show_beat_ticks = g.px_per_beat >= 40
+  local show_beat_ticks = g.px_per_beat >= 55
   -- Sub-beat ruler ticks: only at quarter-beat positions, need decent spacing
-  local show_sub_ticks = g.quarter_step and (g.px_per_beat / 4) >= 35
+  local show_sub_ticks = g.quarter_step and (g.px_per_beat / 4) >= 40
   -- Sub-beat labels: only when really zoomed in (each quarter-beat has plenty of room)
   local show_sub_labels = g.quarter_step and (g.px_per_beat / 4) >= 90
   local beat_label_color = 0x555555FF
@@ -393,8 +397,8 @@ function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler
       end
     end
 
-    -- Beat ticks and labels in ruler (only when showing every bar)
-    if show_beat_ticks and g.bar_skip == 1 then
+    -- Beat ticks and labels in ruler
+    if show_beat_ticks then
       for beat = 1, g.beats_per_bar - 1 do
         local beat_project_time = reaper.TimeMap2_beatsToTime(0, beat, bar)
         if beat_project_time > g.project_end then break end
@@ -410,8 +414,8 @@ function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler
       end
     end
 
-    -- Sub-beat ticks and labels in ruler (only when showing every bar)
-    if g.quarter_step and g.bar_skip == 1 and (show_sub_ticks or show_sub_labels) then
+    -- Sub-beat ticks and labels in ruler
+    if g.quarter_step and (show_sub_ticks or show_sub_labels) then
       for beat = 0, g.beats_per_bar - 1 do
         for q = 1, 3 do
           local beat_frac = beat + (q / 4)
@@ -491,46 +495,51 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, config.COLOR_INFO_BAR_BG)
   reaper.ImGui_DrawList_AddLine(draw_list, x, y + height, x + width, y + height, 0x333333FF, 1)
 
-  -- Gear icon (settings) on the right
-  local gear_size = 12
-  local gear_padding = 4
-  local gear_x = x + width - gear_size - gear_padding
-  local gear_y = y + (height - gear_size) / 2
-  local gear_cx = gear_x + gear_size / 2
-  local gear_cy = gear_y + gear_size / 2
+  -- Settings button (gear icon) on the right
+  local gear_btn_h = height - 4
+  local gear_btn_w = gear_btn_h + 4
+  local gear_btn_x = x + width - gear_btn_w - 3
+  local gear_btn_y = y + 2
+  local gear_cx = gear_btn_x + gear_btn_w / 2
+  local gear_cy = gear_btn_y + gear_btn_h / 2
 
-  local mouse_in_gear = mouse_x >= gear_x - 2 and mouse_x <= gear_x + gear_size + 2
-                        and mouse_y >= gear_y - 2 and mouse_y <= gear_y + gear_size + 2
+  local mouse_in_gear = mouse_x >= gear_btn_x and mouse_x <= gear_btn_x + gear_btn_w
+                        and mouse_y >= gear_btn_y and mouse_y <= gear_btn_y + gear_btn_h
 
-  local gear_color = mouse_in_gear and 0xCCCCCCFF or 0x888888FF
+  -- Button background
+  local gear_btn_bg = mouse_in_gear and 0x505050FF or 0x353535FF
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, gear_btn_x, gear_btn_y,
+      gear_btn_x + gear_btn_w, gear_btn_y + gear_btn_h, gear_btn_bg, 3)
 
-  -- Draw gear icon (simple cog shape)
-  local outer_r = gear_size / 2
-  local inner_r = outer_r * 0.5
+  -- Draw gear icon
+  local gear_color = mouse_in_gear and 0xDDDDDDFF or 0xAAAAAAFF
+  local outer_r = 5
   local teeth = 6
 
-  -- Outer circle with teeth
-  reaper.ImGui_DrawList_AddCircleFilled(draw_list, gear_cx, gear_cy, outer_r * 0.75, gear_color, 16)
-
-  -- Draw teeth
+  reaper.ImGui_DrawList_AddCircleFilled(draw_list, gear_cx, gear_cy, outer_r * 0.72, gear_color, 16)
   for i = 0, teeth - 1 do
     local angle = (i / teeth) * math.pi * 2
-    local tooth_x = gear_cx + math.cos(angle) * outer_r * 0.95
-    local tooth_y = gear_cy + math.sin(angle) * outer_r * 0.95
-    reaper.ImGui_DrawList_AddCircleFilled(draw_list, tooth_x, tooth_y, outer_r * 0.25, gear_color, 8)
+    local tooth_x = gear_cx + math.cos(angle) * outer_r * 0.92
+    local tooth_y = gear_cy + math.sin(angle) * outer_r * 0.92
+    reaper.ImGui_DrawList_AddCircleFilled(draw_list, tooth_x, tooth_y, outer_r * 0.28, gear_color, 8)
   end
-
-  -- Inner hole
-  reaper.ImGui_DrawList_AddCircleFilled(draw_list, gear_cx, gear_cy, inner_r * 0.6, config.COLOR_INFO_BAR_BG, 12)
+  reaper.ImGui_DrawList_AddCircleFilled(draw_list, gear_cx, gear_cy, 1.8, config.COLOR_INFO_BAR_BG, 10)
 
   if mouse_in_gear then
-    drawing.tooltip(ctx, "gear_icon", "Settings")
+    local gear_tip = "Settings"
+    if settings then
+      local sc = settings.current.shortcuts.open_settings
+      if sc and sc.key ~= "" then
+        gear_tip = gear_tip .. " (" .. settings.format_shortcut(sc) .. ")"
+      end
+    end
+    drawing.tooltip(ctx, "gear_icon", gear_tip)
   end
 
   local gear_clicked = mouse_in_gear and reaper.ImGui_IsMouseClicked(ctx, 0)
 
-  -- Right boundary for filename text (don't overlap gear icon)
-  local text_max_x = gear_x - 8
+  -- Right boundary for filename text (don't overlap settings button)
+  local text_max_x = gear_btn_x - 8
 
   -- Mute toggle
   local mute_size = 10
@@ -1158,7 +1167,7 @@ end
 
 -- Draw envelope editor bottom bar with type dropdown
 function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
-                                     mouse_x, mouse_y, config, state)
+                                     mouse_x, mouse_y, config, state, settings)
   -- Background (always visible)
   reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, config.COLOR_RULER_BG)
   reaper.ImGui_DrawList_AddLine(draw_list, x, y, x + width, y, config.COLOR_GRID_BAR, 1)
@@ -1230,7 +1239,55 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
     state.envelope_lock = not state.envelope_lock
   end
   if mouse_in_lock then
-    drawing.tooltip(ctx, "env_lock_btn", "Lock envelopes in place")
+    local lock_tip = "Lock envelopes in place"
+    if settings then
+      local sc = settings.current.shortcuts.envelope_lock
+      if sc and sc.key ~= "" then
+        lock_tip = lock_tip .. " (" .. settings.format_shortcut(sc) .. ")"
+      end
+    end
+    drawing.tooltip(ctx, "env_lock_btn", lock_tip)
+  end
+
+  -- Envelope snap button (magnet icon, to the right of lock button)
+  local snap_btn_w = 22
+  local snap_gap = 3
+  local snap_btn_x = lock_btn_x + lock_btn_w + snap_gap
+  local snap_btn_y = btn_y
+  local snap_btn_h = btn_h
+  local mouse_in_snap = mouse_x >= snap_btn_x and mouse_x <= snap_btn_x + snap_btn_w
+                        and mouse_y >= snap_btn_y and mouse_y <= snap_btn_y + snap_btn_h
+  local snap_active = state.env_snap_enabled
+  local snap_bg = snap_active and config.COLOR_BTN_ON or (mouse_in_snap and 0x505050FF or 0x303030FF)
+  local snap_border = snap_active and config.COLOR_BTN_ON or 0x555555FF
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, snap_btn_x, snap_btn_y,
+      snap_btn_x + snap_btn_w, snap_btn_y + snap_btn_h, snap_bg, 2)
+  reaper.ImGui_DrawList_AddRect(draw_list, snap_btn_x, snap_btn_y,
+      snap_btn_x + snap_btn_w, snap_btn_y + snap_btn_h, snap_border, 2)
+
+  -- Draw magnet icon
+  local mcx = snap_btn_x + snap_btn_w / 2
+  local mcy = snap_btn_y + snap_btn_h / 2
+  local mag_color = snap_active and 0x202020FF or 0xCCCCCCFF
+  -- Horseshoe magnet: U-shape
+  reaper.ImGui_DrawList_AddLine(draw_list, mcx - 4, mcy - 4, mcx - 4, mcy + 2, mag_color, 2)
+  reaper.ImGui_DrawList_AddLine(draw_list, mcx + 4, mcy - 4, mcx + 4, mcy + 2, mag_color, 2)
+  reaper.ImGui_DrawList_AddLine(draw_list, mcx - 4, mcy + 2, mcx - 1, mcy + 5, mag_color, 2)
+  reaper.ImGui_DrawList_AddLine(draw_list, mcx + 4, mcy + 2, mcx + 1, mcy + 5, mag_color, 2)
+  reaper.ImGui_DrawList_AddLine(draw_list, mcx - 1, mcy + 5, mcx + 1, mcy + 5, mag_color, 2)
+
+  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_snap then
+    state.env_snap_enabled = not state.env_snap_enabled
+  end
+  if mouse_in_snap then
+    local snap_tip = "Snap to grid"
+    if settings then
+      local sc = settings.current.shortcuts.toggle_snap
+      if sc and sc.key ~= "" then
+        snap_tip = snap_tip .. " (" .. settings.format_shortcut(sc) .. ")"
+      end
+    end
+    drawing.tooltip(ctx, "env_snap_btn", snap_tip)
   end
 
 end

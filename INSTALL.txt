@@ -18,7 +18,7 @@ STEP 1: Install ReaPack (if you don't have it)
 
 STEP 2: Install SWS Extension (Recommended)
 -------------------------------------------
-Enables: edge-drag waveform display, reverse detection
+Enables: reverse detection, audio preview, copy region to clipboard
 
 1. Download from: https://www.sws-extension.org
 2. Run the installer
@@ -73,7 +73,7 @@ USAGE
 1. Select an audio item in REAPER
 2. Run the script (via shortcut, toolbar, or Actions List)
 3. The ItemView window opens showing your full audio source
-4. Drag blue markers to adjust which portion plays
+4. Drag markers to adjust which portion plays
 5. Use left panel for gain, pitch, and warp controls
 
 For full documentation, see README.md

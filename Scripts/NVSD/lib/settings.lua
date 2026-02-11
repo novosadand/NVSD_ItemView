@@ -614,6 +614,9 @@ settings.THEMES = {
   },
 }
 
+-- Number of built-in themes (everything before user-saved themes)
+settings.BUILTIN_THEME_COUNT = #settings.THEMES
+
 -- Dirty flag: when true, config.refresh_colors() will run next frame
 settings.colors_dirty = true  -- Start dirty so initial load applies colors
 
@@ -640,6 +643,98 @@ function settings.load_custom_colors()
     if val ~= "" then colors[key] = tonumber(val) end
   end
   return colors
+end
+
+-- Save a user theme to ExtState and insert into THEMES (before Custom)
+function settings.save_user_theme(name, colors)
+  local id = "user_" .. tostring(os.time()) .. "_" .. math.random(1000, 9999)
+  local theme = {
+    id = id,
+    name = name,
+    description = "Custom",
+    colors = {},
+    user_theme = true,  -- flag to distinguish from built-in themes
+  }
+  for _, key in ipairs(COLOR_KEYS) do
+    theme.colors[key] = colors[key]
+  end
+  -- Insert before Custom (last built-in theme)
+  local insert_pos = 1  -- top of list, after we find the right spot
+  -- Find first built-in theme position (insert user themes at the top)
+  table.insert(settings.THEMES, insert_pos, theme)
+  -- Persist: save list of user theme IDs + their data
+  settings._save_all_user_themes()
+  return id
+end
+
+-- Delete a user theme by ID
+function settings.delete_user_theme(id)
+  for i, theme in ipairs(settings.THEMES) do
+    if theme.id == id and theme.user_theme then
+      table.remove(settings.THEMES, i)
+      break
+    end
+  end
+  settings._save_all_user_themes()
+end
+
+-- Persist all user themes to ExtState
+function settings._save_all_user_themes()
+  local user_themes = {}
+  for _, theme in ipairs(settings.THEMES) do
+    if theme.user_theme then
+      user_themes[#user_themes + 1] = theme
+    end
+  end
+  reaper.SetExtState(EXT_SECTION, "user_theme_count", tostring(#user_themes), true)
+  for i, theme in ipairs(user_themes) do
+    local prefix = "user_theme_" .. i .. "_"
+    reaper.SetExtState(EXT_SECTION, prefix .. "id", theme.id, true)
+    reaper.SetExtState(EXT_SECTION, prefix .. "name", theme.name, true)
+    for _, key in ipairs(COLOR_KEYS) do
+      reaper.SetExtState(EXT_SECTION, prefix .. key, tostring(theme.colors[key] or 0), true)
+    end
+  end
+  -- Clean up stale entries beyond current count
+  local i = #user_themes + 1
+  while true do
+    local prefix = "user_theme_" .. i .. "_"
+    local old_id = reaper.GetExtState(EXT_SECTION, prefix .. "id")
+    if old_id == "" then break end
+    reaper.DeleteExtState(EXT_SECTION, prefix .. "id", true)
+    reaper.DeleteExtState(EXT_SECTION, prefix .. "name", true)
+    for _, key in ipairs(COLOR_KEYS) do
+      reaper.DeleteExtState(EXT_SECTION, prefix .. key, true)
+    end
+    i = i + 1
+  end
+end
+
+-- Load user themes from ExtState (called during settings.load)
+function settings._load_user_themes()
+  local count_str = reaper.GetExtState(EXT_SECTION, "user_theme_count")
+  local count = tonumber(count_str) or 0
+  for i = 1, count do
+    local prefix = "user_theme_" .. i .. "_"
+    local id = reaper.GetExtState(EXT_SECTION, prefix .. "id")
+    local name = reaper.GetExtState(EXT_SECTION, prefix .. "name")
+    if id ~= "" and name ~= "" then
+      local colors = {}
+      for _, key in ipairs(COLOR_KEYS) do
+        local val = reaper.GetExtState(EXT_SECTION, prefix .. key)
+        if val ~= "" then colors[key] = tonumber(val) end
+      end
+      local theme = {
+        id = id,
+        name = name,
+        description = "Custom",
+        colors = colors,
+        user_theme = true,
+      }
+      -- Insert at position i (user themes go at the top)
+      table.insert(settings.THEMES, i, theme)
+    end
+  end
 end
 
 -- Get theme by ID
@@ -694,6 +789,9 @@ end
 
 -- Load settings from ExtState
 function settings.load()
+  -- Load user-saved themes (inserts at top of THEMES list)
+  settings._load_user_themes()
+
   -- Load theme
   local theme_id = reaper.GetExtState(EXT_SECTION, "theme")
   if theme_id and theme_id ~= "" then

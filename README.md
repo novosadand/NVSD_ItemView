@@ -47,6 +47,10 @@
 | Middle mouse drag | Pan |
 | Mouse 4 | Quick set start at cursor |
 | Mouse 5 | Quick set end at cursor |
+| Shift + Mouse 4 | Set fade-in end at cursor |
+| Shift + Mouse 5 | Set fade-out start at cursor |
+| Left-click + drag | Select time region |
+| Ctrl+C | Copy selected region to clipboard |
 
 ### Left Panel
 
@@ -58,14 +62,14 @@
 - **Algorithm dropdown**: Select pitch algorithm (when WARP is on).
 - **Reverse button**: Reverse the audio.
 - **Clear button**: Reset item to default state (pitch=0, rate=1.0, warp off, original length).
-- **Edit button**: Open in external editor.
+- **Edit button**: Open in external editor (or Item Properties if none configured).
 - **Mute checkbox**: Toggle mute.
 
 ### FX
 
-- **Left FX button**: Toggle all FX bypass.
+- **Left FX button**: Toggle all FX bypass (when FX exist) / Add FX (when empty).
 - **Right FX button**: Open FX chain. Alt+click to remove all FX.
-- **FX list**: Right-click for context menu. Drag to reorder. Checkbox toggles individual FX bypass.
+- **FX list**: Click to open/close FX window. Shift+click to toggle bypass. Alt+click to delete. Checkbox toggles bypass. Drag to reorder. Right-click for context menu. Mouse wheel to scroll.
 
 ### Envelopes
 
@@ -87,7 +91,7 @@
 
 ### Fades
 
-Drag fade handles at item edges to adjust fade in/out length. Click the fade body to cycle through shapes (Linear, Fast Start, Fast End, Fast Start Steep, Fast End Steep, Slow Start/End, Slow Start/End Steep).
+Drag fade handles at item edges to adjust fade in/out length. Shift+Mouse4 to set fade-in end at cursor, Shift+Mouse5 to set fade-out start. Alt+drag the fade curve to adjust tension. Right-click a fade handle to pick a shape (Linear, Fast Start, Fast End, Fast Start Steep, Fast End Steep, Slow Start/End, Slow Start/End Steep).
 
 ### Audio Preview
 
@@ -113,6 +117,7 @@ All shortcuts below are customizable in Settings > Shortcuts.
 | Shift+P | Show Pan envelope |
 | H | Hide envelopes |
 | S | Open settings |
+| Ctrl+Space | Audio preview |
 
 **Not rebindable:**
 
@@ -129,7 +134,7 @@ All shortcuts below are customizable in Settings > Shortcuts.
 
 - `Shift + drag` on any control for fine adjustment
 - `Double-click` any knob or slider to reset to default
-- Click filename in info bar to open in Media Explorer
+- Click filename in info bar to show in Explorer/Finder
 
 ## Settings
 
@@ -158,7 +163,7 @@ Right-click the window title bar > Dock window > Choose position (top, bottom, l
 - Map the script to a REAPER action shortcut for quick toggle on/off
 - Markers snap to REAPER's grid and source boundaries
 - Drag markers past source boundaries to create loops
-- Click filename in info bar to open in Media Explorer
+- Click filename in info bar to show in Explorer/Finder
 - Gain changes are non-destructive and can be undone
 - WARP mode stretches audio to fit markers without pitch change
 - All settings persist between sessions via ExtState

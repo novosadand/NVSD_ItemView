@@ -42,29 +42,12 @@ local REFERENCE_SHORTCUTS = {
   {"Mouse 5",        "Set end at cursor"},
 }
 
--- Color groups for custom theme editor
-local COLOR_GROUPS = {
-  { name = "Waveform", keys = {
-    {key = "waveform", label = "Waveform"}, {key = "waveform_inactive", label = "Inactive"},
-    {key = "waveform_bg", label = "Background"}, {key = "centerline", label = "Center line"},
-  }},
-  { name = "Markers & Playhead", keys = {
-    {key = "markers", label = "Markers"}, {key = "markers_hover", label = "Hover"},
-    {key = "playhead", label = "Playhead"}, {key = "border", label = "Border"},
-  }},
-  { name = "Grid & Ruler", keys = {
-    {key = "grid_bar", label = "Grid bar"}, {key = "grid_beat", label = "Grid beat"},
-    {key = "ruler_bg", label = "Ruler bg"}, {key = "ruler_text", label = "Ruler text"},
-    {key = "ruler_tick", label = "Ruler tick"},
-  }},
-  { name = "Info Bar", keys = {
-    {key = "info_bar_bg", label = "Background"}, {key = "info_bar_text", label = "Text"},
-    {key = "info_bar_icon", label = "Icon"},
-  }},
-  { name = "Buttons", keys = {
-    {key = "btn_on", label = "On"}, {key = "btn_off", label = "Off"},
-    {key = "btn_hover", label = "Hover"}, {key = "btn_text", label = "Text"},
-  }},
+-- Core colors: 4 essential pickers that derive all other colors
+local CORE_COLORS = {
+  {key = "waveform_bg", label = "Background"},
+  {key = "waveform",    label = "Waveform"},
+  {key = "markers",     label = "Accent"},
+  {key = "info_bar_text", label = "Text"},
 }
 
 -- UI State
@@ -79,6 +62,10 @@ local ui_state = {
   custom_init_from = 0,      -- Index for "Initialize from" combo
   custom_colors_dirty = false, -- True when custom colors changed but not yet saved to ExtState
   custom_save_time = 0,      -- Debounce: time of last deferred save request
+  save_theme_name = "",      -- Text input buffer for "Save as theme" name
+  show_save_input = false,   -- Show the name input field
+  delete_confirm_id = nil,   -- Theme ID pending deletion confirmation
+  hovered_theme_id = nil,    -- Theme ID currently hovered (for delete button)
 }
 
 -- Colors matching main window dark theme
@@ -171,7 +158,51 @@ local function color_rgb_to_rgba(c)
   return (c << 8) | 0xFF
 end
 
--- Draw custom theme color editor
+-- Derive a secondary color from a primary by adjusting brightness
+-- factor < 1.0 darkens (multiply), factor > 1.0 lightens (blend toward white)
+local function derive_color(base, factor)
+  local r = (base >> 24) & 0xFF
+  local g = (base >> 16) & 0xFF
+  local b = (base >> 8) & 0xFF
+  if factor >= 1.0 then
+    local t = factor - 1.0
+    r = math.min(255, math.floor(r + (255 - r) * t))
+    g = math.min(255, math.floor(g + (255 - g) * t))
+    b = math.min(255, math.floor(b + (255 - b) * t))
+  else
+    r = math.max(0, math.floor(r * factor))
+    g = math.max(0, math.floor(g * factor))
+    b = math.max(0, math.floor(b * factor))
+  end
+  return (r << 24) | (g << 16) | (b << 8) | 0xFF
+end
+
+-- Auto-derive: each core color cascades to its related colors
+-- Factor < 1.0 = darken (multiply), > 1.0 = lighten (blend toward white), 1.0 = same
+local AUTO_DERIVE = {
+  waveform_bg   = {
+    {"centerline", 1.55}, {"ruler_bg", 1.33}, {"info_bar_bg", 1.1},
+    {"grid_bar", 1.93}, {"grid_beat", 1.41},
+  },
+  waveform      = {{"waveform_inactive", 0.65}, {"border", 0.85}},
+  markers       = {
+    {"markers_hover", 1.12}, {"playhead", 1.0}, {"btn_on", 1.0},
+    {"btn_hover", 1.08}, {"info_bar_icon", 1.0},
+  },
+  info_bar_text = {{"ruler_text", 0.79}, {"ruler_tick", 0.55}, {"btn_off", 0.37}},
+}
+
+-- Apply all derivations for a changed color key
+local function apply_auto_derive(colors, key)
+  local derived_list = AUTO_DERIVE[key]
+  if derived_list then
+    for _, d in ipairs(derived_list) do
+      colors[d[1]] = derive_color(colors[key], d[2])
+    end
+  end
+end
+
+-- Draw custom theme color editor (4 core colors + initialize from)
 local function draw_custom_color_editor(ctx, settings)
   local custom_theme = settings.get_theme("custom")
   if not custom_theme then return end
@@ -203,21 +234,18 @@ local function draw_custom_color_editor(ctx, settings)
 
   reaper.ImGui_Spacing(ctx)
 
-  -- Color groups with collapsing headers
+  -- 4 core color pickers (all derived colors update automatically)
   local edit_flags = reaper.ImGui_ColorEditFlags_NoInputs()
 
-  for _, group in ipairs(COLOR_GROUPS) do
-    if reaper.ImGui_CollapsingHeader(ctx, group.name) then
-      for _, entry in ipairs(group.keys) do
-        local c = custom_theme.colors[entry.key] or 0xFFFFFFFF
-        local rgb = color_rgba_to_rgb(c)
-        local rv, new_rgb = reaper.ImGui_ColorEdit3(ctx, entry.label .. "##" .. entry.key, rgb, edit_flags)
-        if rv then
-          custom_theme.colors[entry.key] = color_rgb_to_rgba(new_rgb)
-          ui_state.custom_colors_dirty = true
-          settings.colors_dirty = true
-        end
-      end
+  for _, entry in ipairs(CORE_COLORS) do
+    local c = custom_theme.colors[entry.key] or 0xFFFFFFFF
+    local rgb = color_rgba_to_rgb(c)
+    local rv, new_rgb = reaper.ImGui_ColorEdit3(ctx, entry.label .. "##core_" .. entry.key, rgb, edit_flags)
+    if rv then
+      custom_theme.colors[entry.key] = color_rgb_to_rgba(new_rgb)
+      apply_auto_derive(custom_theme.colors, entry.key)
+      ui_state.custom_colors_dirty = true
+      settings.colors_dirty = true
     end
   end
 end
@@ -229,13 +257,35 @@ local function draw_appearance_tab(ctx, settings)
     stop_listening(settings)
   end
 
+  local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
+  if not reaper.ImGui_BeginChild(ctx, "appearance_scroll", avail_w, avail_h - 40) then return end
+
   reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Theme")
   reaper.ImGui_Spacing(ctx)
 
+  local prev_was_user = false
   for _, theme in ipairs(settings.THEMES) do
+    if prev_was_user and not theme.user_theme then
+      reaper.ImGui_Spacing(ctx)
+      reaper.ImGui_Separator(ctx)
+      reaper.ImGui_Spacing(ctx)
+      prev_was_user = false
+    end
+    if theme.user_theme then prev_was_user = true end
     local is_selected = ui_state.pending_theme_id == theme.id
 
-    if reaper.ImGui_RadioButton(ctx, theme.name, is_selected) then
+    if reaper.ImGui_RadioButton(ctx, theme.name .. "##" .. theme.id, is_selected) then
+      -- When switching to Custom, copy colors from the previously selected theme
+      if theme.id == "custom" and ui_state.pending_theme_id ~= "custom" then
+        local prev_theme = settings.get_theme(ui_state.pending_theme_id)
+        local custom_theme = settings.get_theme("custom")
+        if prev_theme and custom_theme then
+          for _, key in ipairs(settings.COLOR_KEYS) do
+            custom_theme.colors[key] = prev_theme.colors[key]
+          end
+          settings.save_custom_colors(custom_theme.colors)
+        end
+      end
       ui_state.pending_theme_id = theme.id
       settings.current.theme_id = theme.id  -- Live preview
       settings.colors_dirty = true
@@ -249,15 +299,103 @@ local function draw_appearance_tab(ctx, settings)
     reaper.ImGui_SameLine(ctx, 0, 4)
     draw_swatch(ctx, theme.colors.playhead, 12)
 
-    -- Description
+    -- Description + delete button for user themes
     reaper.ImGui_SameLine(ctx, 220)
-    reaper.ImGui_TextColored(ctx, COLORS.text_dim, theme.description)
+    if theme.user_theme then
+      reaper.ImGui_TextColored(ctx, COLORS.text_dim, theme.description)
+      -- Delete button (small X) on the same line
+      reaper.ImGui_SameLine(ctx, 0, 8)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x00000000)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x66333399)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0xCC444499)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0x999999FF)
+      if reaper.ImGui_SmallButton(ctx, "x##del_" .. theme.id) then
+        ui_state.delete_confirm_id = theme.id
+        reaper.ImGui_OpenPopup(ctx, "Delete Theme?##confirm")
+      end
+      reaper.ImGui_PopStyleColor(ctx, 4)
+    else
+      reaper.ImGui_TextColored(ctx, COLORS.text_dim, theme.description)
+    end
   end
 
-  -- Custom theme color editor (only shown when Custom is selected)
+  -- Delete confirmation modal
+  if reaper.ImGui_BeginPopupModal(ctx, "Delete Theme?##confirm", nil, reaper.ImGui_WindowFlags_AlwaysAutoResize()) then
+    local del_theme = ui_state.delete_confirm_id and settings.get_theme(ui_state.delete_confirm_id)
+    local del_name = del_theme and del_theme.name or "this theme"
+    reaper.ImGui_Text(ctx, "Delete \"" .. del_name .. "\"?")
+    reaper.ImGui_Spacing(ctx)
+    if reaper.ImGui_Button(ctx, "Delete", 80, 0) then
+      if ui_state.delete_confirm_id then
+        -- If we're deleting the active theme, switch to default
+        if ui_state.pending_theme_id == ui_state.delete_confirm_id then
+          ui_state.pending_theme_id = "default"
+          settings.current.theme_id = "default"
+          settings.colors_dirty = true
+        end
+        settings.delete_user_theme(ui_state.delete_confirm_id)
+        ui_state.delete_confirm_id = nil
+      end
+      reaper.ImGui_CloseCurrentPopup(ctx)
+    end
+    reaper.ImGui_SameLine(ctx)
+    if reaper.ImGui_Button(ctx, "Cancel", 80, 0) then
+      ui_state.delete_confirm_id = nil
+      reaper.ImGui_CloseCurrentPopup(ctx)
+    end
+    reaper.ImGui_EndPopup(ctx)
+  end
+
+  -- Custom theme color editor + save (only shown when Custom is selected)
   if ui_state.pending_theme_id == "custom" then
     draw_custom_color_editor(ctx, settings)
+
+    -- Save as new theme
+    reaper.ImGui_Spacing(ctx)
+    reaper.ImGui_Separator(ctx)
+    reaper.ImGui_Spacing(ctx)
+
+    if ui_state.show_save_input then
+      reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Name:")
+      reaper.ImGui_SameLine(ctx)
+      -- Auto-focus the input on first frame (must be before the widget)
+      if not ui_state.save_input_focused then
+        reaper.ImGui_SetKeyboardFocusHere(ctx, 0)
+        ui_state.save_input_focused = true
+      end
+      reaper.ImGui_SetNextItemWidth(ctx, 150)
+      local _, new_name = reaper.ImGui_InputText(ctx, "##save_theme_name", ui_state.save_theme_name)
+      ui_state.save_theme_name = new_name
+      reaper.ImGui_SameLine(ctx)
+      local name_ok = ui_state.save_theme_name ~= ""
+      if reaper.ImGui_Button(ctx, "Save##save_confirm") and name_ok then
+        local source_theme = settings.get_theme("custom")
+        if source_theme then
+          local new_id = settings.save_user_theme(ui_state.save_theme_name, source_theme.colors)
+          ui_state.pending_theme_id = new_id
+          settings.current.theme_id = new_id
+          settings.colors_dirty = true
+        end
+        ui_state.show_save_input = false
+        ui_state.save_theme_name = ""
+        ui_state.save_input_focused = nil
+      end
+      reaper.ImGui_SameLine(ctx)
+      if reaper.ImGui_Button(ctx, "Cancel##save_cancel") then
+        ui_state.show_save_input = false
+        ui_state.save_theme_name = ""
+        ui_state.save_input_focused = nil
+      end
+    else
+      if reaper.ImGui_Button(ctx, "Save current as new theme") then
+        ui_state.show_save_input = true
+        ui_state.save_theme_name = ""
+        ui_state.save_input_focused = nil
+      end
+    end
   end
+
+  reaper.ImGui_EndChild(ctx)
 end
 
 -- Look up human-readable label for a shortcut name
@@ -470,15 +608,15 @@ local HELP_SECTIONS = {
   },
   {
     header = "WAVEFORM CONTROLS",
-    body = "Ctrl + Scroll: Zoom in/out\nMiddle-drag: Pan waveform\nRuler drag vertical: Zoom\nRuler drag horizontal: Pan\nMouse 4: Set start at cursor\nMouse 5: Set end at cursor",
+    body = "Ctrl+Scroll: Zoom in/out\nMiddle-drag: Pan waveform\nRuler drag vertical: Zoom\nRuler drag horizontal: Pan\nMouse 4: Set start at cursor\nMouse 5: Set end at cursor\nShift+Mouse4: Set fade-in end at cursor\nShift+Mouse5: Set fade-out start at cursor\nLeft-click+drag: Select time region\nCtrl+C: Copy selected region to clipboard\nDrag markers past source boundaries to create loops.",
   },
   {
     header = "MARKERS",
-    body = "Drag the start/end markers to adjust playback region.\nAlt + drag either marker to slide both together.\nMarkers snap to grid when snap is enabled.",
+    body = "Drag the start/end markers to adjust playback region.\nAlt+drag either marker to slide both together.\nMarkers snap to grid when snap is enabled.\nDrag past source boundaries to extend into looped playback.",
   },
   {
     header = "LEFT PANEL",
-    body = "Gain slider: Drag to adjust volume. Ctrl+drag for fine control. Double-click to reset.\nPitch knob: Drag to adjust pitch. Double-click to reset.\nPan knob: Drag to adjust pan. Double-click to reset.\nWARP button: Toggle WARP stretch mode.\nReverse button: Reverse the item.\nFX toolbar: Toggle bypass, open FX chain, add/remove FX.",
+    body = "Gain slider: Drag to adjust volume (+24dB to -inf). Ctrl+drag for fine control. Double-click to reset.\nPitch knob: Drag to adjust pitch (±48 semitones). Double-click to reset.\nPan knob: Drag to adjust pan. Double-click to reset.\nSemitones/Cents boxes: Click+drag to adjust. Double-click to reset.\nShift+drag any control for fine adjustment.\nWARP button: Toggle pitch preservation when stretching.\nAlgorithm dropdown: Select pitch shift algorithm (when WARP is on).\nReverse button: Reverse the audio.\nClear button: Reset pitch, rate, WARP to defaults.\nEdit button: Open in external editor (or Item Properties if none configured).\nMute checkbox: Toggle item mute.",
   },
   {
     header = "ENVELOPES",
@@ -486,7 +624,7 @@ local HELP_SECTIONS = {
   },
   {
     header = "FADES",
-    body = "Drag fade handles at item edges to adjust fade in/out length.\nClick the fade body area to cycle through fade shapes.\nFade shapes: Linear, Fast Start, Fast End, Fast Start Steep, Fast End Steep, Slow Start/End, Slow Start/End Steep.",
+    body = "Drag fade handles at item edges to adjust fade in/out length.\nShift+Mouse4: Set fade-in end at cursor position.\nShift+Mouse5: Set fade-out start at cursor position.\nAlt+drag fade curve to adjust curve tension.\nRight-click fade handle to pick fade shape.\nFade shapes: Linear, Fast Start, Fast End, Fast Start Steep, Fast End Steep, Slow Start/End, Slow Start/End Steep.",
   },
   {
     header = "AUDIO PREVIEW",
@@ -506,7 +644,7 @@ local HELP_SECTIONS = {
   },
   {
     header = "TIPS",
-    body = "Map the script to a REAPER action shortcut (Actions > Show action list > search NVSD) for quick toggle on/off.\nThe script auto-docks to the bottom of your REAPER layout.\nGain changes are non-destructive and can be undone.\nWARP mode stretches audio to fit markers without pitch change.\nAll settings persist between sessions via ExtState.",
+    body = "Map the script to a REAPER action shortcut (Actions > Show action list > search NVSD) for quick toggle on/off.\nRight-click the title bar to dock the window anywhere.\nGain changes are non-destructive and can be undone.\nWARP mode stretches audio to fit markers without pitch change.\nClick the filename in the info bar to show the file in Explorer/Finder.\nHover over any element for a tooltip with available actions.\nAll settings persist between sessions via ExtState.",
   },
 }
 
