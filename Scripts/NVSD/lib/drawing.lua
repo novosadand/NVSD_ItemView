@@ -1680,9 +1680,12 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
   local mouse_in_waveform = mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
                             and mouse_y >= wave_y and mouse_y <= wave_y + waveform_height
 
+  state.env_node_hovered_is_selected = false
+
   if mouse_in_waveform and not state.dragging_env_node then
     -- Check if mouse is near an existing node first
     local closest_node_dist = config.ENV_NODE_HIT_RADIUS + 1
+    local best_pts_i = -1
     for i = 1, n_pts do
       if not pts[i].implicit then
         local node_px = time_to_px(pts[i].time)
@@ -1693,6 +1696,18 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
         if dist < closest_node_dist then
           closest_node_dist = dist
           state.env_node_hovered_idx = pts[i].idx
+          best_pts_i = i
+        end
+      end
+    end
+
+    -- Check if hovered node is in the selection
+    if state.env_node_hovered_idx >= 0 and best_pts_i > 0 and #state.env_selected_nodes > 0 then
+      for _, sel in ipairs(state.env_selected_nodes) do
+        if math.abs(pts[best_pts_i].time - sel.src_time) < 0.0001
+            and math.abs(pts[best_pts_i].value - sel.value) < 0.0001 then
+          state.env_node_hovered_is_selected = true
+          break
         end
       end
     end
@@ -1700,22 +1715,31 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
     -- If not hovering a node, find segment by time containment + neighbor check at boundaries
     if state.env_node_hovered_idx < 0 then
       local mouse_t = view_start + ((mouse_x - wave_x) / waveform_width) * view_length
-      local threshold = no_user_nodes and 20 or 14
+      local threshold = no_user_nodes and 24 or 22
 
-      -- Helper: point-to-segment distance in pixel space
+      -- Helper: distance from mouse to rendered curve (respects shape/tension)
+      -- Samples the actual curve at the mouse X position for accurate hit detection
       local function seg_dist(i)
         local x1 = time_to_px(pts[i].time)
-        local y1 = value_to_y(pts[i].value)
         local x2 = time_to_px(pts[i + 1].time)
-        local y2 = value_to_y(pts[i + 1].value)
-        local dx = x2 - x1
-        local dy = y2 - y1
-        local len_sq = dx * dx + dy * dy
-        local tp = len_sq > 0 and ((mouse_x - x1) * dx + (mouse_y - y1) * dy) / len_sq or 0
-        tp = math.max(0, math.min(1, tp))
-        local px = x1 + tp * dx
-        local py = y1 + tp * dy
-        return math.sqrt((mouse_x - px) ^ 2 + (mouse_y - py) ^ 2)
+        local seg_px_len = x2 - x1
+        if seg_px_len < 1 then
+          -- Zero-width segment: use distance to midpoint
+          local my = value_to_y((pts[i].value + pts[i + 1].value) / 2)
+          return math.sqrt((mouse_x - x1) ^ 2 + (mouse_y - my) ^ 2)
+        end
+        -- Clamp mouse X into segment range, compute the curve Y at that position
+        local clamped_x = math.max(x1, math.min(x2, mouse_x))
+        local frac = (clamped_x - x1) / seg_px_len
+        local curved_frac = apply_shape(frac, pts[i].shape, pts[i].tension)
+        local curve_val = pts[i].value + curved_frac * (pts[i + 1].value - pts[i].value)
+        local curve_y = value_to_y(curve_val)
+        -- Distance: vertical from mouse to curve at this X, plus horizontal if outside
+        local dx = 0
+        if mouse_x < x1 then dx = x1 - mouse_x
+        elseif mouse_x > x2 then dx = mouse_x - x2 end
+        local dy = mouse_y - curve_y
+        return math.sqrt(dx * dx + dy * dy)
       end
 
       -- Step 1: find segment containing mouse_t by strict time containment

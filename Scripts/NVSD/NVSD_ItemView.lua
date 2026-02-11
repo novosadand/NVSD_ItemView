@@ -195,6 +195,7 @@ local function loop()
       state.env_multi_dragging = false
       state.env_multi_drag_activated = false
       state.env_multi_drag_start_positions = {}
+      state.env_multi_drag_all_points = {}
       state.undo_block_open = nil
       state.was_mouse_down = false
       state.invalidate_view_peaks()
@@ -1592,7 +1593,9 @@ local function loop()
 
           -- Cursor feedback (alt_held cached at top of frame)
           -- Fade grabs use Hand cursor to distinguish from marker's ResizeEW
-          if state.dragging_fade_curve_in or state.dragging_fade_curve_out or state.env_tension_dragging then
+          if state.env_tension_dragging then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
+          elseif state.dragging_fade_curve_in or state.dragging_fade_curve_out then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
           elseif state.dragging_fade_in or state.dragging_fade_out then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
@@ -1616,12 +1619,17 @@ local function loop()
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())
           elseif state.env_segment_dragging then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
+          elseif state.envelopes_visible and reaper_is_active
+              and state.env_node_hovered_idx >= 0
+              and state.env_node_hovered_is_selected
+              and not alt_held then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())
           elseif state.envelopes_visible and alt_held and reaper_is_active
               and state.env_node_hovered_idx >= 0 then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_NotAllowed())
           elseif state.envelopes_visible and alt_held and reaper_is_active
               and state.envelope_hovered_segment >= 0 and state.env_node_hovered_idx < 0 then
-            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
           elseif state.envelopes_visible and shift_held and reaper_is_active
               and state.envelope_hovered_segment >= 0 and state.env_node_hovered_idx < 0 then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
@@ -2028,12 +2036,14 @@ local function loop()
           end
 
           -- Alt+click in free zone: initiate zone drag (slides both markers, disabled when looped)
+          -- Envelope segment/node hover takes priority (tension drag, delete)
           if reaper.ImGui_IsMouseClicked(ctx, 0) and alt_held and mouse_in_free_zone
               and not is_looped_item
               and not state.dragging_start and not state.dragging_end
               and not state.dragging_fade_in and not state.dragging_fade_out
               and not state.dragging_fade_curve_in and not state.dragging_fade_curve_out
-              and not state.is_ruler_dragging and not state.is_panning then
+              and not state.is_ruler_dragging and not state.is_panning
+              and not (state.envelopes_visible and (state.envelope_hovered_segment >= 0 or state.env_node_hovered_idx >= 0)) then
             state.post_drag_ext_start = nil
             state.post_drag_ext_end = nil
             state.dragging_zone = true
@@ -2489,17 +2499,9 @@ local function loop()
                   if ret and ret2 then
                     state.env_tension_dragging = true
                     state.env_tension_point_idx = seg_pt_idx
-                    state.env_tension_start_mouse_y = mouse_y
+                    state.env_tension_start_mouse_x = mouse_x
                     state.env_tension_start_value = (pt_shape == 5) and pt_tension or 0
-                    state.env_tension_descending = (next_value < pt_value)
                     state.env_tension_activated = false
-                    if state.has_js_extension then
-                      local sx, sy = reaper.GetMousePosition()
-                      state.env_tension_lock_x = sx
-                      state.env_tension_lock_y = sy
-                      state.env_tension_last_y = sy
-                      state.env_tension_cumulative_y = 0
-                    end
                     if not state.undo_block_open then
                       state.undo_block_open = "env_tension"
                     end
@@ -2634,7 +2636,7 @@ local function loop()
               end
             end
 
-            -- Shift+click in empty waveform space: create envelope node
+            -- Shift+click in empty waveform space: create envelope node and start dragging
             if reaper.ImGui_IsMouseClicked(ctx, 0) and shift_held
                 and not alt_held
                 and mouse_in_waveform
@@ -2659,11 +2661,32 @@ local function loop()
                 local snapped_src = snap_to_grid_if_enabled(src_time)
                 local take_time = snapped_src - env_offset
                 local raw_val = mouse_y_to_raw(mouse_y)
-                reaper.Undo_BeginBlock()
                 reaper.InsertEnvelopePoint(env, take_time, raw_val, 0, 0, false, true)
                 reaper.Envelope_SortPoints(env)
+                -- Find the new point's index
+                local new_idx = -1
+                local count = reaper.CountEnvelopePoints(env)
+                for pi = 0, count - 1 do
+                  local retval, pt_time, pt_value = reaper.GetEnvelopePoint(env, pi)
+                  if retval and math.abs(pt_time - take_time) < 0.0001
+                     and math.abs(pt_value - raw_val) < 0.0001 then
+                    new_idx = pi
+                    break
+                  end
+                end
+                if new_idx >= 0 then
+                  state.dragging_env_node = true
+                  state.env_drag_node_idx = new_idx
+                  state.env_drag_start_mouse_x = mouse_x
+                  state.env_drag_start_mouse_y = mouse_y
+                  state.env_drag_start_time = take_time
+                  state.env_drag_start_value = raw_val
+                  state.env_drag_activated = false
+                  if not state.undo_block_open then
+                    state.undo_block_open = "env_node"
+                  end
+                end
                 reaper.UpdateArrange()
-                reaper.Undo_EndBlock("NVSD_ItemView: Create envelope point", -1)
               end
             end
 
@@ -2767,31 +2790,19 @@ local function loop()
               end
             end
 
-            -- Tension drag: update curve shape while alt+dragging on segment (with cursor lock)
+            -- Tension drag: update curve shape while alt+dragging on segment
+            -- Uses horizontal movement only (matches REAPER native behavior)
             if state.env_tension_dragging and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
-              -- Cursor lock: accumulate delta via JS extension
-              if state.has_js_extension and state.env_tension_lock_x then
-                local cur_x, cur_y = reaper.GetMousePosition()
-                state.env_tension_last_y = state.env_tension_last_y or cur_y
-                local delta = cur_y - state.env_tension_last_y
-                if delta ~= 0 then
-                  state.env_tension_cumulative_y = state.env_tension_cumulative_y + delta
-                end
-                state.env_tension_last_y = state.env_tension_lock_y
-                reaper.JS_Mouse_SetPosition(state.env_tension_lock_x, state.env_tension_lock_y)
-              end
-              local dy = state.has_js_extension and state.env_tension_cumulative_y or (mouse_y - state.env_tension_start_mouse_y)
-              -- Flip direction for descending segments so drag-up always curves up visually
-              if state.env_tension_descending then dy = -dy end
-              if not state.env_tension_activated and math.abs(dy) >= 4 then
+              local d = mouse_x - state.env_tension_start_mouse_x
+              if not state.env_tension_activated and math.abs(d) >= 4 then
                 state.env_tension_activated = true
               end
               if state.env_tension_activated then
                 local env = reaper.GetTakeEnvelopeByName(take, env_name)
                 if env then
-                  -- Map drag distance to tension: full waveform height = range of 2 (-1 to +1)
-                  local sensitivity = 2.0 / waveform_height
-                  local new_tension = state.env_tension_start_value + dy * sensitivity
+                  -- 120px of movement = full tension range (-1 to +1)
+                  local sensitivity = 2.0 / 120
+                  local new_tension = state.env_tension_start_value + d * sensitivity
                   new_tension = math.max(-1, math.min(1, new_tension))
                   local ret, pt_time, pt_value, _, _, pt_sel = reaper.GetEnvelopePoint(env, state.env_tension_point_idx)
                   if ret then
@@ -2825,18 +2836,43 @@ local function loop()
               end
             end
 
-            -- Multi-node drag update
+            -- Multi-node drag update (full rebuild with sweep)
             if state.env_multi_dragging and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
               local dx = mouse_x - state.env_multi_drag_start_mouse_x
               local dy = mouse_y - state.env_multi_drag_start_mouse_y
               if not state.env_multi_drag_activated and (math.abs(dx) >= 4 or math.abs(dy) >= 4) then
                 state.env_multi_drag_activated = true
+                -- Snapshot ALL envelope points at activation
+                local m_env_name = state.env_multi_drag_env_name or env_name
+                local snap_env = reaper.GetTakeEnvelopeByName(take, m_env_name)
+                if snap_env then
+                  state.env_multi_drag_all_points = {}
+                  local snap_count = reaper.CountEnvelopePoints(snap_env)
+                  for pi = 0, snap_count - 1 do
+                    local ret, pt_time, pt_value, pt_shape, pt_tension, pt_selected = reaper.GetEnvelopePoint(snap_env, pi)
+                    if ret then
+                      -- Check if this point is one of the selected/dragged nodes
+                      local is_ours = false
+                      for _, pos in ipairs(state.env_multi_drag_start_positions) do
+                        if math.abs(pt_time - pos.take_time) < 0.0001 and math.abs(pt_value - pos.value) < 0.0001 then
+                          is_ours = true
+                          break
+                        end
+                      end
+                      table.insert(state.env_multi_drag_all_points, {
+                        take_time = pt_time, value = pt_value,
+                        shape = pt_shape, tension = pt_tension,
+                        selected = pt_selected, is_ours = is_ours
+                      })
+                    end
+                  end
+                end
               end
               if state.env_multi_drag_activated then
                 local m_env_name = state.env_multi_drag_env_name or env_name
                 local m_env_offset = state.env_multi_drag_env_offset or env_offset
                 local env = reaper.GetTakeEnvelopeByName(take, m_env_name)
-                if env then
+                if env and #state.env_multi_drag_all_points > 0 then
                   local start_src_t = px_to_time(state.env_multi_drag_start_mouse_x)
                   local current_src_t = px_to_time(mouse_x)
                   local dt = current_src_t - start_src_t
@@ -2844,14 +2880,41 @@ local function loop()
                   local current_raw = mouse_y_to_raw(mouse_y)
                   local dv = current_raw - start_raw
 
-                  for _, pos in ipairs(state.env_multi_drag_start_positions) do
-                    local new_take_time = pos.take_time + dt
-                    local new_value = math.max(env_min_raw, math.min(env_max_raw, pos.value + dv))
-                    reaper.SetEnvelopePoint(env, pos.idx, new_take_time, new_value, 0, 0, false, true)
+                  -- Compute current span of selected nodes (their footprint after drag)
+                  local span_min, span_max = math.huge, -math.huge
+                  for _, pt in ipairs(state.env_multi_drag_all_points) do
+                    if pt.is_ours then
+                      local cur_t = pt.take_time + dt
+                      if cur_t < span_min then span_min = cur_t end
+                      if cur_t > span_max then span_max = cur_t end
+                    end
+                  end
+
+                  -- Delete all existing points
+                  local del_count = reaper.CountEnvelopePoints(env)
+                  for di = del_count - 1, 0, -1 do
+                    reaper.DeleteEnvelopePointEx(env, -1, di)
+                  end
+
+                  -- Rebuild from snapshot
+                  for _, pt in ipairs(state.env_multi_drag_all_points) do
+                    if pt.is_ours then
+                      -- Selected node: move by dt, dv
+                      local new_t = pt.take_time + dt
+                      local new_v = math.max(env_min_raw, math.min(env_max_raw, pt.value + dv))
+                      reaper.InsertEnvelopePoint(env, new_t, new_v, pt.shape, pt.tension, false, true)
+                    else
+                      -- Non-selected: remove if inside the selected nodes' current span
+                      local dominated = pt.take_time >= span_min - 0.0001
+                                    and pt.take_time <= span_max + 0.0001
+                      if not dominated then
+                        reaper.InsertEnvelopePoint(env, pt.take_time, pt.value, pt.shape, pt.tension, false, true)
+                      end
+                    end
                   end
                   reaper.Envelope_SortPoints(env)
 
-                  -- Re-find indices after sort
+                  -- Re-find indices for selected nodes
                   local count = reaper.CountEnvelopePoints(env)
                   for _, pos in ipairs(state.env_multi_drag_start_positions) do
                     local target_time = pos.take_time + dt
@@ -3017,16 +3080,12 @@ local function loop()
             state.env_tension_dragging = false
             state.env_tension_activated = false
             state.env_tension_point_idx = -1
-            state.env_tension_descending = false
-            state.env_tension_lock_x = nil
-            state.env_tension_lock_y = nil
-            state.env_tension_last_y = nil
-            state.env_tension_cumulative_y = 0
             -- Multi-node drag release
             if state.env_multi_dragging then
               state.env_multi_dragging = false
               state.env_multi_drag_activated = false
               state.env_multi_drag_start_positions = {}
+              state.env_multi_drag_all_points = {}
             end
             state.env_segment_dragging = false
             state.env_segment_activated = false
@@ -3727,6 +3786,7 @@ local function loop()
     state.env_multi_dragging = false
     state.env_multi_drag_activated = false
     state.env_multi_drag_start_positions = {}
+    state.env_multi_drag_all_points = {}
     state.env_selected_nodes = {}
     state.undo_block_open = nil
     state.sticky_item = nil
