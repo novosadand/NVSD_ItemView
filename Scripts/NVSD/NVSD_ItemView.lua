@@ -2860,11 +2860,15 @@ local function loop()
           elseif state.dragging_start and state.marker_drag_activated and not state.dragging_zone
               and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
             local original_source_end = state.drag_start_offset + (state.drag_start_length * state.drag_start_playrate)
+            -- Use frozen view coordinates for stable drag sensitivity (prevents feedback loop
+            -- where the view re-scales each frame and amplifies small mouse movements)
+            local frozen_vs = state.drag_start_view_start
+            local frozen_vl = state.drag_start_view_length
             local new_start
             if mouse_x >= wave_x and mouse_x <= wave_x + waveform_width then
-              new_start = px_to_time(mouse_x)
+              new_start = frozen_vs + ((mouse_x - wave_x) / waveform_width) * frozen_vl
             else
-              local edge_time = mouse_x < wave_x and view_start or view_start + view_length
+              local edge_time = mouse_x < wave_x and frozen_vs or frozen_vs + frozen_vl
               local overflow_px = mouse_x < wave_x and (wave_x - mouse_x) or (mouse_x - wave_x - waveform_width)
               local overflow_time = (overflow_px / waveform_width) * source_length
               new_start = mouse_x < wave_x and (edge_time - overflow_time) or (edge_time + overflow_time)
@@ -2929,11 +2933,14 @@ local function loop()
 
           -- Dragging end marker
           elseif state.dragging_end and state.marker_drag_activated and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
+            -- Use frozen view coordinates for stable drag sensitivity
+            local frozen_vs = state.drag_start_view_start
+            local frozen_vl = state.drag_start_view_length
             local new_end
             if mouse_x >= wave_x and mouse_x <= wave_x + waveform_width then
-              new_end = px_to_time(mouse_x)
+              new_end = frozen_vs + ((mouse_x - wave_x) / waveform_width) * frozen_vl
             else
-              local edge_time = mouse_x < wave_x and view_start or view_start + view_length
+              local edge_time = mouse_x < wave_x and frozen_vs or frozen_vs + frozen_vl
               local overflow_px = mouse_x < wave_x and (wave_x - mouse_x) or (mouse_x - wave_x - waveform_width)
               local overflow_time = (overflow_px / waveform_width) * source_length
               new_end = mouse_x < wave_x and (edge_time - overflow_time) or (edge_time + overflow_time)
