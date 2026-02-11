@@ -363,6 +363,7 @@ local function loop()
           env_freehand = "NVSD_ItemView: Draw envelope freehand",
           env_tension = "NVSD_ItemView: Adjust envelope curve",
           env_segment = "NVSD_ItemView: Move envelope segment",
+          env_segment_click = "NVSD_ItemView: Create envelope point",
           slide_both = "NVSD_ItemView: Slide item",
         }
         local msg = undo_messages[state.undo_block_open] or "NVSD_ItemView: Edit"
@@ -705,6 +706,7 @@ local function loop()
             state.unwrap_tracked_item = item
             state.post_drag_ext_start = nil
             state.post_drag_ext_end = nil
+            state.post_drag_start_offset = nil
           end
 
           if (state.dragging_start or state.dragging_end) and state.marker_drag_activated then
@@ -785,8 +787,11 @@ local function loop()
             local pds = state.post_drag_ext_start
             local pde = state.post_drag_ext_end
             -- Validate: post-drag ext should match current item length (within tolerance)
+            -- Also check start_offset for alt-drag/slide undo detection (slide doesn't change length)
             local expected_length = pde - pds
-            if math.abs(source_item_length - expected_length) < 0.001 then
+            local offset_changed = state.post_drag_start_offset ~= nil
+                and math.abs(start_offset - state.post_drag_start_offset) > 0.001
+            if not offset_changed and math.abs(source_item_length - expected_length) < 0.001 then
               if pds < 0 or pde > source_length then
                 ext_start = math.min(pds, 0)
                 ext_end = math.max(pde, source_length)
@@ -798,6 +803,7 @@ local function loop()
               -- Item changed externally (undo, REAPER edit): discard saved ext
               state.post_drag_ext_start = nil
               state.post_drag_ext_end = nil
+              state.post_drag_start_offset = nil
               if is_looped_item then
                 ext_start = state.unwrapped_start_offset
                 ext_end = state.unwrapped_start_offset + source_item_length
@@ -1557,6 +1563,10 @@ local function loop()
           elseif state.envelopes_visible and shift_held and reaper_is_active
               and state.envelope_hovered_segment >= 0 and state.env_node_hovered_idx < 0 then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
+          elseif state.envelopes_visible and shift_held and reaper_is_active
+              and mouse_in_waveform and state.envelope_hovered_segment < 0
+              and state.env_node_hovered_idx < 0 then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
           elseif state.envelopes_visible and mouse_in_waveform
               and reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl()) then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
@@ -2449,6 +2459,10 @@ local function loop()
                     state.env_segment_start_val1 = v0  -- implicit has same value
                     state.env_segment_start_val2 = v0
                     state.env_segment_activated = false
+                    state.env_segment_click_src_time = state.envelope_hover_time
+                    state.env_segment_click_raw_value = mouse_y_to_raw(mouse_y)
+                    state.env_segment_click_env_name = env_name
+                    state.env_segment_click_env_offset = env_offset
                     if not state.undo_block_open then
                       state.undo_block_open = "env_segment"
                     end
@@ -2469,6 +2483,10 @@ local function loop()
                       state.env_segment_start_val1 = v1
                       state.env_segment_start_val2 = v2
                       state.env_segment_activated = false
+                      state.env_segment_click_src_time = state.envelope_hover_time
+                      state.env_segment_click_raw_value = mouse_y_to_raw(mouse_y)
+                      state.env_segment_click_env_name = env_name
+                      state.env_segment_click_env_offset = env_offset
                       if not state.undo_block_open then
                         state.undo_block_open = "env_segment"
                       end
@@ -2489,11 +2507,48 @@ local function loop()
                     state.env_segment_start_val1 = vN
                     state.env_segment_start_val2 = vN  -- implicit has same value
                     state.env_segment_activated = false
+                    state.env_segment_click_src_time = state.envelope_hover_time
+                    state.env_segment_click_raw_value = mouse_y_to_raw(mouse_y)
+                    state.env_segment_click_env_name = env_name
+                    state.env_segment_click_env_offset = env_offset
                     if not state.undo_block_open then
                       state.undo_block_open = "env_segment"
                     end
                   end
                 end
+              end
+            end
+
+            -- Shift+click in empty waveform space: create envelope node
+            if reaper.ImGui_IsMouseClicked(ctx, 0) and shift_held
+                and not alt_held
+                and mouse_in_waveform
+                and state.envelope_hovered_segment < 0
+                and state.env_node_hovered_idx < 0
+                and not state.dragging_env_node
+                and not state.env_tension_dragging
+                and not state.env_segment_dragging
+                and not state.dragging_start and not state.dragging_end
+                and not state.dragging_fade_in and not state.dragging_fade_out then
+              local env = reaper.GetTakeEnvelopeByName(take, env_name)
+              if not env then
+                env = ensure_take_envelope(item, take, env_name)
+                if env and env_name == "Volume" then
+                  for di = reaper.CountEnvelopePoints(env) - 1, 0, -1 do
+                    reaper.DeleteEnvelopePointEx(env, -1, di)
+                  end
+                end
+              end
+              if env then
+                local src_time = math.max(env_time_min, math.min(env_time_max, px_to_time(mouse_x)))
+                local snapped_src = snap_to_grid_if_enabled(src_time)
+                local take_time = snapped_src - env_offset
+                local raw_val = mouse_y_to_raw(mouse_y)
+                reaper.Undo_BeginBlock()
+                reaper.InsertEnvelopePoint(env, take_time, raw_val, 0, 0, false, true)
+                reaper.Envelope_SortPoints(env)
+                reaper.UpdateArrange()
+                reaper.Undo_EndBlock("NVSD_ItemView: Create envelope point", -1)
               end
             end
 
@@ -2660,6 +2715,7 @@ local function loop()
               -- Save drag ext for seamless transition to non-drag view
               state.post_drag_ext_start = state.drag_current_start
               state.post_drag_ext_end = state.drag_current_end
+              state.post_drag_start_offset = start_offset  -- for undo detection
 
               -- Envelope points are now shifted in realtime during drag, no batch shift needed
               local old_item_length = state.drag_start_length * state.drag_start_playrate
@@ -2741,10 +2797,32 @@ local function loop()
             state.env_tension_lock_y = nil
             state.env_tension_last_y = nil
             state.env_tension_cumulative_y = 0
+            -- Shift+click on segment without dragging: create node at click position
+            if state.env_segment_dragging and not state.env_segment_activated then
+              local seg_env_name = state.env_segment_click_env_name
+              if seg_env_name and state.env_segment_click_src_time then
+                local env = reaper.GetTakeEnvelopeByName(take, seg_env_name)
+                if env then
+                  local snapped_src = snap_to_grid_if_enabled(state.env_segment_click_src_time)
+                  local take_time = snapped_src - state.env_segment_click_env_offset
+                  reaper.InsertEnvelopePoint(env, take_time, state.env_segment_click_raw_value, 0, 0, false, true)
+                  reaper.Envelope_SortPoints(env)
+                  reaper.UpdateArrange()
+                end
+              end
+              -- Replace the segment drag undo with a create-point undo
+              if state.undo_block_open == "env_segment" then
+                state.undo_block_open = "env_segment_click"
+              end
+            end
             state.env_segment_dragging = false
             state.env_segment_activated = false
             state.env_segment_idx1 = -1
             state.env_segment_idx2 = -1
+            state.env_segment_click_src_time = nil
+            state.env_segment_click_raw_value = nil
+            state.env_segment_click_env_name = nil
+            state.env_segment_click_env_offset = nil
           end
 
           -- Mouse button 4/5 quick marker positioning
@@ -3433,6 +3511,10 @@ local function loop()
     state.env_drag_node_idx = -1
     state.env_segment_dragging = false
     state.env_segment_activated = false
+    state.env_segment_click_src_time = nil
+    state.env_segment_click_raw_value = nil
+    state.env_segment_click_env_name = nil
+    state.env_segment_click_env_offset = nil
     state.undo_block_open = nil
     state.sticky_item = nil
     state.sticky_item_valid = false
