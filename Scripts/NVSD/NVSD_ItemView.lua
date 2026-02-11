@@ -664,14 +664,38 @@ local function loop()
           -- Detect looped item and track start_offset wrapping
           local is_looped_item = source_item_length > source_length and source_length > 0
 
+          -- Reset unwrap tracking when item changes
+          if state.unwrap_tracked_item ~= item then
+            state.unwrapped_start_offset = nil
+            state.prev_raw_start_offset = nil
+            state.unwrap_tracked_item = item
+          end
+
           if (state.dragging_start or state.dragging_end) and state.marker_drag_activated then
             -- During active drag: drag state is the authority for unwrapped offset
             state.unwrapped_start_offset = state.drag_current_start
             state.prev_raw_start_offset = start_offset
           elseif is_looped_item then
-            -- Initialize wrap tracking on first frame or item change
-            if state.unwrapped_start_offset == nil then
-              state.unwrapped_start_offset = start_offset
+            -- Initialize or re-validate wrap tracking
+            local needs_init = state.unwrapped_start_offset == nil
+            -- Sanity check: if existing unwrapped range doesn't include [0, source_length], re-init
+            if not needs_init and source_length > 0 then
+              local uw_end = state.unwrapped_start_offset + source_item_length
+              if state.unwrapped_start_offset > source_length * 0.5 or uw_end < source_length * 0.5 then
+                needs_init = true
+              end
+            end
+            if needs_init then
+              -- REAPER stores D_STARTOFFS wrapped to [0, source_length). We need to
+              -- unwrap it so the view range [unwrapped, unwrapped + item_length] includes
+              -- the full original source [0, source_length]. Normalize to (-source_length, 0]
+              -- so the original source is always visible in the view.
+              local initial = start_offset
+              if source_length > 0 then
+                initial = start_offset % source_length
+                if initial > 1e-9 then initial = initial - source_length end
+              end
+              state.unwrapped_start_offset = initial
               state.prev_raw_start_offset = start_offset
             end
 
