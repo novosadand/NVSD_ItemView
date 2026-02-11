@@ -357,8 +357,9 @@ end
 -- Undo block wrapper: wraps fn in Undo_BeginBlock/EndBlock
 function utils.with_undo(label, flags, fn)
   reaper.Undo_BeginBlock()
-  fn()
+  local ok, err = pcall(fn)
   reaper.Undo_EndBlock(label, flags)
+  if not ok then error(err, 2) end
 end
 
 return utils

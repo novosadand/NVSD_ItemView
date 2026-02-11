@@ -147,26 +147,26 @@ function config.refresh_colors()
     colors = config.settings.get_colors()
   end
 
-  config.COLOR_WAVEFORM = colors.waveform
-  config.COLOR_WAVEFORM_INACTIVE = colors.waveform_inactive
-  config.COLOR_WAVEFORM_BG = colors.waveform_bg
-  config.COLOR_CENTERLINE = colors.centerline
-  config.COLOR_MARKER = colors.markers
-  config.COLOR_MARKER_HOVER = colors.markers_hover
-  config.COLOR_BORDER = colors.border
-  config.COLOR_RULER_BG = colors.ruler_bg
-  config.COLOR_RULER_TEXT = colors.ruler_text
-  config.COLOR_RULER_TICK = colors.ruler_tick
-  config.COLOR_GRID_BAR = colors.grid_bar
-  config.COLOR_GRID_BEAT = colors.grid_beat
-  config.COLOR_PLAYHEAD = colors.playhead
-  config.COLOR_INFO_BAR_BG = colors.info_bar_bg
-  config.COLOR_INFO_BAR_TEXT = colors.info_bar_text
-  config.COLOR_INFO_BAR_ICON = colors.info_bar_icon
-  config.COLOR_BTN_ON = colors.btn_on
-  config.COLOR_BTN_OFF = colors.btn_off
-  config.COLOR_BTN_HOVER = colors.btn_hover
-  config.COLOR_BTN_TEXT = colors.btn_text
+  config.COLOR_WAVEFORM = colors.waveform or DEFAULT_COLORS.waveform
+  config.COLOR_WAVEFORM_INACTIVE = colors.waveform_inactive or DEFAULT_COLORS.waveform_inactive
+  config.COLOR_WAVEFORM_BG = colors.waveform_bg or DEFAULT_COLORS.waveform_bg
+  config.COLOR_CENTERLINE = colors.centerline or DEFAULT_COLORS.centerline
+  config.COLOR_MARKER = colors.markers or DEFAULT_COLORS.markers
+  config.COLOR_MARKER_HOVER = colors.markers_hover or DEFAULT_COLORS.markers_hover
+  config.COLOR_BORDER = colors.border or DEFAULT_COLORS.border
+  config.COLOR_RULER_BG = colors.ruler_bg or DEFAULT_COLORS.ruler_bg
+  config.COLOR_RULER_TEXT = colors.ruler_text or DEFAULT_COLORS.ruler_text
+  config.COLOR_RULER_TICK = colors.ruler_tick or DEFAULT_COLORS.ruler_tick
+  config.COLOR_GRID_BAR = colors.grid_bar or DEFAULT_COLORS.grid_bar
+  config.COLOR_GRID_BEAT = colors.grid_beat or DEFAULT_COLORS.grid_beat
+  config.COLOR_PLAYHEAD = colors.playhead or DEFAULT_COLORS.playhead
+  config.COLOR_INFO_BAR_BG = colors.info_bar_bg or DEFAULT_COLORS.info_bar_bg
+  config.COLOR_INFO_BAR_TEXT = colors.info_bar_text or DEFAULT_COLORS.info_bar_text
+  config.COLOR_INFO_BAR_ICON = colors.info_bar_icon or DEFAULT_COLORS.info_bar_icon
+  config.COLOR_BTN_ON = colors.btn_on or DEFAULT_COLORS.btn_on
+  config.COLOR_BTN_OFF = colors.btn_off or DEFAULT_COLORS.btn_off
+  config.COLOR_BTN_HOVER = colors.btn_hover or DEFAULT_COLORS.btn_hover
+  config.COLOR_BTN_TEXT = colors.btn_text or DEFAULT_COLORS.btn_text
 end
 
 -- Pitch shift mode values (I_PITCHMODE)

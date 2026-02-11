@@ -77,6 +77,8 @@ local ui_state = {
   conflict_warning = nil,    -- {shortcut = name, text = "..."} or nil
   conflict_clear_time = 0,   -- Frame counter for auto-clearing warning
   custom_init_from = 0,      -- Index for "Initialize from" combo
+  custom_colors_dirty = false, -- True when custom colors changed but not yet saved to ExtState
+  custom_save_time = 0,      -- Debounce: time of last deferred save request
 }
 
 -- Colors matching main window dark theme
@@ -129,6 +131,14 @@ function settings_ui.close(settings, restore_original)
   if restore_original and settings and ui_state.original_theme_id then
     settings.current.theme_id = ui_state.original_theme_id
     settings.colors_dirty = true
+  end
+  -- Flush any pending custom color changes to ExtState
+  if ui_state.custom_colors_dirty and settings then
+    local custom_theme = settings.get_theme("custom")
+    if custom_theme then
+      settings.save_custom_colors(custom_theme.colors)
+    end
+    ui_state.custom_colors_dirty = false
   end
   ui_state.open = false
   ui_state.original_theme_id = nil
@@ -204,7 +214,7 @@ local function draw_custom_color_editor(ctx, settings)
         local rv, new_rgb = reaper.ImGui_ColorEdit3(ctx, entry.label .. "##" .. entry.key, rgb, edit_flags)
         if rv then
           custom_theme.colors[entry.key] = color_rgb_to_rgba(new_rgb)
-          settings.save_custom_colors(custom_theme.colors)
+          ui_state.custom_colors_dirty = true
           settings.colors_dirty = true
         end
       end
@@ -492,7 +502,7 @@ local HELP_SECTIONS = {
   },
   {
     header = "KEYBOARD SHORTCUTS",
-    body = "All keyboard shortcuts can be rebound in the Shortcuts tab.\nDefault shortcuts:\n  W: Toggle WARP mode\n  M: Toggle mute\n  R: Reverse item\n  X: Clear pitch/speed\n  E: Open in external editor\n  F: Reset zoom to fit\n  +/-: Zoom in/out\n  N: Toggle envelope snap\n  S: Open settings\n  Space: Play/Stop\n  Ctrl+Z/Y: Undo/Redo\n  Ctrl+C: Copy region",
+    body = "All keyboard shortcuts can be rebound in the Shortcuts tab.\nDefault shortcuts:\n  W: Toggle WARP mode\n  M: Toggle mute\n  R: Reverse item\n  C: Clear pitch/speed\n  E: Open in external editor\n  F: Reset zoom to fit\n  +/-: Zoom in/out\n  Ctrl+4: Toggle envelope snap\n  L: Lock envelopes\n  Shift+V/H/P: Show Volume/Pitch/Pan envelope\n  H: Hide envelopes\n  Ctrl+Space: Audio preview\n  S: Open settings\n  Space: Play/Stop\n  Ctrl+Z/Y: Undo/Redo\n  Ctrl+C: Copy region",
   },
   {
     header = "TIPS",
@@ -532,6 +542,19 @@ end
 -- Main draw function
 function settings_ui.draw(ctx, settings)
   if not ui_state.open then return end
+
+  -- Periodic flush of dirty custom colors (every 0.5s) to avoid data loss on crash
+  if ui_state.custom_colors_dirty then
+    local now = reaper.time_precise()
+    if now - ui_state.custom_save_time > 0.5 then
+      local custom_theme = settings.get_theme("custom")
+      if custom_theme then
+        settings.save_custom_colors(custom_theme.colors)
+      end
+      ui_state.custom_colors_dirty = false
+      ui_state.custom_save_time = now
+    end
+  end
 
   reaper.ImGui_SetNextWindowSize(ctx, 420, 600, reaper.ImGui_Cond_FirstUseEver())
 

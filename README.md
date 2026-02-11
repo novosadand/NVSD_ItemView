@@ -106,7 +106,7 @@ All shortcuts below are customizable in Settings > Shortcuts.
 | E | Open in external editor |
 | F | Reset zoom to fit |
 | +/- | Zoom in/out |
-| N | Toggle envelope snap |
+| Ctrl+4 | Toggle envelope snap |
 | L | Lock envelopes |
 | Shift+V | Show Volume envelope |
 | Shift+H | Show Pitch envelope |
