@@ -1070,9 +1070,9 @@ local function loop()
               -- During drag: use live drag position; looped: use unwrapped offset; else: REAPER offset
               local env_time_offset
               if state.dragging_start or state.dragging_end then
-                env_time_offset = state.drag_current_start
+                env_time_offset = state.drag_current_start or start_offset
               elseif is_looped_item then
-                env_time_offset = state.unwrapped_start_offset
+                env_time_offset = state.unwrapped_start_offset or start_offset
               else
                 env_time_offset = start_offset
               end
@@ -2017,9 +2017,9 @@ local function loop()
             -- Envelope coordinate helpers: use live drag offset during drag, unwrapped for looped
             local env_offset
             if state.dragging_start or state.dragging_end then
-              env_offset = state.drag_current_start
+              env_offset = state.drag_current_start or start_offset
             elseif is_looped_item then
-              env_offset = state.unwrapped_start_offset
+              env_offset = state.unwrapped_start_offset or start_offset
             else
               env_offset = start_offset
             end
