@@ -30,8 +30,18 @@ local function has_external_editor()
 end
 controls.has_external_editor = has_external_editor
 
+-- Format a tooltip string with optional shortcut key
+local function tip_with_key(text, settings, shortcut_name)
+  if not settings then return text end
+  local sc = settings.current.shortcuts[shortcut_name]
+  if sc and sc.key ~= "" then
+    return text .. " (" .. settings.format_shortcut(sc) .. ")"
+  end
+  return text
+end
+
 -- Draw WARP/Reverse/Edit buttons in the left column
-function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take, config, state, utils, drawing)
+function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take, config, state, utils, drawing, settings)
   local btn_height = 24
   local btn_margin = 10
   local btn_padding = 8
@@ -75,6 +85,10 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   local warp_text_x = warp_btn_x + (warp_btn_width - warp_text_w) / 2
   local warp_text_y = warp_btn_y + (btn_height - text_height) / 2
   reaper.ImGui_DrawList_AddText(draw_list, warp_text_x, warp_text_y, COLOR_BTN_TEXT, "WARP")
+
+  if mouse_in_warp then
+    drawing.tooltip(ctx, "warp_btn", tip_with_key("Preserve pitch when stretching", settings, "toggle_warp"))
+  end
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_warp then
     state.warp_dropdown_open = false
@@ -177,6 +191,10 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     dropdown_x + dropdown_width - 7, dropdown_y + dropdown_btn_height - 4,
     arrow_color)
 
+  if mouse_in_dropdown and dropdown_enabled and not state.warp_dropdown_open then
+    drawing.tooltip(ctx, "pitch_mode", "Pitch shift algorithm")
+  end
+
   if dropdown_enabled and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_dropdown then
     state.warp_dropdown_open = not state.warp_dropdown_open
   end
@@ -242,6 +260,10 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   local clear_text_y = clear_btn_y + (clear_btn_height - text_height) / 2
   reaper.ImGui_DrawList_AddText(draw_list, clear_text_x, clear_text_y, COLOR_BTN_TEXT, "Clear")
 
+  if mouse_in_clear then
+    drawing.tooltip(ctx, "clear_btn", tip_with_key("Reset pitch and playrate", settings, "clear"))
+  end
+
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_clear then
     if take and item then
       reaper.Undo_BeginBlock()
@@ -283,6 +305,10 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   local rev_text_y = row2_y + (btn_height - text_height) / 2
   reaper.ImGui_DrawList_AddText(draw_list, rev_text_x, rev_text_y, COLOR_BTN_TEXT, "Reverse")
 
+  if mouse_in_rev then
+    drawing.tooltip(ctx, "reverse_btn", tip_with_key("Reverse audio", settings, "reverse"))
+  end
+
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_rev then
     if item then
       -- Save current selection
@@ -320,6 +346,10 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   local edit_text_y = row2_y + (btn_height - text_height) / 2
   reaper.ImGui_DrawList_AddText(draw_list, edit_text_x, edit_text_y, COLOR_BTN_TEXT, "Edit")
 
+  if mouse_in_edit then
+    drawing.tooltip(ctx, "edit_btn", tip_with_key("Open in editor", settings, "open_editor"))
+  end
+
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_edit then
     if item then
       local saved_items = {}
@@ -348,16 +378,18 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 end
 
 -- Draw gain slider with tick marks
-function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_y, panel_split, item, item_vol, config, state, utils)
+function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_y, panel_split, item, item_vol, config, state, utils, drawing)
   local item_db = utils.gain_to_db(item_vol)
   local slider_pos = utils.db_to_slider(item_db)
 
   local slider_x = panel_x + (config.LEFT_PANEL_WIDTH - config.GAIN_SLIDER_WIDTH) / 2 - 2
   local available = panel_split - panel_y
-  local pad = math.max(4, math.min(20, (available - 48) * 0.3))
-  local slider_top = panel_y + pad + 14   -- 14px for "Gain" label
-  local slider_bottom = panel_split - pad - 14  -- 14px for dB text
+  local pad = math.max(2, math.min(20, (available - 40) * 0.25))
+  local label_h = (available < 100) and 10 or 14
+  local slider_top = panel_y + pad + label_h
+  local slider_bottom = panel_split - pad - label_h
   local slider_height = slider_bottom - slider_top
+  if slider_height < 20 then return end
 
   local COLOR_SLIDER_TRACK = 0x404040FF
   local COLOR_SLIDER_FILL = 0x4A90D9FF
@@ -409,6 +441,10 @@ function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, pa
   local handle_color = (mouse_in_slider or state.is_dragging("gain")) and COLOR_SLIDER_HANDLE_HOVER or COLOR_SLIDER_HANDLE
   reaper.ImGui_DrawList_AddRectFilled(draw_list, slider_x - 2, handle_y - handle_height/2, slider_x + config.GAIN_SLIDER_WIDTH + 2, handle_y + handle_height/2, handle_color, 3)
 
+  if mouse_in_slider and not state.is_dragging("gain") and drawing then
+    drawing.tooltip(ctx, "gain_slider", "Item volume\nCtrl+drag for fine control\nDouble-click to reset")
+  end
+
   local double_clicked = reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_slider
   if double_clicked then
     reaper.Undo_BeginBlock()
@@ -455,15 +491,16 @@ function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, pa
   end
 
   local slider_center_x = slider_x + config.GAIN_SLIDER_WIDTH / 2
-  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - 14, panel_y + 2, 0xAAAAAAFF, "Gain")
+  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - 14, panel_y + math.max(1, pad - 4), 0xAAAAAAFF, "Gain")
   local db_text = utils.format_db(item_db)
   local db_text_w = reaper.ImGui_CalcTextSize(ctx, db_text)
-  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - db_text_w / 2, slider_bottom + math.min(6, pad), 0xAAAAAAFF, db_text)
+  local db_gap = math.max(4, math.min(8, pad - 1))
+  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - db_text_w / 2, slider_bottom + db_gap, 0xAAAAAAFF, db_text)
 
 end
 
 -- Draw pan knob
-function controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_top, panel_bottom, item, take, config, state, utils, drawing)
+function controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_top, panel_bottom, item, take, config, state, utils, drawing, settings)
   local take_pan = 0
   if take then
     take_pan = reaper.GetMediaItemTakeInfo_Value(take, "D_PAN")
@@ -481,6 +518,10 @@ function controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel
 
   drawing.draw_knob(draw_list, knob_cx, knob_cy, config.PITCH_KNOB_RADIUS, knob_angle,
     mouse_in_knob, state.is_dragging("pan"), "Pan")
+
+  if mouse_in_knob and not state.is_dragging("pan") then
+    drawing.tooltip(ctx, "pan_knob", "Pan\nDouble-click to reset\nCtrl+drag for fine control")
+  end
 
   -- Pan value label below knob
   local pan_text = utils.format_pan(take_pan)
@@ -567,7 +608,7 @@ local function set_take_pitch(take, semitones, state, utils)
 end
 
 -- Draw pitch knob
-function controls.draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_split, panel_bottom, take, config, state, utils, drawing)
+function controls.draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel_split, panel_bottom, take, config, state, utils, drawing, settings)
   local take_pitch = 0
   if take then
     if state.warp_mode then
@@ -596,6 +637,10 @@ function controls.draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, pan
   local mouse_in_knob = knob_dist <= config.PITCH_KNOB_RADIUS + 8
 
   drawing.draw_knob(draw_list, knob_cx, knob_cy, config.PITCH_KNOB_RADIUS, knob_angle, mouse_in_knob, state.is_dragging("pitch"), "Pitch", "st")
+
+  if mouse_in_knob and not state.is_dragging("pitch") then
+    drawing.tooltip(ctx, "pitch_knob", "Pitch\nDouble-click to reset\nCtrl+drag for fine control")
+  end
 
   local pitch_double_clicked = reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_knob
   if pitch_double_clicked then
@@ -629,7 +674,7 @@ function controls.draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, pan
 end
 
 -- Draw semitones/cents boxes
-function controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, panel_x, knob_cy, take, take_pitch, config, state, utils)
+function controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, panel_x, knob_cy, take, take_pitch, config, state, utils, drawing)
   local display_semitones, display_cents = utils.pitch_to_semitones_cents(take_pitch)
 
   local box_width = 22
@@ -649,6 +694,13 @@ function controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, p
                                  and mouse_y >= box_y and mouse_y <= box_y + box_height
   local mouse_in_cents_box = mouse_x >= box_right_x and mouse_x <= box_right_x + box_width
                              and mouse_y >= box_y and mouse_y <= box_y + box_height
+
+  if mouse_in_semitones_box and not state.is_dragging("semitones") and drawing then
+    drawing.tooltip(ctx, "semitones_box", "Pitch semitones")
+  end
+  if mouse_in_cents_box and not state.is_dragging("cents") and drawing then
+    drawing.tooltip(ctx, "cents_box", "Pitch cents")
+  end
 
   local semitones_border = (mouse_in_semitones_box or state.is_dragging("semitones")) and COLOR_BOX_HOVER or COLOR_BOX_BORDER
   reaper.ImGui_DrawList_AddRectFilled(draw_list, box_left_x, box_y, box_left_x + box_width, box_y + box_height, COLOR_BOX_BG)
@@ -774,6 +826,11 @@ function controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
     reaper.ImGui_DrawList_AddText(draw_list, plus_x, plus_y, COLOR_BTN_TEXT, "+")
   end
 
+  if mouse_in_left then
+    local left_tip = has_fx and "Toggle all FX bypass" or "Add FX to take"
+    drawing.tooltip(ctx, "fx_add_btn", left_tip)
+  end
+
   -- Left button click
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_left then
     if take then
@@ -821,6 +878,10 @@ function controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
   local fx_text_y = right_y + (btn_height - text_height) / 2
   local fx_text_color = has_fx and 0x404040FF or COLOR_BTN_TEXT
   reaper.ImGui_DrawList_AddText(draw_list, fx_text_x, fx_text_y, fx_text_color, fx_text)
+
+  if mouse_in_right then
+    drawing.tooltip(ctx, "fx_chain_btn", has_fx and "Open FX chain\nAlt+click: remove all FX" or "Add FX to take")
+  end
 
   -- Right button click
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_right then

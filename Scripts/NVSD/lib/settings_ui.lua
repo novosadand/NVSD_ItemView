@@ -13,10 +13,26 @@ local EDITABLE_SHORTCUTS = {
   {name = "reset_zoom",   label = "Reset zoom to fit"},
   {name = "zoom_in",      label = "Zoom in"},
   {name = "zoom_out",     label = "Zoom out"},
+  {name = "toggle_snap",  label = "Toggle envelope snap"},
+  {name = "audio_preview", label = "Audio preview"},
+  {name = "envelope_lock", label = "Lock envelopes"},
+  {name = "show_volume_env", label = "Show Volume envelope"},
+  {name = "show_pitch_env", label = "Show Pitch envelope"},
+  {name = "show_pan_env", label = "Show Pan envelope"},
+  {name = "hide_envelopes", label = "Hide envelopes"},
+  {name = "open_settings", label = "Open settings"},
 }
 
--- Static mouse actions (not editable, reference only)
-local MOUSE_SHORTCUTS = {
+-- Reference shortcuts (not editable)
+local REFERENCE_SHORTCUTS = {
+  -- Keyboard (hardcoded, not rebindable)
+  {"Space",          "Play / Stop transport"},
+  {"Ctrl+Z",         "Undo"},
+  {"Ctrl+Y",         "Redo"},
+  {"Escape",         "Clear selection / Close"},
+  {"Delete",         "Delete selected nodes"},
+  {"Ctrl+C",         "Copy region to clipboard"},
+  -- Mouse (not rebindable)
   {"Ctrl + Scroll",  "Zoom in/out"},
   {"Middle Drag",    "Pan waveform"},
   {"Ruler Drag",     "Zoom + Pan"},
@@ -24,6 +40,31 @@ local MOUSE_SHORTCUTS = {
   {"Alt + Drag",     "Slide both markers"},
   {"Mouse 4",        "Set start at cursor"},
   {"Mouse 5",        "Set end at cursor"},
+}
+
+-- Color groups for custom theme editor
+local COLOR_GROUPS = {
+  { name = "Waveform", keys = {
+    {key = "waveform", label = "Waveform"}, {key = "waveform_inactive", label = "Inactive"},
+    {key = "waveform_bg", label = "Background"}, {key = "centerline", label = "Center line"},
+  }},
+  { name = "Markers & Playhead", keys = {
+    {key = "markers", label = "Markers"}, {key = "markers_hover", label = "Hover"},
+    {key = "playhead", label = "Playhead"}, {key = "border", label = "Border"},
+  }},
+  { name = "Grid & Ruler", keys = {
+    {key = "grid_bar", label = "Grid bar"}, {key = "grid_beat", label = "Grid beat"},
+    {key = "ruler_bg", label = "Ruler bg"}, {key = "ruler_text", label = "Ruler text"},
+    {key = "ruler_tick", label = "Ruler tick"},
+  }},
+  { name = "Info Bar", keys = {
+    {key = "info_bar_bg", label = "Background"}, {key = "info_bar_text", label = "Text"},
+    {key = "info_bar_icon", label = "Icon"},
+  }},
+  { name = "Buttons", keys = {
+    {key = "btn_on", label = "On"}, {key = "btn_off", label = "Off"},
+    {key = "btn_hover", label = "Hover"}, {key = "btn_text", label = "Text"},
+  }},
 }
 
 -- UI State
@@ -35,6 +76,7 @@ local ui_state = {
   listening_for = nil,       -- Shortcut name being captured, or nil
   conflict_warning = nil,    -- {shortcut = name, text = "..."} or nil
   conflict_clear_time = 0,   -- Frame counter for auto-clearing warning
+  custom_init_from = 0,      -- Index for "Initialize from" combo
 }
 
 -- Colors matching main window dark theme
@@ -109,6 +151,75 @@ local function draw_swatch(ctx, color, size)
   reaper.ImGui_Dummy(ctx, size, size)
 end
 
+-- Convert 0xRRGGBBAA integer to {r, g, b, a} floats (0..1)
+local function color_int_to_floats(c)
+  return ((c >> 24) & 0xFF) / 255,
+         ((c >> 16) & 0xFF) / 255,
+         ((c >> 8) & 0xFF) / 255,
+         (c & 0xFF) / 255
+end
+
+-- Convert {r, g, b, a} floats (0..1) to 0xRRGGBBAA integer
+local function color_floats_to_int(r, g, b, a)
+  return (math.floor(r * 255 + 0.5) << 24) |
+         (math.floor(g * 255 + 0.5) << 16) |
+         (math.floor(b * 255 + 0.5) << 8) |
+         math.floor(a * 255 + 0.5)
+end
+
+-- Draw custom theme color editor
+local function draw_custom_color_editor(ctx, settings)
+  local custom_theme = settings.get_theme("custom")
+  if not custom_theme then return end
+
+  reaper.ImGui_Spacing(ctx)
+  reaper.ImGui_Separator(ctx)
+  reaper.ImGui_Spacing(ctx)
+
+  -- "Initialize from" combo: copy all colors from a preset theme
+  reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Initialize from:")
+  reaper.ImGui_SameLine(ctx)
+  reaper.ImGui_SetNextItemWidth(ctx, 150)
+  if reaper.ImGui_BeginCombo(ctx, "##init_from", settings.THEMES[ui_state.custom_init_from + 1] and settings.THEMES[ui_state.custom_init_from + 1].name or "Select...") then
+    for i, theme in ipairs(settings.THEMES) do
+      if theme.id ~= "custom" then
+        if reaper.ImGui_Selectable(ctx, theme.name, ui_state.custom_init_from == i - 1) then
+          ui_state.custom_init_from = i - 1
+          -- Copy all colors from selected theme
+          for _, key in ipairs(settings.COLOR_KEYS) do
+            custom_theme.colors[key] = theme.colors[key]
+          end
+          settings.save_custom_colors(custom_theme.colors)
+          settings.colors_dirty = true
+        end
+      end
+    end
+    reaper.ImGui_EndCombo(ctx)
+  end
+
+  reaper.ImGui_Spacing(ctx)
+
+  -- Color groups with collapsing headers
+  local flags_no_inputs = reaper.ImGui_ColorEditFlags_NoInputs()
+  local flags_no_alpha = reaper.ImGui_ColorEditFlags_NoAlpha()
+  local edit_flags = flags_no_inputs | flags_no_alpha
+
+  for _, group in ipairs(COLOR_GROUPS) do
+    if reaper.ImGui_CollapsingHeader(ctx, group.name) then
+      for _, entry in ipairs(group.keys) do
+        local c = custom_theme.colors[entry.key] or 0xFFFFFFFF
+        local r, g, b = color_int_to_floats(c)
+        local rv, nr, ng, nb = reaper.ImGui_ColorEdit3(ctx, entry.label .. "##" .. entry.key, r, g, b, edit_flags)
+        if rv then
+          custom_theme.colors[entry.key] = color_floats_to_int(nr, ng, nb, 1.0)
+          settings.save_custom_colors(custom_theme.colors)
+          settings.colors_dirty = true
+        end
+      end
+    end
+  end
+end
+
 -- Draw Appearance tab content
 local function draw_appearance_tab(ctx, settings)
   -- Cancel listening when switching to Appearance tab
@@ -139,6 +250,11 @@ local function draw_appearance_tab(ctx, settings)
     -- Description
     reaper.ImGui_SameLine(ctx, 220)
     reaper.ImGui_TextColored(ctx, COLORS.text_dim, theme.description)
+  end
+
+  -- Custom theme color editor (only shown when Custom is selected)
+  if ui_state.pending_theme_id == "custom" then
+    draw_custom_color_editor(ctx, settings)
   end
 end
 
@@ -321,14 +437,14 @@ local function draw_shortcuts_tab(ctx, settings)
   reaper.ImGui_Spacing(ctx)
   reaper.ImGui_Separator(ctx)
   reaper.ImGui_Spacing(ctx)
-  reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Mouse Actions (not editable)")
+  reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Reference (not rebindable)")
   reaper.ImGui_Spacing(ctx)
 
-  if reaper.ImGui_BeginTable(ctx, "mouse_shortcuts", 2, reaper.ImGui_TableFlags_None()) then
+  if reaper.ImGui_BeginTable(ctx, "reference_shortcuts", 2, reaper.ImGui_TableFlags_None()) then
     reaper.ImGui_TableSetupColumn(ctx, "Key", reaper.ImGui_TableColumnFlags_WidthFixed(), 120)
     reaper.ImGui_TableSetupColumn(ctx, "Action", reaper.ImGui_TableColumnFlags_WidthStretch())
 
-    for _, entry in ipairs(MOUSE_SHORTCUTS) do
+    for _, entry in ipairs(REFERENCE_SHORTCUTS) do
       reaper.ImGui_TableNextRow(ctx)
       reaper.ImGui_TableNextColumn(ctx)
       reaper.ImGui_TextColored(ctx, COLORS.accent, "  " .. entry[1])
@@ -340,11 +456,92 @@ local function draw_shortcuts_tab(ctx, settings)
   end
 end
 
+-- Help content sections (header + body pairs)
+local HELP_SECTIONS = {
+  {
+    header = "NVSD ItemView",
+    body = "Ableton-style clip view for REAPER audio items.\nSelect an audio item, run the script, and edit start/end points, gain, pitch, envelopes, and more.",
+  },
+  {
+    header = "QUICK START",
+    body = "1. Select an audio item in REAPER\n2. Run the script (Actions > NVSD_ItemView)\n3. Drag the colored markers to adjust start/end points\n4. Use the left panel for gain, pitch, reverse, WARP, and FX\n5. Press Esc to close the script",
+  },
+  {
+    header = "WAVEFORM CONTROLS",
+    body = "Ctrl + Scroll: Zoom in/out\nMiddle-drag: Pan waveform\nRuler drag vertical: Zoom\nRuler drag horizontal: Pan\nMouse 4: Set start at cursor\nMouse 5: Set end at cursor",
+  },
+  {
+    header = "MARKERS",
+    body = "Drag the start/end markers to adjust playback region.\nAlt + drag either marker to slide both together.\nMarkers snap to grid when snap is enabled.",
+  },
+  {
+    header = "LEFT PANEL",
+    body = "Gain slider: Drag to adjust volume. Ctrl+drag for fine control. Double-click to reset.\nPitch knob: Drag to adjust pitch. Double-click to reset.\nPan knob: Drag to adjust pan. Double-click to reset.\nWARP button: Toggle WARP stretch mode.\nReverse button: Reverse the item.\nFX toolbar: Toggle bypass, open FX chain, add/remove FX.",
+  },
+  {
+    header = "ENVELOPES",
+    body = "Shift+V: Show Volume envelope\nShift+H: Show Pitch envelope\nShift+P: Show Pan envelope\nH: Hide envelopes\nL: Lock envelopes in place\n\nDrag nodes to move them. Alt+click to delete.\nDrag segments to move them vertically.\nAlt+drag segments to adjust curve tension.\nShift+click segment to add a node.\nCtrl+drag on empty area for freehand drawing.\nRight-drag to rectangle-select nodes.\nDelete key removes selected nodes.",
+  },
+  {
+    header = "FADES",
+    body = "Drag fade handles at item edges to adjust fade in/out length.\nClick the fade body area to cycle through fade shapes.\nFade shapes: Linear, Fast Start, Fast End, Fast Start Steep, Fast End Steep, Slow Start/End, Slow Start/End Steep.",
+  },
+  {
+    header = "AUDIO PREVIEW",
+    body = "Ctrl+Space: Preview audio from cursor position.\nRequires SWS extension installed.",
+  },
+  {
+    header = "FX TOOLBAR",
+    body = "Left button: Toggle all FX bypass (when FX exist) / Add FX (when empty)\nRight button: Open FX chain window / Alt+click to remove all FX",
+  },
+  {
+    header = "FX LIST",
+    body = "Click: Open/close individual FX window\nShift+click: Toggle individual FX bypass\nAlt+click: Delete individual FX\nCheckbox: Toggle individual FX bypass\nDrag up/down: Reorder FX chain\nRight-click: Context menu (Bypass/Enable, Set Offline/Online, Open Chain, Delete)\nScroll: Mouse wheel to scroll long FX lists",
+  },
+  {
+    header = "KEYBOARD SHORTCUTS",
+    body = "All keyboard shortcuts can be rebound in the Shortcuts tab.\nDefault shortcuts:\n  W: Toggle WARP mode\n  M: Toggle mute\n  R: Reverse item\n  X: Clear pitch/speed\n  E: Open in external editor\n  F: Reset zoom to fit\n  +/-: Zoom in/out\n  N: Toggle envelope snap\n  S: Open settings\n  Space: Play/Stop\n  Ctrl+Z/Y: Undo/Redo\n  Ctrl+C: Copy region",
+  },
+  {
+    header = "TIPS",
+    body = "Map the script to a REAPER action shortcut (Actions > Show action list > search NVSD) for quick toggle on/off.\nThe script auto-docks to the bottom of your REAPER layout.\nGain changes are non-destructive and can be undone.\nWARP mode stretches audio to fit markers without pitch change.\nAll settings persist between sessions via ExtState.",
+  },
+}
+
+-- Draw Help tab content
+local function draw_help_tab(ctx, settings)
+  -- Cancel listening when switching to Help tab
+  if ui_state.listening_for then
+    stop_listening(settings)
+  end
+
+  local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
+  if reaper.ImGui_BeginChild(ctx, "help_scroll", avail_w, avail_h - 40) then
+    for i, section in ipairs(HELP_SECTIONS) do
+      if i == 1 then
+        -- Title section: use accent color
+        reaper.ImGui_TextColored(ctx, COLORS.accent, section.header)
+      else
+        -- Section header: dim color
+        reaper.ImGui_TextColored(ctx, COLORS.text_dim, section.header)
+      end
+      reaper.ImGui_Spacing(ctx)
+      reaper.ImGui_TextWrapped(ctx, section.body)
+      reaper.ImGui_Spacing(ctx)
+      if i < #HELP_SECTIONS then
+        reaper.ImGui_Separator(ctx)
+        reaper.ImGui_Spacing(ctx)
+      end
+    end
+    reaper.ImGui_EndChild(ctx)
+  end
+end
+
 -- Main draw function
 function settings_ui.draw(ctx, settings)
   if not ui_state.open then return end
 
-  reaper.ImGui_SetNextWindowSize(ctx, 380, 560, reaper.ImGui_Cond_FirstUseEver())
+  reaper.ImGui_SetNextWindowSize(ctx, 420, 600, reaper.ImGui_Cond_FirstUseEver())
 
   -- Style: dark background matching main window
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_WindowBg(), COLORS.window_bg)
@@ -379,6 +576,11 @@ function settings_ui.draw(ctx, settings)
       if reaper.ImGui_BeginTabItem(ctx, "Shortcuts") then
         reaper.ImGui_Spacing(ctx)
         draw_shortcuts_tab(ctx, settings)
+        reaper.ImGui_EndTabItem(ctx)
+      end
+      if reaper.ImGui_BeginTabItem(ctx, "Help") then
+        reaper.ImGui_Spacing(ctx)
+        draw_help_tab(ctx, settings)
         reaper.ImGui_EndTabItem(ctx)
       end
       reaper.ImGui_EndTabBar(ctx)

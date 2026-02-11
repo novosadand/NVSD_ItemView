@@ -271,6 +271,44 @@ function state.get_drag_delta(ctx, name, mouse_y, current_value, fine_sensitivit
   return delta_y * sensitivity
 end
 
+-- Reset all drag and interaction flags (used on dialog recovery / focus loss)
+function state.reset_all_drags()
+  state.dragging_start = false
+  state.dragging_end = false
+  state.dragging_fade_in = false
+  state.dragging_fade_out = false
+  state.dragging_fade_curve_in = false
+  state.dragging_fade_curve_out = false
+  state.is_panning = false
+  state.is_ruler_dragging = false
+  state.fx_dragging = false
+  state.fx_drag_activated = false
+  state.dragging_env_node = false
+  state.env_freehand_drawing = false
+  state.env_tension_dragging = false
+  state.env_segment_dragging = false
+  state.env_rect_selecting = false
+  state.env_rect_sel_activated = false
+  state.env_multi_dragging = false
+  state.env_multi_drag_activated = false
+  state.env_multi_drag_start_positions = {}
+  state.env_multi_drag_all_points = {}
+end
+
+-- Check if any interactive drag is active (markers, fades, envelopes, panning, etc.)
+function state.any_drag_active()
+  return state.dragging_start or state.dragging_end
+      or state.dragging_fade_in or state.dragging_fade_out
+      or state.dragging_fade_curve_in or state.dragging_fade_curve_out
+      or state.dragging_env_node or state.env_freehand_drawing
+      or state.env_tension_dragging or state.env_segment_dragging
+      or state.env_multi_dragging or state.selecting_region
+      or state.is_panning or state.is_ruler_dragging
+      or state.fx_dragging or state.env_rect_selecting
+      or state.pitch_gutter_dragging
+      or state.is_any_control_dragging()
+end
+
 -- Force peak reload next frame (e.g., after reverse changes the source)
 function state.invalidate_view_peaks()
   state.view_peaks = nil

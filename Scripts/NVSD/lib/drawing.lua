@@ -3,175 +3,50 @@
 
 local drawing = {}
 
+-- Tooltip system: tracks hover time per element ID, shows tooltip after delay
+local tooltip_hover_id = nil
+local tooltip_hover_time = 0
+local tooltip_last_frame = 0
+local TOOLTIP_DELAY = 1.5
+local frame_time = 0  -- Cached time for current frame (set once per frame)
+
+-- Call once per frame from main loop to cache the current time
+function drawing.set_frame_time(t)
+  frame_time = t
+end
+
+function drawing.tooltip(ctx, id, text)
+  local now = frame_time > 0 and frame_time or reaper.time_precise()
+  -- Reset if different element or gap since last frame (>50ms = missed a frame)
+  if tooltip_hover_id ~= id or (now - tooltip_last_frame) > 0.05 then
+    tooltip_hover_id = id
+    tooltip_hover_time = now
+  end
+  tooltip_last_frame = now
+  if now - tooltip_hover_time >= TOOLTIP_DELAY then
+    reaper.ImGui_SetTooltip(ctx, text)
+  end
+end
+
 -- Linear passthrough (matches REAPER's native waveform display - no compression)
 local function power_curve(value)
   return value
 end
 
--- Fade system: exact cubic Bezier curves from REAPER (SWS/BR_Util.cpp, courtesy of Cockos)
--- Each b-array = {cx1, cy1, cx2, cy2} for cubic Bezier from (0,0) to (1,1)
-local B = {
-  b0  = {0.5, 0.5, 0.5, 0.5},         -- Linear
-  b1  = {0.25, 0.5, 0.625, 1.0},       -- Fast start
-  b2  = {0.375, 0.0, 0.75, 0.5},       -- Slow start
-  b3  = {0.25, 1.0, 0.5, 1.0},         -- Fast start steep
-  b4  = {0.5, 0.0, 0.75, 0.0},         -- Slow start steep
-  b5  = {0.375, 0.0, 0.625, 1.0},      -- S-curve
-  b6  = {0.875, 0.0, 0.125, 1.0},      -- S-curve steep
-  b7  = {0.25, 0.375, 0.625, 1.0},     -- (unused in shapes 0-6)
-  b4i = {0.0, 1.0, 0.125, 1.0},        -- Inverted b4
-  b50 = {0.25, 0.25, 0.25, 1.0},       -- Shape 5 negative dir extreme
-  b51 = {0.75, 0.0, 0.75, 0.75},       -- Shape 5 positive dir extreme
-  b60 = {0.375, 0.25, 0.0, 1.0},       -- Shape 6 negative dir extreme
-  b61 = {1.0, 0.0, 0.625, 0.75},       -- Shape 6 positive dir extreme
-}
+-- Load fade curves module (pure math, no REAPER dependency)
+local lib_path = debug.getinfo(1, "S").source:match("@(.+)[/\\]") .. "/"
+local fade_curves = dofile(lib_path .. "fade_curves.lua")
 
--- Evaluate cubic Bezier Y at position t (finds Bezier parameter via Newton's method)
-local function cbez_y(bx1, by1, bx2, by2, bx3, by3, bx4, by4, t)
-  if t <= 0 then return by1 end
-  if t >= 1 then return by4 end
-  local u = t
-  for _ = 1, 8 do
-    local mu = 1 - u
-    local ex = mu*mu*mu*bx1 + 3*mu*mu*u*bx2 + 3*mu*u*u*bx3 + u*u*u*bx4
-    local dx = 3*mu*mu*(bx2-bx1) + 6*mu*u*(bx3-bx2) + 3*u*u*(bx4-bx3)
-    if math.abs(dx) < 1e-10 then break end
-    u = u - (ex - t) / dx
-    if u < 0 then u = 0 elseif u > 1 then u = 1 end
-  end
-  local mu = 1 - u
-  return mu*mu*mu*by1 + 3*mu*mu*u*by2 + 3*mu*u*u*by3 + u*u*u*by4
-end
-
--- Compute REAPER fade Bezier control points: exact port of GetMediaItemFadeBezParms
--- Returns bx1..4, by1..4 (the 4 Bezier control point coordinates)
-local function get_fade_bez(shape, dir, is_fade_out)
-  shape = shape or 0
-  dir = dir or 0
-  local x1, y1, x4, y4
-  if not is_fade_out then
-    x1, y1, x4, y4 = 0, 0, 1, 1
-  else
-    x1, y1, x4, y4 = 0, 1, 1, 0
-  end
-  if shape < 0 or shape > 6 then shape = 0; dir = 0 end
-  if is_fade_out then dir = -dir end
-
-  local x2, y2, x3, y3
-  if dir < 0 then
-    local w0, w1 = -dir, 1 + dir
-    local ba, bb
-    if     shape == 1 then ba, bb = B.b4i, B.b1
-    elseif shape == 2 then ba, bb = B.b1,  B.b0
-    elseif shape == 5 then ba, bb = B.b50, B.b5
-    elseif shape == 6 then ba, bb = B.b60, B.b6
-    else                   ba, bb = B.b3,  B.b0 end
-    x2 = w0*ba[1] + w1*bb[1]; y2 = w0*ba[2] + w1*bb[2]
-    x3 = w0*ba[3] + w1*bb[3]; y3 = w0*ba[4] + w1*bb[4]
-  elseif dir > 0 then
-    local w0, w1 = 1 - dir, dir
-    local ba, bb
-    if     shape == 1 then ba, bb = B.b1, B.b4
-    elseif shape == 2 then ba, bb = B.b0, B.b2
-    elseif shape == 5 then ba, bb = B.b5, B.b51
-    elseif shape == 6 then ba, bb = B.b6, B.b61
-    else                   ba, bb = B.b0, B.b4 end
-    x2 = w0*ba[1] + w1*bb[1]; y2 = w0*ba[2] + w1*bb[2]
-    x3 = w0*ba[3] + w1*bb[3]; y3 = w0*ba[4] + w1*bb[4]
-  else
-    local b
-    if     shape == 1 then b = B.b1
-    elseif shape == 5 then b = B.b5
-    elseif shape == 6 then b = B.b6
-    else                   b = B.b0 end
-    x2, y2, x3, y3 = b[1], b[2], b[3], b[4]
-  end
-
-  if is_fade_out then
-    local ox2, ox3 = x2, x3
-    x2 = 1 - ox3; x3 = 1 - ox2
-    y2, y3 = y3, y2
-  end
-  return x1, y1, x2, y2, x3, y3, x4, y4
-end
-
--- Canonical fade shape curves: exact math per shape
--- (the Bezier system makes shapes 0/2/3/4 identical (linear) at dir=0)
-local shape_icon_fns = {
-  [0] = function(x) return x end,                                       -- Linear
-  [1] = function(x) return 1 - (1-x)*(1-x) end,                        -- Fast start
-  [2] = function(x) return x*x end,                                     -- Slow start
-  [3] = function(x) return 1 - (1-x)^4 end,                             -- Fast start steep
-  [4] = function(x) return x^4 end,                                      -- Slow start steep
-  [5] = function(x) return (1 - math.cos(math.pi * x)) * 0.5 end,      -- S-curve
-  [6] = function(x)                                                       -- S-curve steep
-    if x < 0.5 then return 8*x*x*x*x else local t=1-x; return 1-8*t*t*t*t end
-  end,
-}
-
--- Evaluate REAPER fade amplitude at position t (0..1)
--- Returns amplitude: 0..1 for fade-in, 1..0 for fade-out
--- When dir=0, uses exact mathematical curves (the Bezier system renders
--- shapes 2/3/4 as linear at dir=0, but REAPER uses their canonical curves)
-local function eval_fade(t, shape, dir, is_fade_out)
-  dir = dir or 0
-  if math.abs(dir) < 0.001 and shape >= 0 and shape <= 6 then
-    local fn = shape_icon_fns[shape]
-    if is_fade_out then return fn(1 - t) end
-    return fn(t)
-  end
-  local x1,y1, x2,y2, x3,y3, x4,y4 = get_fade_bez(shape, dir, is_fade_out)
-  return cbez_y(x1,y1, x2,y2, x3,y3, x4,y4, t)
-end
-
--- Cached fade LUT for per-pixel rendering (avoids Newton's per pixel)
-local FADE_LUT_SIZE = 256
-local fade_lut_cache = {
-  fi = { shape = -1, dir = -999, lut = {} },
-  fo = { shape = -1, dir = -999, lut = {} },
-}
-
-local function get_fade_lut(shape, dir, is_fade_out)
-  local c = fade_lut_cache[is_fade_out and "fo" or "fi"]
-  if c.shape == shape and c.dir == dir then return c.lut end
-  local lut = c.lut
-  if math.abs(dir) < 0.001 and shape >= 0 and shape <= 6 then
-    -- dir=0: use exact mathematical curves (matches REAPER's canonical shapes)
-    local fn = shape_icon_fns[shape]
-    if is_fade_out then
-      for i = 0, FADE_LUT_SIZE do lut[i] = fn(1 - i / FADE_LUT_SIZE) end
-    else
-      for i = 0, FADE_LUT_SIZE do lut[i] = fn(i / FADE_LUT_SIZE) end
-    end
-  else
-    -- dir!=0: use Bezier interpolation system for curvature-adjusted curves
-    local x1,y1, x2,y2, x3,y3, x4,y4 = get_fade_bez(shape, dir, is_fade_out)
-    for i = 0, FADE_LUT_SIZE do
-      lut[i] = cbez_y(x1,y1, x2,y2, x3,y3, x4,y4, i / FADE_LUT_SIZE)
-    end
-  end
-  c.shape = shape; c.dir = dir
-  return lut
-end
-
-local function fade_lut_lookup(lut, t)
-  if t <= 0 then return lut[0] end
-  if t >= 1 then return lut[FADE_LUT_SIZE] end
-  local idx = t * FADE_LUT_SIZE
-  local i = math.floor(idx)
-  return lut[i] + (lut[i + 1] - lut[i]) * (idx - i)
-end
-
--- Shape icon LUTs (pre-computed from shape_icon_fns for icon rendering)
-local shape_icon_luts = {}
-for s = 0, 6 do
-  local lut = {}
-  local fn = shape_icon_fns[s]
-  for i = 0, FADE_LUT_SIZE do
-    lut[i] = fn(i / FADE_LUT_SIZE)
-  end
-  shape_icon_luts[s] = lut
-end
+-- Import fade curve functions as locals for performance (same names as before extraction)
+local B = fade_curves.B
+local cbez_y = fade_curves.cbez_y
+local get_fade_bez = fade_curves.get_fade_bez
+local shape_icon_fns = fade_curves.shape_icon_fns
+local eval_fade = fade_curves.eval_fade
+local FADE_LUT_SIZE = fade_curves.FADE_LUT_SIZE
+local get_fade_lut = fade_curves.get_fade_lut
+local fade_lut_lookup = fade_curves.fade_lut_lookup
+local shape_icon_luts = fade_curves.shape_icon_luts
 
 -- Compute the curve Y position at a given t (0..1) within the fade region.
 -- Returns the pixel Y where the curve line sits.
@@ -353,9 +228,9 @@ local function compute_grid_params(x, width, view_start, view_length, item_posit
   if beats_per_bar < 1 then beats_per_bar = 4 end
 
   local _, start_measures = reaper.TimeMap2_timeToBeats(0, project_start)
-  local first_bar = math.floor(start_measures)
+  local first_bar = math.floor(start_measures) - 1
 
-  local min_bar_spacing = 80
+  local min_bar_spacing = 140
   local avg_bar_duration = 60 / bpm * beats_per_bar
   local px_per_bar = (avg_bar_duration / view_length) * width
   local bar_skip = math.max(1, math.ceil(min_bar_spacing / px_per_bar))
@@ -368,7 +243,7 @@ local function compute_grid_params(x, width, view_start, view_length, item_posit
 
   -- Sub-beat subdivision depth (powers of 2: 2=eighths, 4=sixteenths, 8=32nds, etc.)
   local finest_sub = 1
-  while (px_per_beat / (finest_sub * 2)) >= 8 do
+  while (px_per_beat / (finest_sub * 2)) >= 20 do
     finest_sub = finest_sub * 2
   end
   local quarter_step = finest_sub >= 4 and (finest_sub / 4) or nil
@@ -390,66 +265,89 @@ local function compute_grid_params(x, width, view_start, view_length, item_posit
     view_start = view_start, view_end = view_end,
     project_start = project_start, project_end = project_end,
     beats_per_bar = beats_per_bar, first_bar = first_bar,
-    bar_skip = bar_skip, px_per_beat = px_per_beat,
+    bar_skip = bar_skip, px_per_beat = px_per_beat, px_per_bar = px_per_bar,
     finest_sub = finest_sub, quarter_step = quarter_step,
-    sub_grid_color = dim_color(config.COLOR_GRID_BEAT, 0.7),
+    inter_bar_color = dim_color(config.COLOR_GRID_BAR, 0.78),
+    sub_grid_color = dim_color(config.COLOR_GRID_BAR, 0.65),
     sub_label_color = dim_color(0x555555FF, 0.75),
     -- Ruler tick colors: derive from RULER_TICK so they're visible on ruler bg
     beat_tick_color = config.COLOR_RULER_TICK,
+    inter_tick_color = dim_color(config.COLOR_RULER_TICK, 0.78),
     sub_tick_color = dim_color(config.COLOR_RULER_TICK, 0.7),
     dim_color = dim_color,
   }
 end
 
+-- Per-frame grid params cache (avoids computing twice per frame for grid+ruler)
+local grid_cache = { x = -1, width = -1, view_start = -1, view_length = -1, result = nil }
+
+local function get_grid_params(x, width, view_start, view_length, item_position, start_offset, playrate, config, utils)
+  if grid_cache.x == x and grid_cache.width == width
+      and grid_cache.view_start == view_start and grid_cache.view_length == view_length then
+    return grid_cache.result
+  end
+  local g = compute_grid_params(x, width, view_start, view_length, item_position, start_offset, playrate, config, utils)
+  grid_cache.x = x; grid_cache.width = width
+  grid_cache.view_start = view_start; grid_cache.view_length = view_length
+  grid_cache.result = g
+  return g
+end
+
 -- Draw vertical grid lines through the waveform area (call BEFORE waveform)
 function drawing.draw_grid_lines(draw_list, x, wave_y, width, wave_height,
                                   view_start, view_length, item_position, start_offset, playrate, config, utils)
-  local g = compute_grid_params(x, width, view_start, view_length, item_position, start_offset, playrate, config, utils)
-  local show_beat_grid = g.px_per_beat >= 20
+  local g = get_grid_params(x, width, view_start, view_length, item_position, start_offset, playrate, config, utils)
+  local show_beat_grid = g.px_per_beat >= 40
+  local DL_AddLine = reaper.ImGui_DrawList_AddLine
+  local p2s = utils.project_to_source_time
 
-  -- Align first_bar to bar_skip boundary so lines are stable when panning
-  local bar = g.first_bar - (g.first_bar % g.bar_skip)
+  -- Adaptive density: iterate at half bar_skip to show intermediate bar lines
+  local draw_skip = (g.bar_skip >= 2) and (g.bar_skip / 2) or g.bar_skip
+  local bar = g.first_bar - (g.first_bar % draw_skip)
   local iterations = 0
   while iterations < 1000 do
     iterations = iterations + 1
     local bar_project_time = reaper.TimeMap2_beatsToTime(0, 0, bar)
     if bar_project_time > g.project_end then break end
 
-    local bar_source_time = utils.project_to_source_time(bar_project_time, item_position, start_offset, playrate)
+    local bar_source_time = p2s(bar_project_time, item_position, start_offset, playrate)
     if bar_source_time >= g.view_start and bar_source_time <= g.view_end then
       local bar_px = g.time_to_px(bar_source_time)
-      reaper.ImGui_DrawList_AddLine(draw_list, bar_px, wave_y, bar_px, wave_y + wave_height, config.COLOR_GRID_BAR, 1)
+      local is_major = (g.bar_skip < 2) or (bar % g.bar_skip == 0)
+      local bar_color = is_major and config.COLOR_GRID_BAR or g.inter_bar_color
+      DL_AddLine(draw_list, bar_px, wave_y, bar_px, wave_y + wave_height, bar_color, 1)
     end
 
-    -- Beat grid lines (only when not skipping bars)
+    -- Beat grid lines (only when showing every bar)
     if show_beat_grid and g.bar_skip == 1 then
       for beat = 1, g.beats_per_bar - 1 do
         local beat_project_time = reaper.TimeMap2_beatsToTime(0, beat, bar)
         if beat_project_time > g.project_end then break end
-        local beat_source_time = utils.project_to_source_time(beat_project_time, item_position, start_offset, playrate)
+        local beat_source_time = p2s(beat_project_time, item_position, start_offset, playrate)
         if beat_source_time >= g.view_start and beat_source_time <= g.view_end then
-          reaper.ImGui_DrawList_AddLine(draw_list, g.time_to_px(beat_source_time), wave_y, g.time_to_px(beat_source_time), wave_y + wave_height, config.COLOR_GRID_BEAT, 1)
+          local beat_px = g.time_to_px(beat_source_time)
+          DL_AddLine(draw_list, beat_px, wave_y, beat_px, wave_y + wave_height, config.COLOR_GRID_BEAT, 1)
         end
       end
     end
 
-    -- Sub-beat grid lines (only when not skipping bars)
+    -- Sub-beat grid lines (only when showing every bar)
     if g.finest_sub >= 2 and g.bar_skip == 1 then
       for beat = 0, g.beats_per_bar - 1 do
         for sub = 1, g.finest_sub - 1 do
           local sub_project_time = reaper.TimeMap2_beatsToTime(0, beat + (sub / g.finest_sub), bar)
           if sub_project_time > g.project_end then break end
-          local sub_source_time = utils.project_to_source_time(sub_project_time, item_position, start_offset, playrate)
+          local sub_source_time = p2s(sub_project_time, item_position, start_offset, playrate)
           if sub_source_time >= g.view_start and sub_source_time <= g.view_end then
             local is_quarter = g.quarter_step and (sub % g.quarter_step == 0)
             local grid_col = is_quarter and config.COLOR_GRID_BEAT or g.sub_grid_color
-            reaper.ImGui_DrawList_AddLine(draw_list, g.time_to_px(sub_source_time), wave_y, g.time_to_px(sub_source_time), wave_y + wave_height, grid_col, 1)
+            DL_AddLine(draw_list, g.time_to_px(sub_source_time), wave_y, g.time_to_px(sub_source_time), wave_y + wave_height, grid_col, 1)
           end
         end
       end
     end
 
-    bar = bar + g.bar_skip
+    bar = bar + draw_skip
   end
 end
 
@@ -458,76 +356,88 @@ function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler
                                       view_start, view_length, item_position, start_offset, playrate, config, utils)
   reaper.ImGui_DrawList_AddRectFilled(draw_list, x, ruler_y, x + width, ruler_y + ruler_height, config.COLOR_RULER_BG)
 
-  local g = compute_grid_params(x, width, view_start, view_length, item_position, start_offset, playrate, config, utils)
+  local g = get_grid_params(x, width, view_start, view_length, item_position, start_offset, playrate, config, utils)
   local show_beat_labels = g.px_per_beat >= 70
-  local show_beat_ticks = g.px_per_beat >= 28
+  local show_beat_ticks = g.px_per_beat >= 40
   -- Sub-beat ruler ticks: only at quarter-beat positions, need decent spacing
   local show_sub_ticks = g.quarter_step and (g.px_per_beat / 4) >= 35
   -- Sub-beat labels: only when really zoomed in (each quarter-beat has plenty of room)
   local show_sub_labels = g.quarter_step and (g.px_per_beat / 4) >= 90
   local beat_label_color = 0x555555FF
+  local DL_AddLine = reaper.ImGui_DrawList_AddLine
+  local DL_AddText = reaper.ImGui_DrawList_AddText
+  local p2s = utils.project_to_source_time
 
-  -- Align first_bar to bar_skip boundary
-  local bar = g.first_bar - (g.first_bar % g.bar_skip)
+  -- Adaptive density: iterate at half bar_skip to show intermediate bar ticks
+  local draw_skip = (g.bar_skip >= 2) and (g.bar_skip / 2) or g.bar_skip
+  local inter_label_color = g.dim_color(config.COLOR_RULER_TEXT, 0.75)
+  local bar = g.first_bar - (g.first_bar % draw_skip)
   local iterations = 0
   while iterations < 1000 do
     iterations = iterations + 1
     local bar_project_time = reaper.TimeMap2_beatsToTime(0, 0, bar)
     if bar_project_time > g.project_end then break end
 
-    local bar_source_time = utils.project_to_source_time(bar_project_time, item_position, start_offset, playrate)
+    local bar_source_time = p2s(bar_project_time, item_position, start_offset, playrate)
 
     if bar_source_time >= g.view_start and bar_source_time <= g.view_end then
       local bar_px = g.time_to_px(bar_source_time)
-      reaper.ImGui_DrawList_AddLine(draw_list, bar_px, ruler_y, bar_px, ruler_y + ruler_height, config.COLOR_RULER_TICK, 1)
-      reaper.ImGui_DrawList_AddText(draw_list, bar_px + 3, ruler_y + 3, config.COLOR_RULER_TEXT, tostring(bar + 1))
+      local is_major = (g.bar_skip < 2) or (bar % g.bar_skip == 0)
+      if is_major then
+        DL_AddLine(draw_list, bar_px, ruler_y, bar_px, ruler_y + ruler_height, config.COLOR_RULER_TICK, 1)
+        DL_AddText(draw_list, bar_px + 3, ruler_y + 3, config.COLOR_RULER_TEXT, tostring(bar + 1))
+      else
+        local tick_top = ruler_y + ruler_height - math.floor(ruler_height * 0.6)
+        DL_AddLine(draw_list, bar_px, tick_top, bar_px, ruler_y + ruler_height, g.inter_tick_color, 1)
+        DL_AddText(draw_list, bar_px + 3, ruler_y + 3, inter_label_color, tostring(bar + 1))
+      end
     end
 
-    -- Beat ticks and labels in ruler (only when not skipping bars)
+    -- Beat ticks and labels in ruler (only when showing every bar)
     if show_beat_ticks and g.bar_skip == 1 then
       for beat = 1, g.beats_per_bar - 1 do
         local beat_project_time = reaper.TimeMap2_beatsToTime(0, beat, bar)
         if beat_project_time > g.project_end then break end
-        local beat_source_time = utils.project_to_source_time(beat_project_time, item_position, start_offset, playrate)
+        local beat_source_time = p2s(beat_project_time, item_position, start_offset, playrate)
         if beat_source_time >= g.view_start and beat_source_time <= g.view_end then
           local beat_px = g.time_to_px(beat_source_time)
           local tick_top = ruler_y + ruler_height - math.floor(ruler_height * 0.5)
-          reaper.ImGui_DrawList_AddLine(draw_list, beat_px, tick_top, beat_px, ruler_y + ruler_height, g.beat_tick_color, 1)
+          DL_AddLine(draw_list, beat_px, tick_top, beat_px, ruler_y + ruler_height, g.beat_tick_color, 1)
           if show_beat_labels then
-            reaper.ImGui_DrawList_AddText(draw_list, beat_px + 3, ruler_y + 3, beat_label_color, (bar + 1) .. "." .. (beat + 1))
+            DL_AddText(draw_list, beat_px + 3, ruler_y + 3, beat_label_color, (bar + 1) .. "." .. (beat + 1))
           end
         end
       end
     end
 
-    -- Sub-beat ticks and labels in ruler (only when not skipping bars)
+    -- Sub-beat ticks and labels in ruler (only when showing every bar)
     if g.quarter_step and g.bar_skip == 1 and (show_sub_ticks or show_sub_labels) then
       for beat = 0, g.beats_per_bar - 1 do
         for q = 1, 3 do
           local beat_frac = beat + (q / 4)
           local sub_project_time = reaper.TimeMap2_beatsToTime(0, beat_frac, bar)
           if sub_project_time > g.project_end then break end
-          local sub_source_time = utils.project_to_source_time(sub_project_time, item_position, start_offset, playrate)
+          local sub_source_time = p2s(sub_project_time, item_position, start_offset, playrate)
           if sub_source_time >= g.view_start and sub_source_time <= g.view_end then
             local sub_px = g.time_to_px(sub_source_time)
 
             if show_sub_ticks then
               local tick_h = math.floor(ruler_height * 0.3)
-              reaper.ImGui_DrawList_AddLine(draw_list, sub_px, ruler_y + ruler_height - tick_h, sub_px, ruler_y + ruler_height, g.sub_tick_color, 1)
+              DL_AddLine(draw_list, sub_px, ruler_y + ruler_height - tick_h, sub_px, ruler_y + ruler_height, g.sub_tick_color, 1)
             end
 
             if show_sub_labels then
-              reaper.ImGui_DrawList_AddText(draw_list, sub_px + 3, ruler_y + 3, g.sub_label_color, (bar + 1) .. "." .. (beat + 1) .. "." .. (q + 1))
+              DL_AddText(draw_list, sub_px + 3, ruler_y + 3, g.sub_label_color, (bar + 1) .. "." .. (beat + 1) .. "." .. (q + 1))
             end
           end
         end
       end
     end
 
-    bar = bar + g.bar_skip
+    bar = bar + draw_skip
   end
 
-  reaper.ImGui_DrawList_AddLine(draw_list, x, ruler_y + ruler_height, x + width, ruler_y + ruler_height, config.COLOR_GRID_BAR, 1)
+  DL_AddLine(draw_list, x, ruler_y + ruler_height, x + width, ruler_y + ruler_height, config.COLOR_GRID_BAR, 1)
 end
 
 -- Draw bottom time ruler showing source time
@@ -577,7 +487,7 @@ end
 
 -- Draw file info bar at the top
 -- Returns: mouse_over_filename, gear_clicked, tab_clicked
-function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file_path, mouse_x, mouse_y, item, config, utils, actual_num_channels, state)
+function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file_path, mouse_x, mouse_y, item, config, utils, actual_num_channels, state, settings)
   reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, config.COLOR_INFO_BAR_BG)
   reaper.ImGui_DrawList_AddLine(draw_list, x, y + height, x + width, y + height, 0x333333FF, 1)
 
@@ -613,6 +523,10 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   -- Inner hole
   reaper.ImGui_DrawList_AddCircleFilled(draw_list, gear_cx, gear_cy, inner_r * 0.6, config.COLOR_INFO_BAR_BG, 12)
 
+  if mouse_in_gear then
+    drawing.tooltip(ctx, "gear_icon", "Settings")
+  end
+
   local gear_clicked = mouse_in_gear and reaper.ImGui_IsMouseClicked(ctx, 0)
 
   -- Right boundary for filename text (don't overlap gear icon)
@@ -634,6 +548,17 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   if not is_muted then
     local fill_color = mouse_in_mute and 0x6ABF6AFF or config.COLOR_WAVEFORM
     reaper.ImGui_DrawList_AddRectFilled(draw_list, mute_x + 1, mute_y + 1, mute_x + mute_size - 1, mute_y + mute_size - 1, fill_color)
+  end
+
+  if mouse_in_mute then
+    local mute_tip = "Toggle mute"
+    if settings then
+      local mute_shortcut = settings.current.shortcuts.toggle_mute
+      if mute_shortcut and mute_shortcut.key ~= "" then
+        mute_tip = mute_tip .. " (" .. settings.format_shortcut(mute_shortcut) .. ")"
+      end
+    end
+    drawing.tooltip(ctx, "mute_btn", mute_tip)
   end
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_mute then
@@ -746,6 +671,10 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   end
 
   reaper.ImGui_DrawList_PopClipRect(draw_list)
+
+  if mouse_over_filename then
+    drawing.tooltip(ctx, "filename", "Click to show in explorer")
+  end
 
   if mouse_over_filename and reaper.ImGui_IsMouseClicked(ctx, 0) then
     reaper.Main_OnCommand(41623, 0)
@@ -1255,6 +1184,10 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
     btn_x + btn_w - 7, btn_y + 4,
     arrow_color)
 
+  if mouse_in_btn and not state.envelope_dropdown_open then
+    drawing.tooltip(ctx, "env_dropdown", "Envelope type")
+  end
+
   -- Toggle dropdown on click
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_btn then
     state.envelope_dropdown_open = not state.envelope_dropdown_open
@@ -1297,7 +1230,7 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
     state.envelope_lock = not state.envelope_lock
   end
   if mouse_in_lock then
-    reaper.ImGui_SetTooltip(ctx, "Lock envelopes in place")
+    drawing.tooltip(ctx, "env_lock_btn", "Lock envelopes in place")
   end
 
 end
@@ -1628,6 +1561,11 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
       db_marks = { {-1e9, "-inf"}, {-48, "-48"}, {-24, "-24"}, {-12, "-12"}, {0, "0 dB"}, {6, "+6"} }
     end
 
+    -- Volume-specific dimmer grid colors (shared constants are too bright for Volume)
+    local vol_grid = 0xFFFFFF08
+    local vol_grid_octave = 0xFFFFFF12
+    local vol_grid_center = 0xFFFFFF28
+
     for _, mark in ipairs(db_marks) do
       local db_val, label = mark[1], mark[2]
       local raw
@@ -1641,15 +1579,15 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
       if ly >= wave_y and ly <= wave_y + waveform_height then
         local color
         if db_val == 0 then
-          color = config.COLOR_ENV_GRID_CENTER
+          color = vol_grid_center
         elseif db_val == -12 or db_val == -24 or db_val == 6 then
-          color = config.COLOR_ENV_GRID_OCTAVE
+          color = vol_grid_octave
         else
-          color = config.COLOR_ENV_GRID
+          color = vol_grid
         end
         DL_AddLine(draw_list, wave_x, ly, wave_x + waveform_width, ly, color, 1)
         local tw = reaper.ImGui_CalcTextSize(ctx, label)
-        local label_color = (db_val == 0) and config.COLOR_ENV_GRID_CENTER or config.COLOR_ENV_GRID_LABEL
+        local label_color = (db_val == 0) and vol_grid_center or 0xFFFFFF44
         -- Clamp label Y to stay within waveform bounds (text is ~12px tall)
         local text_y = ly - 6
         if text_y < wave_y then text_y = wave_y end
@@ -1978,5 +1916,19 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
 
   reaper.ImGui_DrawList_PopClipRect(draw_list)
 end
+
+-- Expose internals for unit testing
+drawing._test = {
+  B = B,
+  cbez_y = cbez_y,
+  get_fade_bez = get_fade_bez,
+  eval_fade = eval_fade,
+  FADE_LUT_SIZE = FADE_LUT_SIZE,
+  get_fade_lut = get_fade_lut,
+  fade_lut_lookup = fade_lut_lookup,
+  shape_icon_fns = shape_icon_fns,
+  compute_grid_params = compute_grid_params,
+  fade_curves = fade_curves,
+}
 
 return drawing

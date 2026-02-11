@@ -349,4 +349,16 @@ function utils.is_near_marker(mouse_x, marker_x, threshold)
   return math.abs(mouse_x - marker_x) < threshold
 end
 
+-- Check if a point (px, py) is inside a rectangle (x1,y1)-(x2,y2)
+function utils.point_in_rect(px, py, x1, y1, x2, y2)
+  return px >= x1 and px <= x2 and py >= y1 and py <= y2
+end
+
+-- Undo block wrapper: wraps fn in Undo_BeginBlock/EndBlock
+function utils.with_undo(label, flags, fn)
+  reaper.Undo_BeginBlock()
+  fn()
+  reaper.Undo_EndBlock(label, flags)
+end
+
 return utils

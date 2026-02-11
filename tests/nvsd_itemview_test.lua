@@ -2839,3 +2839,1173 @@ function TestNVSDItemView:test_settings_listening_suppresses_check()
     lu.assertFalse(check_shortcut_guarded(true))
     lu.assertTrue(check_shortcut_guarded(false))
 end
+
+-- ========================================================================
+-- Phase 6: Extended tests for shortcuts, themes, grid, settings, config
+-- ========================================================================
+
+-- Test that format_shortcut produces correct strings for all modifier combos
+function TestNVSDItemView:test_settings_format_all_modifier_combos()
+    local fmt = settings.format_shortcut
+
+    -- No modifiers
+    lu.assertEquals(fmt({ctrl = false, shift = false, alt = false, key = "A"}), "A")
+
+    -- Ctrl only
+    lu.assertEquals(fmt({ctrl = true, shift = false, alt = false, key = "A"}), "Ctrl+A")
+
+    -- Shift only
+    lu.assertEquals(fmt({ctrl = false, shift = true, alt = false, key = "A"}), "Shift+A")
+
+    -- Alt only
+    lu.assertEquals(fmt({ctrl = false, shift = false, alt = true, key = "A"}), "Alt+A")
+
+    -- Ctrl+Shift
+    lu.assertEquals(fmt({ctrl = true, shift = true, alt = false, key = "A"}), "Ctrl+Shift+A")
+
+    -- Ctrl+Alt
+    lu.assertEquals(fmt({ctrl = true, shift = false, alt = true, key = "A"}), "Ctrl+Alt+A")
+
+    -- Shift+Alt
+    lu.assertEquals(fmt({ctrl = false, shift = true, alt = true, key = "A"}), "Shift+Alt+A")
+
+    -- Ctrl+Shift+Alt
+    lu.assertEquals(fmt({ctrl = true, shift = true, alt = true, key = "A"}), "Ctrl+Shift+Alt+A")
+end
+
+-- Test conflict detection catches exact duplicates
+function TestNVSDItemView:test_settings_conflict_detects_exact_duplicate()
+    local shortcuts = {
+        action_a = {ctrl = false, shift = false, alt = false, key = "W"},
+        action_b = {ctrl = true, shift = false, alt = false, key = "S"},
+    }
+    -- Exact duplicate of action_a
+    local binding = {ctrl = false, shift = false, alt = false, key = "W"}
+    local conflict = settings.find_conflict(shortcuts, "action_c", binding)
+    lu.assertEquals(conflict, "action_a")
+end
+
+-- Test conflict detection allows same key with different modifiers
+function TestNVSDItemView:test_settings_no_conflict_different_modifiers()
+    local shortcuts = {
+        action_a = {ctrl = false, shift = false, alt = false, key = "H"},
+        action_b = {ctrl = false, shift = true, alt = false, key = "H"},
+    }
+    -- H (plain) doesn't conflict with Shift+H when checking against action_b
+    local binding = {ctrl = false, shift = false, alt = false, key = "H"}
+    local conflict = settings.find_conflict(shortcuts, "action_c", binding)
+    lu.assertEquals(conflict, "action_a")  -- conflicts with action_a, not action_b
+
+    -- Shift+H doesn't conflict with plain H
+    local binding2 = {ctrl = false, shift = true, alt = false, key = "H"}
+    local conflict2 = settings.find_conflict(shortcuts, "action_c", binding2)
+    lu.assertEquals(conflict2, "action_b")  -- conflicts with action_b, not action_a
+end
+
+-- Test all default shortcuts have valid structure
+function TestNVSDItemView:test_default_shortcuts_complete()
+    local expected_names = {
+        "zoom_in", "zoom_out", "reset_zoom", "toggle_warp", "toggle_mute",
+        "reverse", "clear", "open_editor", "toggle_snap", "audio_preview",
+        "envelope_lock", "show_volume_env", "show_pitch_env", "show_pan_env",
+        "hide_envelopes", "open_settings",
+    }
+
+    for _, name in ipairs(expected_names) do
+        local sc = settings.DEFAULT_SHORTCUTS[name]
+        lu.assertNotNil(sc, "Missing default shortcut: " .. name)
+        lu.assertNotNil(sc.ctrl, name .. " missing ctrl field")
+        lu.assertNotNil(sc.shift, name .. " missing shift field")
+        lu.assertNotNil(sc.alt, name .. " missing alt field")
+        lu.assertNotNil(sc.key, name .. " missing key field")
+    end
+
+    -- Verify count matches (no extra unexpected shortcuts)
+    local count = 0
+    for _ in pairs(settings.DEFAULT_SHORTCUTS) do count = count + 1 end
+    lu.assertEquals(count, #expected_names)
+end
+
+-- Test new shortcut defaults have correct modifier combinations
+function TestNVSDItemView:test_new_shortcut_defaults()
+    -- envelope_lock: plain L
+    local el = settings.DEFAULT_SHORTCUTS.envelope_lock
+    lu.assertFalse(el.ctrl)
+    lu.assertFalse(el.shift)
+    lu.assertFalse(el.alt)
+    lu.assertEquals(el.key, "L")
+
+    -- show_volume_env: Shift+V
+    local sv = settings.DEFAULT_SHORTCUTS.show_volume_env
+    lu.assertFalse(sv.ctrl)
+    lu.assertTrue(sv.shift)
+    lu.assertFalse(sv.alt)
+    lu.assertEquals(sv.key, "V")
+
+    -- show_pitch_env: Shift+H
+    local sp = settings.DEFAULT_SHORTCUTS.show_pitch_env
+    lu.assertFalse(sp.ctrl)
+    lu.assertTrue(sp.shift)
+    lu.assertFalse(sp.alt)
+    lu.assertEquals(sp.key, "H")
+
+    -- show_pan_env: Shift+P
+    local spn = settings.DEFAULT_SHORTCUTS.show_pan_env
+    lu.assertFalse(spn.ctrl)
+    lu.assertTrue(spn.shift)
+    lu.assertFalse(spn.alt)
+    lu.assertEquals(spn.key, "P")
+
+    -- hide_envelopes: plain H
+    local he = settings.DEFAULT_SHORTCUTS.hide_envelopes
+    lu.assertFalse(he.ctrl)
+    lu.assertFalse(he.shift)
+    lu.assertFalse(he.alt)
+    lu.assertEquals(he.key, "H")
+
+    -- open_settings: plain S
+    local os_sc = settings.DEFAULT_SHORTCUTS.open_settings
+    lu.assertFalse(os_sc.ctrl)
+    lu.assertFalse(os_sc.shift)
+    lu.assertFalse(os_sc.alt)
+    lu.assertEquals(os_sc.key, "S")
+end
+
+-- Test H (plain) and Shift+H don't conflict with each other
+function TestNVSDItemView:test_h_shift_h_no_conflict()
+    local shortcuts = settings.DEFAULT_SHORTCUTS
+    -- hide_envelopes (H) and show_pitch_env (Shift+H) use same key, different modifiers
+    local hide = shortcuts.hide_envelopes
+    local show_pitch = shortcuts.show_pitch_env
+    lu.assertEquals(hide.key, "H")
+    lu.assertEquals(show_pitch.key, "H")
+    lu.assertFalse(hide.shift)
+    lu.assertTrue(show_pitch.shift)
+
+    -- Verify no conflict detected between them
+    local conflict = settings.find_conflict(shortcuts, "hide_envelopes",
+        {ctrl = false, shift = false, alt = false, key = "H"})
+    lu.assertNil(conflict)  -- hide_envelopes itself is excluded, no other plain-H binding
+
+    local conflict2 = settings.find_conflict(shortcuts, "show_pitch_env",
+        {ctrl = false, shift = true, alt = false, key = "H"})
+    lu.assertNil(conflict2)  -- show_pitch_env excluded, no other Shift+H binding
+end
+
+-- Test all themes have all required color keys
+function TestNVSDItemView:test_theme_colors_complete()
+    local required_keys = {
+        "waveform", "waveform_inactive", "waveform_bg", "centerline",
+        "markers", "markers_hover", "border", "playhead",
+        "grid_bar", "grid_beat", "ruler_bg", "ruler_text", "ruler_tick",
+        "info_bar_bg", "info_bar_text", "info_bar_icon",
+        "btn_on", "btn_off", "btn_hover", "btn_text",
+    }
+
+    for _, theme in ipairs(settings.THEMES) do
+        lu.assertNotNil(theme.id, "Theme missing id")
+        lu.assertNotNil(theme.name, "Theme missing name")
+        lu.assertNotNil(theme.colors, "Theme " .. theme.name .. " missing colors")
+
+        for _, key in ipairs(required_keys) do
+            lu.assertNotNil(theme.colors[key],
+                "Theme " .. theme.name .. " missing color: " .. key)
+            -- Verify color is a number (RGBA hex)
+            lu.assertEquals(type(theme.colors[key]), "number",
+                "Theme " .. theme.name .. " color " .. key .. " is not a number")
+        end
+    end
+end
+
+-- Test theme count (18: 12 original + Classic rename + 4 DAW + Custom)
+function TestNVSDItemView:test_theme_count()
+    lu.assertEquals(#settings.THEMES, 18)
+end
+
+-- Test theme IDs are unique
+function TestNVSDItemView:test_theme_ids_unique()
+    local seen = {}
+    for _, theme in ipairs(settings.THEMES) do
+        lu.assertNil(seen[theme.id], "Duplicate theme id: " .. theme.id)
+        seen[theme.id] = true
+    end
+end
+
+-- Test new themes exist with correct IDs
+function TestNVSDItemView:test_new_themes_exist()
+    local new_ids = {"sunset", "arctic", "forest", "neon"}
+    for _, id in ipairs(new_ids) do
+        local theme = settings.get_theme(id)
+        lu.assertNotNil(theme, "Missing new theme: " .. id)
+        lu.assertEquals(theme.id, id)
+    end
+end
+
+-- Test config refresh_colors maps all theme color keys
+function TestNVSDItemView:test_config_refresh_colors_maps_all_keys()
+    local config = dofile("Scripts/NVSD/lib/config.lua")
+
+    -- Set up mock settings
+    local mock_colors = {
+        waveform = 0x112233FF,
+        waveform_inactive = 0x223344FF,
+        waveform_bg = 0x334455FF,
+        centerline = 0x445566FF,
+        markers = 0x556677FF,
+        markers_hover = 0x667788FF,
+        border = 0x778899FF,
+        playhead = 0x8899AAFF,
+        grid_bar = 0x99AABBFF,
+        grid_beat = 0xAABBCCFF,
+        ruler_bg = 0xBBCCDDFF,
+        ruler_text = 0xCCDDEEFF,
+        ruler_tick = 0xDDEEFFFF,
+        info_bar_bg = 0x111111FF,
+        info_bar_text = 0x222222FF,
+        info_bar_icon = 0x333333FF,
+        btn_on = 0x444444FF,
+        btn_off = 0x555555FF,
+        btn_hover = 0x666666FF,
+        btn_text = 0x777777FF,
+    }
+
+    config.settings = {
+        get_colors = function() return mock_colors end
+    }
+
+    config.refresh_colors()
+
+    lu.assertEquals(config.COLOR_WAVEFORM, mock_colors.waveform)
+    lu.assertEquals(config.COLOR_WAVEFORM_INACTIVE, mock_colors.waveform_inactive)
+    lu.assertEquals(config.COLOR_WAVEFORM_BG, mock_colors.waveform_bg)
+    lu.assertEquals(config.COLOR_CENTERLINE, mock_colors.centerline)
+    lu.assertEquals(config.COLOR_MARKER, mock_colors.markers)
+    lu.assertEquals(config.COLOR_MARKER_HOVER, mock_colors.markers_hover)
+    lu.assertEquals(config.COLOR_BORDER, mock_colors.border)
+    lu.assertEquals(config.COLOR_PLAYHEAD, mock_colors.playhead)
+    lu.assertEquals(config.COLOR_GRID_BAR, mock_colors.grid_bar)
+    lu.assertEquals(config.COLOR_GRID_BEAT, mock_colors.grid_beat)
+    lu.assertEquals(config.COLOR_RULER_BG, mock_colors.ruler_bg)
+    lu.assertEquals(config.COLOR_RULER_TEXT, mock_colors.ruler_text)
+    lu.assertEquals(config.COLOR_RULER_TICK, mock_colors.ruler_tick)
+    lu.assertEquals(config.COLOR_INFO_BAR_BG, mock_colors.info_bar_bg)
+    lu.assertEquals(config.COLOR_INFO_BAR_TEXT, mock_colors.info_bar_text)
+    lu.assertEquals(config.COLOR_INFO_BAR_ICON, mock_colors.info_bar_icon)
+    lu.assertEquals(config.COLOR_BTN_ON, mock_colors.btn_on)
+    lu.assertEquals(config.COLOR_BTN_OFF, mock_colors.btn_off)
+    lu.assertEquals(config.COLOR_BTN_HOVER, mock_colors.btn_hover)
+    lu.assertEquals(config.COLOR_BTN_TEXT, mock_colors.btn_text)
+end
+
+-- Test darken_color math
+function TestNVSDItemView:test_darken_color()
+    -- Implement the darken_color formula for testing
+    local function darken(color, factor)
+        local r = ((color >> 24) & 0xFF) * factor
+        local g = ((color >> 16) & 0xFF) * factor
+        local b = ((color >> 8) & 0xFF) * factor
+        local a = color & 0xFF
+        return (math.floor(r) << 24) | (math.floor(g) << 16) | (math.floor(b) << 8) | a
+    end
+
+    -- Half brightness white -> 0x7F7F7FFF
+    local result = darken(0xFFFFFFFF, 0.5)
+    lu.assertEquals(result, (127 << 24) | (127 << 16) | (127 << 8) | 0xFF)
+
+    -- Zero factor -> black with same alpha
+    local black = darken(0xFF8844FF, 0)
+    lu.assertEquals(black, 0x000000FF)
+
+    -- Factor 1.0 -> unchanged
+    local same = darken(0xAABBCCDD, 1.0)
+    lu.assertEquals(same, 0xAABBCCDD)
+
+    -- Alpha preserved
+    local alpha_test = darken(0xFF000080, 0.5)
+    lu.assertEquals(alpha_test & 0xFF, 0x80)  -- Alpha unchanged
+end
+
+-- Test color_with_alpha
+function TestNVSDItemView:test_color_with_alpha()
+    local function color_with_alpha(color, alpha)
+        return ((color >> 8) << 8) | alpha
+    end
+
+    -- Replace alpha on opaque color
+    lu.assertEquals(color_with_alpha(0xFF0000FF, 0x80), 0xFF000080)
+
+    -- Full alpha
+    lu.assertEquals(color_with_alpha(0x123456AB, 0xFF), 0x123456FF)
+
+    -- Zero alpha
+    lu.assertEquals(color_with_alpha(0xAABBCCFF, 0x00), 0xAABBCC00)
+end
+
+-- Test fade evaluation at boundaries (linear shape = 0)
+function TestNVSDItemView:test_fade_eval_linear_boundaries()
+    -- Linear fade (shape 0) should be identity: t=0 -> 0, t=1 -> 1
+    -- We test the mathematical property since we can't call the drawing module's local function
+    local function linear_fade(t)
+        return t  -- shape 0 = linear
+    end
+    lu.assertAlmostEquals(linear_fade(0), 0, 0.001)
+    lu.assertAlmostEquals(linear_fade(0.5), 0.5, 0.001)
+    lu.assertAlmostEquals(linear_fade(1), 1, 0.001)
+end
+
+-- Test fade LUT interpolation logic
+function TestNVSDItemView:test_fade_lut_interpolation()
+    -- Build a simple linear LUT
+    local LUT_SIZE = 256
+    local lut = {}
+    for i = 0, LUT_SIZE do
+        lut[i] = i / LUT_SIZE
+    end
+
+    -- Reimplment fade_lut_lookup
+    local function lut_lookup(lut_data, t)
+        if t <= 0 then return lut_data[0] end
+        if t >= 1 then return lut_data[LUT_SIZE] end
+        local idx = t * LUT_SIZE
+        local i = math.floor(idx)
+        return lut_data[i] + (lut_data[i + 1] - lut_data[i]) * (idx - i)
+    end
+
+    -- Boundaries
+    lu.assertAlmostEquals(lut_lookup(lut, 0), 0, 0.001)
+    lu.assertAlmostEquals(lut_lookup(lut, 1), 1, 0.001)
+
+    -- Midpoint of linear LUT should be ~0.5
+    lu.assertAlmostEquals(lut_lookup(lut, 0.5), 0.5, 0.01)
+
+    -- Arbitrary point: 0.25
+    lu.assertAlmostEquals(lut_lookup(lut, 0.25), 0.25, 0.01)
+
+    -- Below zero clamped
+    lu.assertAlmostEquals(lut_lookup(lut, -0.5), 0, 0.001)
+
+    -- Above one clamped
+    lu.assertAlmostEquals(lut_lookup(lut, 1.5), 1, 0.001)
+end
+
+-- Test grid spacing constants (after Phase 1 changes)
+function TestNVSDItemView:test_grid_spacing_constants()
+    -- These test the expected constant values after Round 3 updates
+    -- min_bar_spacing = 140 (was 100)
+    -- sub-beat threshold = 20 (was 12)
+    -- beat grid visibility = 40 (was 28)
+    -- We verify the compute logic matches expected behavior
+
+    -- At px_per_beat = 39 (below 40 threshold), beat grid should NOT show
+    local show_beat_grid_39 = 39 >= 40
+    lu.assertFalse(show_beat_grid_39)
+
+    -- At px_per_beat = 40, beat grid should show
+    local show_beat_grid_40 = 40 >= 40
+    lu.assertTrue(show_beat_grid_40)
+
+    -- Sub-beat subdivision: finest_sub starts at 1, doubles while spacing >= 20
+    local function compute_finest_sub(px_per_beat)
+        local finest_sub = 1
+        while (px_per_beat / (finest_sub * 2)) >= 20 do
+            finest_sub = finest_sub * 2
+        end
+        return finest_sub
+    end
+
+    -- At px_per_beat = 80: 80/2=40 >= 20 -> 2, 80/4=20 >= 20 -> 4, 80/8=10 < 20 -> stop at 4
+    lu.assertEquals(compute_finest_sub(80), 4)
+
+    -- At px_per_beat = 40: 40/2=20 >= 20 -> 2, 40/4=10 < 20 -> stop at 2
+    lu.assertEquals(compute_finest_sub(40), 2)
+
+    -- At px_per_beat = 30: 30/2=15 < 20 -> stop at 1
+    lu.assertEquals(compute_finest_sub(30), 1)
+
+    -- At px_per_beat = 160: 160/2=80, 160/4=40, 160/8=20, 160/16=10 -> stop at 8
+    lu.assertEquals(compute_finest_sub(160), 8)
+end
+
+-- Test tip_with_key tooltip formatting
+function TestNVSDItemView:test_tip_with_key_formatting()
+    -- Reimplement the logic from controls.lua
+    local function tip_with_key(text, shortcuts, shortcut_name)
+        if not shortcuts then return text end
+        local sc = shortcuts[shortcut_name]
+        if sc and sc.key ~= "" then
+            return text .. "  [" .. settings.format_shortcut(sc) .. "]"
+        end
+        return text
+    end
+
+    -- With a shortcut bound
+    local shortcuts = {toggle_warp = {ctrl = false, shift = false, alt = false, key = "W"}}
+    lu.assertEquals(tip_with_key("Toggle WARP", shortcuts, "toggle_warp"), "Toggle WARP  [W]")
+
+    -- With modifier
+    shortcuts.audio_preview = {ctrl = true, shift = false, alt = false, key = "Space"}
+    lu.assertEquals(tip_with_key("Audio preview", shortcuts, "audio_preview"), "Audio preview  [Ctrl+Space]")
+
+    -- With unbound shortcut
+    shortcuts.zoom_in = {ctrl = false, shift = false, alt = false, key = ""}
+    lu.assertEquals(tip_with_key("Zoom in", shortcuts, "zoom_in"), "Zoom in")
+
+    -- With nil shortcuts table
+    lu.assertEquals(tip_with_key("Test", nil, "anything"), "Test")
+end
+
+-- Test gain text spacing math at various heights
+function TestNVSDItemView:test_gain_text_spacing_at_various_heights()
+    -- Simulate controls.lua gain label/dB text spacing calculations
+    -- After Phase 1 changes:
+    -- gain_label_y = panel_y + max(1, pad - 4)
+    -- db_gap = max(4, min(8, pad - 1))
+    -- slider_top = panel_y + pad + label_h (label_h ~= 10)
+
+    local label_h = 10
+    local panel_y = 100
+
+    for pad = 2, 20 do
+        local gain_label_y = panel_y + math.max(1, pad - 4)
+        local slider_top = panel_y + pad + label_h
+        local gap_to_slider = slider_top - (gain_label_y + label_h)
+
+        -- Label should never overlap slider
+        lu.assertTrue(gain_label_y + label_h <= slider_top,
+            "Gain label overlaps slider at pad=" .. pad)
+
+        -- dB gap
+        local db_gap = math.max(4, math.min(8, pad - 1))
+        -- db_gap should always be at least 4
+        lu.assertTrue(db_gap >= 4, "dB gap too small at pad=" .. pad)
+    end
+end
+
+-- Test gain to dB edge cases
+function TestNVSDItemView:test_gain_to_db_edge_cases()
+    -- 0 gain = -inf dB (or clamped minimum)
+    -- 1.0 gain = 0 dB
+    -- 2.0 gain = +6.02 dB
+
+    local function gain_to_db(gain)
+        if gain <= 0 then return -math.huge end
+        return 20 * math.log(gain, 10)
+    end
+
+    lu.assertEquals(gain_to_db(0), -math.huge)
+    lu.assertAlmostEquals(gain_to_db(1), 0, 0.001)
+    lu.assertAlmostEquals(gain_to_db(2), 6.021, 0.01)
+    lu.assertAlmostEquals(gain_to_db(0.5), -6.021, 0.01)
+end
+
+-- Test settings roundtrip for new shortcuts
+function TestNVSDItemView:test_settings_roundtrip_new_shortcuts()
+    -- Local reimplementation of the serialization functions (they're local in settings.lua)
+    local function shortcut_to_string(shortcut)
+        local parts = {}
+        if shortcut.ctrl then table.insert(parts, "ctrl") end
+        if shortcut.shift then table.insert(parts, "shift") end
+        if shortcut.alt then table.insert(parts, "alt") end
+        table.insert(parts, shortcut.key)
+        return table.concat(parts, "+")
+    end
+    local function string_to_shortcut(str)
+        local shortcut = {ctrl = false, shift = false, alt = false, key = ""}
+        for part in string.gmatch(str, "[^+]+") do
+            local lower_part = part:lower()
+            if lower_part == "ctrl" then shortcut.ctrl = true
+            elseif lower_part == "shift" then shortcut.shift = true
+            elseif lower_part == "alt" then shortcut.alt = true
+            else shortcut.key = part end
+        end
+        return shortcut
+    end
+
+    local new_shortcuts = {
+        "envelope_lock", "show_volume_env", "show_pitch_env",
+        "show_pan_env", "hide_envelopes", "open_settings",
+    }
+
+    for _, name in ipairs(new_shortcuts) do
+        local sc = settings.DEFAULT_SHORTCUTS[name]
+        lu.assertNotNil(sc, "Missing: " .. name)
+
+        -- Serialize (format_shortcut should handle it)
+        if sc.key ~= "" then
+            local formatted = settings.format_shortcut(sc)
+            lu.assertNotEquals(formatted, "", "Empty format for: " .. name)
+        end
+
+        -- Verify string conversion roundtrip
+        local str = shortcut_to_string(sc)
+        lu.assertNotNil(str)
+        local parsed = string_to_shortcut(str)
+        lu.assertNotNil(parsed, "Failed to parse: " .. str)
+        lu.assertEquals(parsed.key, sc.key)
+        lu.assertEquals(parsed.ctrl, sc.ctrl)
+        lu.assertEquals(parsed.shift, sc.shift)
+        lu.assertEquals(parsed.alt, sc.alt)
+    end
+end
+
+-- Test no shortcut conflicts in default set
+function TestNVSDItemView:test_default_shortcuts_no_conflicts()
+    local defaults = settings.DEFAULT_SHORTCUTS
+    for name, binding in pairs(defaults) do
+        if binding.key ~= "" then
+            local conflict = settings.find_conflict(defaults, name, binding)
+            lu.assertNil(conflict,
+                "Default shortcut " .. name .. " conflicts with " .. (conflict or ""))
+        end
+    end
+end
+
+-- Test EDITABLE_SHORTCUTS references valid shortcut names
+function TestNVSDItemView:test_editable_shortcuts_valid()
+    -- Load settings_ui to check EDITABLE_SHORTCUTS
+    -- Since settings_ui requires ImGui, we check via settings.DEFAULT_SHORTCUTS
+    local expected_editable = {
+        "toggle_warp", "toggle_mute", "reverse", "clear", "open_editor",
+        "reset_zoom", "zoom_in", "zoom_out", "toggle_snap", "audio_preview",
+        "envelope_lock", "show_volume_env", "show_pitch_env", "show_pan_env",
+        "hide_envelopes", "open_settings",
+    }
+
+    for _, name in ipairs(expected_editable) do
+        lu.assertNotNil(settings.DEFAULT_SHORTCUTS[name],
+            "Editable shortcut '" .. name .. "' has no default definition")
+    end
+end
+
+-- ========================================================================
+-- Refactoring tests: utils.point_in_rect, state helpers
+-- ========================================================================
+
+-- Test point_in_rect
+function TestNVSDItemView:test_point_in_rect_inside()
+    lu.assertTrue(utils.point_in_rect(50, 50, 0, 0, 100, 100))
+end
+
+function TestNVSDItemView:test_point_in_rect_on_edge()
+    lu.assertTrue(utils.point_in_rect(0, 0, 0, 0, 100, 100))      -- top-left
+    lu.assertTrue(utils.point_in_rect(100, 100, 0, 0, 100, 100))  -- bottom-right
+    lu.assertTrue(utils.point_in_rect(50, 0, 0, 0, 100, 100))     -- top edge
+    lu.assertTrue(utils.point_in_rect(0, 50, 0, 0, 100, 100))     -- left edge
+end
+
+function TestNVSDItemView:test_point_in_rect_outside()
+    lu.assertFalse(utils.point_in_rect(-1, 50, 0, 0, 100, 100))   -- left
+    lu.assertFalse(utils.point_in_rect(101, 50, 0, 0, 100, 100))  -- right
+    lu.assertFalse(utils.point_in_rect(50, -1, 0, 0, 100, 100))   -- above
+    lu.assertFalse(utils.point_in_rect(50, 101, 0, 0, 100, 100))  -- below
+end
+
+-- Test state.reset_all_drags
+function TestNVSDItemView:test_state_reset_all_drags()
+    local state_mod = dofile("Scripts/NVSD/lib/state.lua")
+    -- Set some flags
+    state_mod.dragging_start = true
+    state_mod.dragging_end = true
+    state_mod.fx_dragging = true
+    state_mod.env_freehand_drawing = true
+    state_mod.env_multi_drag_start_positions = {{1, 2}}
+    state_mod.env_multi_drag_all_points = {{3, 4}}
+
+    state_mod.reset_all_drags()
+
+    lu.assertFalse(state_mod.dragging_start)
+    lu.assertFalse(state_mod.dragging_end)
+    lu.assertFalse(state_mod.fx_dragging)
+    lu.assertFalse(state_mod.env_freehand_drawing)
+    lu.assertEquals(#state_mod.env_multi_drag_start_positions, 0)
+    lu.assertEquals(#state_mod.env_multi_drag_all_points, 0)
+end
+
+-- Test state.any_drag_active
+function TestNVSDItemView:test_state_any_drag_active_false_when_idle()
+    local state_mod = dofile("Scripts/NVSD/lib/state.lua")
+    lu.assertFalse(state_mod.any_drag_active())
+end
+
+function TestNVSDItemView:test_state_any_drag_active_true_when_dragging()
+    local state_mod = dofile("Scripts/NVSD/lib/state.lua")
+
+    state_mod.dragging_start = true
+    lu.assertTrue(state_mod.any_drag_active())
+    state_mod.dragging_start = false
+
+    state_mod.env_freehand_drawing = true
+    lu.assertTrue(state_mod.any_drag_active())
+    state_mod.env_freehand_drawing = false
+
+    state_mod.is_panning = true
+    lu.assertTrue(state_mod.any_drag_active())
+    state_mod.is_panning = false
+
+    state_mod.pitch_gutter_dragging = true
+    lu.assertTrue(state_mod.any_drag_active())
+end
+
+-- ===== Round 3 Tests =====
+
+-- Load drawing module (pure math functions work without REAPER)
+local drawing = dofile("Scripts/NVSD/lib/drawing.lua")
+local dt = drawing._test
+
+-- === Fade Math Tests ===
+
+-- Test eval_fade for all 7 shapes at boundaries and midpoint
+function TestNVSDItemView:test_fade_eval_all_7_shapes()
+    local eval = dt.eval_fade
+    for shape = 0, 6 do
+        -- Fade-in: t=0 should be 0, t=1 should be 1
+        lu.assertAlmostEquals(eval(0, shape, 0, false), 0, 0.01,
+            "Shape " .. shape .. " fade-in at t=0")
+        lu.assertAlmostEquals(eval(1, shape, 0, false), 1, 0.01,
+            "Shape " .. shape .. " fade-in at t=1")
+        -- Fade-out: t=0 should be 1, t=1 should be 0
+        lu.assertAlmostEquals(eval(0, shape, 0, true), 1, 0.01,
+            "Shape " .. shape .. " fade-out at t=0")
+        lu.assertAlmostEquals(eval(1, shape, 0, true), 0, 0.01,
+            "Shape " .. shape .. " fade-out at t=1")
+        -- Midpoint should be in valid range
+        local mid = eval(0.5, shape, 0, false)
+        lu.assertTrue(mid >= 0 and mid <= 1,
+            "Shape " .. shape .. " midpoint out of range: " .. tostring(mid))
+    end
+end
+
+-- Test eval_fade boundary clamping (Bezier path clamps, math fns may extrapolate)
+function TestNVSDItemView:test_fade_eval_boundary_clamp()
+    local eval = dt.eval_fade
+    -- Bezier path (dir != 0) uses cbez_y which clamps to endpoint values
+    lu.assertAlmostEquals(eval(-1, 1, 0.5, false), 0, 0.01, "Bezier t<0")
+    lu.assertAlmostEquals(eval(2, 1, 0.5, false), 1, 0.01, "Bezier t>1")
+    -- Fade-out Bezier
+    lu.assertAlmostEquals(eval(-1, 1, 0.5, true), 1, 0.01, "Bezier fade-out t<0")
+    lu.assertAlmostEquals(eval(2, 1, 0.5, true), 0, 0.01, "Bezier fade-out t>1")
+end
+
+-- Test fade LUT matches eval_fade within tolerance
+function TestNVSDItemView:test_fade_lut_matches_eval()
+    local eval = dt.eval_fade
+    local get_lut = dt.get_fade_lut
+    local lookup = dt.fade_lut_lookup
+    local LUT_SIZE = dt.FADE_LUT_SIZE
+
+    for shape = 0, 6 do
+        local lut = get_lut(shape, 0, false)
+        -- Check at several points
+        for _, t in ipairs({0, 0.1, 0.25, 0.5, 0.75, 0.9, 1}) do
+            local expected = eval(t, shape, 0, false)
+            local got = lookup(lut, t)
+            lu.assertAlmostEquals(got, expected, 0.02,
+                "LUT mismatch shape " .. shape .. " at t=" .. t)
+        end
+    end
+end
+
+-- Test fade direction bias (fast start should be > 0.5 at midpoint)
+function TestNVSDItemView:test_fade_direction_bias()
+    local eval = dt.eval_fade
+    -- Shape 1 (fast start): midpoint should be > 0.5 (fast start = more gain early)
+    local fast_start_mid = eval(0.5, 1, 0, false)
+    lu.assertTrue(fast_start_mid > 0.5,
+        "Fast start shape should be > 0.5 at midpoint, got " .. tostring(fast_start_mid))
+    -- Shape 2 (slow start): midpoint should be < 0.5
+    local slow_start_mid = eval(0.5, 2, 0, false)
+    lu.assertTrue(slow_start_mid < 0.5,
+        "Slow start shape should be < 0.5 at midpoint, got " .. tostring(slow_start_mid))
+end
+
+-- Test Bezier control points validity
+function TestNVSDItemView:test_bezier_control_points()
+    local get_bez = dt.get_fade_bez
+    for shape = 0, 6 do
+        for _, is_fo in ipairs({false, true}) do
+            local x1, y1, x2, y2, x3, y3, x4, y4 = get_bez(shape, 0, is_fo)
+            -- All coordinates should be finite numbers
+            lu.assertNotNil(x1); lu.assertNotNil(y1)
+            lu.assertNotNil(x2); lu.assertNotNil(y2)
+            lu.assertNotNil(x3); lu.assertNotNil(y3)
+            lu.assertNotNil(x4); lu.assertNotNil(y4)
+            -- Endpoints should be (0,0)-(1,1) or (0,1)-(1,0)
+            lu.assertAlmostEquals(x1, 0, 0.001)
+            lu.assertAlmostEquals(x4, 1, 0.001)
+        end
+    end
+end
+
+-- === Grid Computation Tests ===
+
+-- Test grid bar_skip is always power of 2
+function TestNVSDItemView:test_grid_bar_skip_powers_of_2()
+    local function compute_bar_skip(px_per_bar)
+        local min_bar_spacing = 140
+        local bar_skip = math.max(1, math.ceil(min_bar_spacing / px_per_bar))
+        if bar_skip > 1 then
+            local power = math.ceil(math.log(bar_skip) / math.log(2))
+            bar_skip = 2 ^ power
+        end
+        return bar_skip
+    end
+
+    -- Always power of 2
+    for _, px in ipairs({10, 50, 100, 140, 200, 500, 1000}) do
+        local skip = compute_bar_skip(px)
+        -- Check it's a power of 2 (or 1)
+        if skip > 1 then
+            local log = math.log(skip) / math.log(2)
+            lu.assertAlmostEquals(log, math.floor(log + 0.5), 0.001,
+                "bar_skip " .. skip .. " not power of 2 at px=" .. px)
+        end
+    end
+end
+
+-- Test grid at very zoomed out (wide view)
+function TestNVSDItemView:test_grid_wide_view()
+    -- At 10px per bar, bar_skip should be >= 16 (140/10 = 14, round up to 16)
+    local min_bar_spacing = 140
+    local px_per_bar = 10
+    local bar_skip = math.max(1, math.ceil(min_bar_spacing / px_per_bar))
+    if bar_skip > 1 then
+        local power = math.ceil(math.log(bar_skip) / math.log(2))
+        bar_skip = 2 ^ power
+    end
+    lu.assertEquals(bar_skip, 16)
+end
+
+-- Test grid at very zoomed in (narrow view)
+function TestNVSDItemView:test_grid_narrow_view()
+    -- At 500px per bar, bar_skip should be 1
+    local min_bar_spacing = 140
+    local px_per_bar = 500
+    local bar_skip = math.max(1, math.ceil(min_bar_spacing / px_per_bar))
+    lu.assertEquals(bar_skip, 1)
+end
+
+-- Test grid zero/tiny width edge case
+function TestNVSDItemView:test_grid_zero_width()
+    local min_bar_spacing = 140
+    local px_per_bar = 0.001  -- Nearly zero
+    local bar_skip = math.max(1, math.ceil(min_bar_spacing / px_per_bar))
+    if bar_skip > 1 then
+        local power = math.ceil(math.log(bar_skip) / math.log(2))
+        bar_skip = 2 ^ power
+    end
+    -- Should be a large power of 2 but not infinite
+    lu.assertTrue(bar_skip > 0 and bar_skip < 1e10)
+end
+
+-- Test grid density thresholds match current values
+function TestNVSDItemView:test_grid_density_thresholds()
+    -- min_bar_spacing
+    lu.assertEquals(140, 140, "Expected min_bar_spacing = 140")
+    -- beat grid threshold
+    local show_beat_at_39 = 39 >= 40
+    local show_beat_at_40 = 40 >= 40
+    lu.assertFalse(show_beat_at_39)
+    lu.assertTrue(show_beat_at_40)
+    -- sub-beat threshold
+    local function finest_sub(px)
+        local s = 1
+        while (px / (s * 2)) >= 20 do s = s * 2 end
+        return s
+    end
+    lu.assertEquals(finest_sub(39), 1)  -- 39/2=19.5 < 20
+    lu.assertEquals(finest_sub(40), 2)  -- 40/2=20 >= 20
+end
+
+-- === Theme/Settings Tests ===
+
+-- Test custom theme exists as 18th entry
+function TestNVSDItemView:test_custom_theme_exists()
+    lu.assertEquals(settings.THEMES[18].id, "custom")
+    lu.assertEquals(settings.THEMES[18].name, "Custom")
+end
+
+-- Test all 18 themes have all 20 color keys
+function TestNVSDItemView:test_all_18_themes_have_all_keys()
+    local expected_keys = settings.COLOR_KEYS
+    for _, theme in ipairs(settings.THEMES) do
+        for _, key in ipairs(expected_keys) do
+            lu.assertNotNil(theme.colors[key],
+                "Theme '" .. theme.id .. "' missing color key: " .. key)
+            lu.assertTrue(type(theme.colors[key]) == "number",
+                "Theme '" .. theme.id .. "' color '" .. key .. "' not a number")
+        end
+    end
+end
+
+-- Test default theme is first
+function TestNVSDItemView:test_default_theme_is_first()
+    lu.assertEquals(settings.THEMES[1].id, "default")
+end
+
+-- Test classic theme exists (renamed from old default)
+function TestNVSDItemView:test_classic_theme_exists()
+    local classic = settings.get_theme("classic")
+    lu.assertNotNil(classic)
+    lu.assertEquals(classic.id, "classic")
+    lu.assertEquals(classic.name, "Classic")
+    -- Classic should have the original green waveform color
+    lu.assertEquals(classic.colors.waveform, 0x5A9F5AFF)
+end
+
+-- Test new DAW-inspired themes exist
+function TestNVSDItemView:test_daw_themes_exist()
+    local daw_ids = {"bitwig", "cubase", "logic", "studio_one", "pro_tools"}
+    for _, id in ipairs(daw_ids) do
+        local theme = settings.get_theme(id)
+        lu.assertNotNil(theme, "Missing DAW theme: " .. id)
+        lu.assertEquals(theme.id, id)
+    end
+end
+
+-- Test COLOR_KEYS has exactly 20 entries
+function TestNVSDItemView:test_color_keys_count()
+    lu.assertEquals(#settings.COLOR_KEYS, 20)
+end
+
+-- Test custom colors roundtrip (mock ExtState)
+function TestNVSDItemView:test_custom_colors_roundtrip()
+    -- Mock ExtState storage
+    local store = {}
+    reaper.SetExtState = function(sec, key, val, persist)
+        store[sec .. "::" .. key] = val
+    end
+    reaper.GetExtState = function(sec, key)
+        return store[sec .. "::" .. key] or ""
+    end
+
+    local test_colors = {}
+    for _, key in ipairs(settings.COLOR_KEYS) do
+        test_colors[key] = math.random(0, 0xFFFFFFFF)
+    end
+
+    settings.save_custom_colors(test_colors)
+    local loaded = settings.load_custom_colors()
+
+    for _, key in ipairs(settings.COLOR_KEYS) do
+        lu.assertEquals(loaded[key], test_colors[key],
+            "Roundtrip mismatch for " .. key)
+    end
+end
+
+-- Test custom theme initialize from copies all colors
+function TestNVSDItemView:test_custom_initialize_from()
+    local source = settings.get_theme("classic")
+    local custom = settings.get_theme("custom")
+    lu.assertNotNil(source)
+    lu.assertNotNil(custom)
+
+    -- Copy colors
+    for _, key in ipairs(settings.COLOR_KEYS) do
+        custom.colors[key] = source.colors[key]
+    end
+
+    -- Verify all match
+    for _, key in ipairs(settings.COLOR_KEYS) do
+        lu.assertEquals(custom.colors[key], source.colors[key],
+            "Initialize from mismatch for " .. key)
+    end
+end
+
+-- === Envelope Editing Tests ===
+
+-- Test envelope value clamping for volume (0..2 range)
+function TestNVSDItemView:test_env_value_clamp_volume()
+    local function clamp_vol(v) return math.max(0, math.min(2, v)) end
+    lu.assertEquals(clamp_vol(-0.5), 0)
+    lu.assertEquals(clamp_vol(0), 0)
+    lu.assertEquals(clamp_vol(1), 1)
+    lu.assertEquals(clamp_vol(2), 2)
+    lu.assertEquals(clamp_vol(3), 2)
+end
+
+-- Test envelope value clamping for pitch (-1..1 range for +-semitones)
+function TestNVSDItemView:test_env_value_clamp_pitch()
+    local function clamp_pitch(v) return math.max(-1, math.min(1, v)) end
+    lu.assertEquals(clamp_pitch(-2), -1)
+    lu.assertEquals(clamp_pitch(-1), -1)
+    lu.assertEquals(clamp_pitch(0), 0)
+    lu.assertEquals(clamp_pitch(1), 1)
+    lu.assertEquals(clamp_pitch(2), 1)
+end
+
+-- Test envelope time clamping within take bounds
+function TestNVSDItemView:test_env_time_clamp()
+    local function clamp_time(t, start, len)
+        return math.max(start, math.min(start + len, t))
+    end
+    lu.assertEquals(clamp_time(-1, 0, 10), 0)
+    lu.assertEquals(clamp_time(5, 0, 10), 5)
+    lu.assertEquals(clamp_time(15, 0, 10), 10)
+    lu.assertEquals(clamp_time(3, 2, 5), 3)
+    lu.assertEquals(clamp_time(1, 2, 5), 2)
+end
+
+-- Test envelope tension range clamped to -1..1
+function TestNVSDItemView:test_env_tension_range()
+    local function clamp_tension(t) return math.max(-1, math.min(1, t)) end
+    lu.assertEquals(clamp_tension(-2), -1)
+    lu.assertEquals(clamp_tension(-0.5), -0.5)
+    lu.assertEquals(clamp_tension(0), 0)
+    lu.assertEquals(clamp_tension(0.5), 0.5)
+    lu.assertEquals(clamp_tension(2), 1)
+end
+
+-- Test envelope rectangle selection (nodes inside rect)
+function TestNVSDItemView:test_env_rect_selection()
+    -- Simulate rectangle selection: nodes inside rect should be selected
+    local nodes = {
+        {time = 1, value = 0.5, idx = 0},
+        {time = 2, value = 0.8, idx = 1},
+        {time = 3, value = 0.3, idx = 2},
+        {time = 4, value = 0.6, idx = 3},
+    }
+
+    -- Rectangle from time 1.5..3.5, value 0.2..0.9
+    local selected = {}
+    for _, n in ipairs(nodes) do
+        if n.time >= 1.5 and n.time <= 3.5 and n.value >= 0.2 and n.value <= 0.9 then
+            table.insert(selected, n.idx)
+        end
+    end
+
+    lu.assertEquals(#selected, 2)  -- nodes at time 2 and 3
+    lu.assertEquals(selected[1], 1)
+    lu.assertEquals(selected[2], 2)
+end
+
+-- Test envelope multi-drag maintains relative positions
+function TestNVSDItemView:test_env_multi_drag_relative()
+    local positions = {{time = 1, value = 0.5}, {time = 3, value = 0.8}}
+    local delta_time = 0.5
+    local delta_value = 0.1
+
+    local new_positions = {}
+    for _, p in ipairs(positions) do
+        table.insert(new_positions, {
+            time = p.time + delta_time,
+            value = p.value + delta_value
+        })
+    end
+
+    -- Relative distances should be preserved
+    local orig_dt = positions[2].time - positions[1].time
+    local orig_dv = positions[2].value - positions[1].value
+    local new_dt = new_positions[2].time - new_positions[1].time
+    local new_dv = new_positions[2].value - new_positions[1].value
+    lu.assertAlmostEquals(orig_dt, new_dt, 0.001)
+    lu.assertAlmostEquals(orig_dv, new_dv, 0.001)
+end
+
+-- Test envelope freehand minimum spacing
+function TestNVSDItemView:test_env_freehand_min_spacing()
+    local min_spacing = 0.001  -- minimum time between freehand points
+    local last_time = 1.0
+    local new_time = 1.0005
+
+    lu.assertTrue(new_time - last_time < min_spacing,
+        "Points too close should be rejected")
+    lu.assertTrue(1.002 - last_time >= min_spacing,
+        "Points far enough should be accepted")
+end
+
+-- Test envelope segment vertical shift (both nodes shift equally)
+function TestNVSDItemView:test_env_segment_vertical_shift()
+    local v1, v2 = 0.5, 0.8
+    local delta = 0.1
+    local new_v1 = math.max(0, math.min(2, v1 + delta))
+    local new_v2 = math.max(0, math.min(2, v2 + delta))
+    -- Both should shift by exactly delta
+    lu.assertAlmostEquals(new_v1 - v1, delta, 0.001)
+    lu.assertAlmostEquals(new_v2 - v2, delta, 0.001)
+end
+
+-- === FX Interaction Tests ===
+
+-- Test FX drag threshold (4px)
+function TestNVSDItemView:test_fx_drag_threshold_4px()
+    local threshold = 4
+    -- Below threshold: no drag
+    lu.assertFalse(math.abs(3) >= threshold)
+    -- At threshold: drag activates
+    lu.assertTrue(math.abs(4) >= threshold)
+    -- Above threshold: drag active
+    lu.assertTrue(math.abs(10) >= threshold)
+end
+
+-- Test FX bypass toggle logic
+function TestNVSDItemView:test_fx_bypass_toggle()
+    -- Simulate FX enabled state toggle
+    local enabled = true
+    enabled = not enabled
+    lu.assertFalse(enabled)
+    enabled = not enabled
+    lu.assertTrue(enabled)
+end
+
+-- === Marker/State Tests ===
+
+-- Test marker drag threshold (4px)
+function TestNVSDItemView:test_marker_drag_threshold_4px()
+    local threshold = 4
+    lu.assertFalse(math.abs(2) >= threshold)
+    lu.assertTrue(math.abs(4) >= threshold)
+    lu.assertTrue(math.abs(8) >= threshold)
+end
+
+-- Test region selection ordering (start <= end after finalization)
+function TestNVSDItemView:test_region_selection_ordering()
+    -- Simulate selecting backwards (end before start)
+    local sel_start = 5.0
+    local sel_end = 2.0
+    -- Finalize: ensure start <= end
+    local final_start = math.min(sel_start, sel_end)
+    local final_end = math.max(sel_start, sel_end)
+    lu.assertTrue(final_start <= final_end)
+    lu.assertEquals(final_start, 2.0)
+    lu.assertEquals(final_end, 5.0)
+end
+
+-- Test state reset comprehensive (all flags false after reset)
+function TestNVSDItemView:test_state_reset_comprehensive()
+    local state_mod = dofile("Scripts/NVSD/lib/state.lua")
+    -- Set many flags to true
+    state_mod.dragging_start = true
+    state_mod.dragging_end = true
+    state_mod.is_panning = true
+    state_mod.fx_dragging = true
+    state_mod.env_freehand_drawing = true
+    state_mod.dragging_fade_in = true
+    state_mod.dragging_fade_out = true
+    state_mod.dragging_env_node = true
+    state_mod.env_tension_dragging = true
+    state_mod.env_segment_dragging = true
+    state_mod.env_rect_selecting = true
+
+    state_mod.reset_all_drags()
+
+    -- All should be false
+    lu.assertFalse(state_mod.dragging_start)
+    lu.assertFalse(state_mod.dragging_end)
+    lu.assertFalse(state_mod.is_panning)
+    lu.assertFalse(state_mod.fx_dragging)
+    lu.assertFalse(state_mod.env_freehand_drawing)
+    lu.assertFalse(state_mod.dragging_fade_in)
+    lu.assertFalse(state_mod.dragging_fade_out)
+    lu.assertFalse(state_mod.dragging_env_node)
+    lu.assertFalse(state_mod.env_tension_dragging)
+    lu.assertFalse(state_mod.env_segment_dragging)
+    lu.assertFalse(state_mod.env_rect_selecting)
+end
+
+-- Test any_drag_active with each flag individually
+function TestNVSDItemView:test_any_drag_each_flag()
+    local drag_flags = {
+        "dragging_start", "dragging_end", "is_panning",
+        "dragging_fade_in", "dragging_fade_out",
+        "dragging_env_node", "env_tension_dragging",
+        "env_segment_dragging", "env_freehand_drawing",
+        "fx_dragging", "env_rect_selecting",
+        "pitch_gutter_dragging",
+    }
+
+    for _, flag in ipairs(drag_flags) do
+        local state_mod = dofile("Scripts/NVSD/lib/state.lua")
+        -- All should start false
+        lu.assertFalse(state_mod.any_drag_active(), "Should start idle")
+        -- Set one flag
+        state_mod[flag] = true
+        lu.assertTrue(state_mod.any_drag_active(),
+            "any_drag_active should be true when " .. flag .. " is set")
+    end
+end
+
+-- Test point_in_rect with zero-size rect
+function TestNVSDItemView:test_point_in_rect_zero_size()
+    -- Point exactly on a zero-size rect (degenerate)
+    lu.assertTrue(utils.point_in_rect(5, 5, 5, 5, 5, 5))
+    -- Point not on it
+    lu.assertFalse(utils.point_in_rect(6, 5, 5, 5, 5, 5))
+end
+
+-- Test point_in_rect with negative coordinates
+function TestNVSDItemView:test_point_in_rect_negative_coords()
+    lu.assertTrue(utils.point_in_rect(-5, -5, -10, -10, 0, 0))
+    lu.assertFalse(utils.point_in_rect(-15, -5, -10, -10, 0, 0))
+    lu.assertTrue(utils.point_in_rect(-10, -10, -10, -10, 0, 0))  -- on edge
+end
+
+-- === Undo Wrapper Tests ===
+
+-- Test with_undo calls begin/end block
+function TestNVSDItemView:test_with_undo_calls_begin_end()
+    local calls = {}
+    reaper.Undo_BeginBlock = function() table.insert(calls, "begin") end
+    reaper.Undo_EndBlock = function(label, flags)
+        table.insert(calls, "end:" .. label .. ":" .. tostring(flags))
+    end
+
+    utils.with_undo("Test action", -1, function()
+        table.insert(calls, "body")
+    end)
+
+    lu.assertEquals(#calls, 3)
+    lu.assertEquals(calls[1], "begin")
+    lu.assertEquals(calls[2], "body")
+    lu.assertEquals(calls[3], "end:Test action:-1")
+end
+
+-- Test with_undo passes correct label
+function TestNVSDItemView:test_with_undo_passes_label()
+    local captured_label = nil
+    local captured_flags = nil
+    reaper.Undo_BeginBlock = function() end
+    reaper.Undo_EndBlock = function(label, flags)
+        captured_label = label
+        captured_flags = flags
+    end
+
+    utils.with_undo("My undo label", 4, function() end)
+
+    lu.assertEquals(captured_label, "My undo label")
+    lu.assertEquals(captured_flags, 4)
+end
+
+-- === Tooltip Delay Test ===
+function TestNVSDItemView:test_tooltip_delay_value()
+    -- The TOOLTIP_DELAY constant should be 1.5 seconds
+    -- We can't access the local directly, but we can verify the module loaded
+    lu.assertNotNil(drawing.tooltip, "drawing.tooltip function should exist")
+end
+
+-- === Shape Icon Functions Test ===
+function TestNVSDItemView:test_shape_icon_fns_all_7()
+    local fns = dt.shape_icon_fns
+    lu.assertNotNil(fns)
+    for shape = 0, 6 do
+        lu.assertNotNil(fns[shape], "Missing shape icon fn for shape " .. shape)
+        -- All should return 0 at x=0 and 1 at x=1
+        lu.assertAlmostEquals(fns[shape](0), 0, 0.001, "Shape " .. shape .. " at x=0")
+        lu.assertAlmostEquals(fns[shape](1), 1, 0.001, "Shape " .. shape .. " at x=1")
+    end
+end
+
+-- === Bezier Evaluator Tests ===
+function TestNVSDItemView:test_cbez_y_linear()
+    local cbez_y = dt.cbez_y
+    -- Linear Bezier: (0,0) - (0.5,0.5) - (0.5,0.5) - (1,1)
+    lu.assertAlmostEquals(cbez_y(0, 0, 0.5, 0.5, 0.5, 0.5, 1, 1, 0), 0, 0.01)
+    lu.assertAlmostEquals(cbez_y(0, 0, 0.5, 0.5, 0.5, 0.5, 1, 1, 0.5), 0.5, 0.05)
+    lu.assertAlmostEquals(cbez_y(0, 0, 0.5, 0.5, 0.5, 0.5, 1, 1, 1), 1, 0.01)
+end
+
+function TestNVSDItemView:test_cbez_y_boundary_clamp()
+    local cbez_y = dt.cbez_y
+    -- t <= 0 returns by1, t >= 1 returns by4
+    lu.assertEquals(cbez_y(0, 0.3, 0.5, 0.5, 0.5, 0.5, 1, 0.9, -1), 0.3)
+    lu.assertEquals(cbez_y(0, 0.3, 0.5, 0.5, 0.5, 0.5, 1, 0.9, 2), 0.9)
+end

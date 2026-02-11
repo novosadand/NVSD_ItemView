@@ -19,6 +19,14 @@ settings.DEFAULT_SHORTCUTS = {
   reverse = {ctrl = false, shift = false, alt = false, key = "R"},
   clear = {ctrl = false, shift = false, alt = false, key = "C"},
   open_editor = {ctrl = false, shift = false, alt = false, key = "E"},
+  toggle_snap = {ctrl = true, shift = false, alt = false, key = "4"},
+  audio_preview = {ctrl = true, shift = false, alt = false, key = "Space"},
+  envelope_lock = {ctrl = false, shift = false, alt = false, key = "L"},
+  show_volume_env = {ctrl = false, shift = true, alt = false, key = "V"},
+  show_pitch_env = {ctrl = false, shift = true, alt = false, key = "H"},
+  show_pan_env = {ctrl = false, shift = true, alt = false, key = "P"},
+  hide_envelopes = {ctrl = false, shift = false, alt = false, key = "H"},
+  open_settings = {ctrl = false, shift = false, alt = false, key = "S"},
 }
 
 -- Map key names to ImGui key getter function names (created once at module load)
@@ -108,11 +116,45 @@ function settings.find_conflict(shortcuts, exclude_name, binding)
   return nil
 end
 
+-- Color keys list for serialization (custom theme)
+local COLOR_KEYS = { "waveform", "waveform_inactive", "waveform_bg", "centerline",
+  "markers", "markers_hover", "border", "playhead", "grid_bar", "grid_beat",
+  "ruler_bg", "ruler_text", "ruler_tick", "info_bar_bg", "info_bar_text",
+  "info_bar_icon", "btn_on", "btn_off", "btn_hover", "btn_text" }
+settings.COLOR_KEYS = COLOR_KEYS
+
 -- Theme definitions
 settings.THEMES = {
   {
     id = "default",
     name = "Default",
+    description = "Professional steel-blue with gold accents",
+    colors = {
+      waveform = 0x5B7B8AFF,
+      waveform_inactive = 0x3D5560FF,
+      waveform_bg = 0x1C1C1CFF,
+      centerline = 0x2C2C2CFF,
+      markers = 0xC9A227FF,
+      markers_hover = 0xDCB53AFF,
+      border = 0x4B6B7AFF,
+      playhead = 0xC9A227FF,
+      grid_bar = 0x363636FF,
+      grid_beat = 0x262626FF,
+      ruler_bg = 0x242424FF,
+      ruler_text = 0x888888FF,
+      ruler_tick = 0x606060FF,
+      info_bar_bg = 0x1E1E1EFF,
+      info_bar_text = 0xB0B0B0FF,
+      info_bar_icon = 0xC9A227FF,
+      btn_on = 0xC9A227FF,
+      btn_off = 0x424242FF,
+      btn_hover = 0xD9B237FF,
+      btn_text = 0xFFFFFFFF,
+    }
+  },
+  {
+    id = "classic",
+    name = "Classic",
     description = "Classic green waveform",
     colors = {
       waveform = 0x5A9F5AFF,
@@ -124,7 +166,7 @@ settings.THEMES = {
       border = 0x4A7A4AFF,
       playhead = 0x00CC00FF,
       grid_bar = 0x383838FF,
-      grid_beat = 0x282828FF,
+      grid_beat = 0x2E2E2EFF,
       ruler_bg = 0x252525FF,
       ruler_text = 0x888888FF,
       ruler_tick = 0x666666FF,
@@ -194,28 +236,28 @@ settings.THEMES = {
   {
     id = "pro_tools",
     name = "Pro Tools",
-    description = "Muted professional look",
+    description = "Authentic blue-teal with lighter dark bg",
     colors = {
-      waveform = 0x5B7B8AFF,
-      waveform_inactive = 0x3D5560FF,
-      waveform_bg = 0x1C1C1CFF,
-      centerline = 0x2C2C2CFF,
+      waveform = 0x5588A0FF,
+      waveform_inactive = 0x3A6070FF,
+      waveform_bg = 0x2A2A2AFF,
+      centerline = 0x383838FF,
       markers = 0xC9A227FF,
       markers_hover = 0xDCB53AFF,
-      border = 0x4B6B7AFF,
-      playhead = 0xC9A227FF,
-      grid_bar = 0x363636FF,
-      grid_beat = 0x262626FF,
-      ruler_bg = 0x242424FF,
-      ruler_text = 0x888888FF,
-      ruler_tick = 0x606060FF,
-      info_bar_bg = 0x1E1E1EFF,
+      border = 0x506070FF,
+      playhead = 0x6699CCFF,
+      grid_bar = 0x3C3C3CFF,
+      grid_beat = 0x323232FF,
+      ruler_bg = 0x3A3A3AFF,
+      ruler_text = 0x999999FF,
+      ruler_tick = 0x666666FF,
+      info_bar_bg = 0x282828FF,
       info_bar_text = 0xB0B0B0FF,
       info_bar_icon = 0xC9A227FF,
       btn_on = 0xC9A227FF,
-      btn_off = 0x424242FF,
+      btn_off = 0x484848FF,
       btn_hover = 0xD9B237FF,
-      btn_text = 0xFFFFFFFF,
+      btn_text = 0xE0E0E0FF,
     }
   },
   {
@@ -326,6 +368,250 @@ settings.THEMES = {
       btn_text = 0xFFFFFFFF,
     }
   },
+  {
+    id = "sunset",
+    name = "Sunset",
+    description = "Warm earth tones",
+    colors = {
+      waveform = 0xC4785AFF,
+      waveform_inactive = 0x7A4A38FF,
+      waveform_bg = 0x1A1614FF,
+      centerline = 0x2A2624FF,
+      markers = 0xD4A850FF,
+      markers_hover = 0xE8BC64FF,
+      border = 0xA06848FF,
+      playhead = 0xE8C040FF,
+      grid_bar = 0x383230FF,
+      grid_beat = 0x282422FF,
+      ruler_bg = 0x252120FF,
+      ruler_text = 0x988878FF,
+      ruler_tick = 0x685850FF,
+      info_bar_bg = 0x1E1A18FF,
+      info_bar_text = 0xC8B8A8FF,
+      info_bar_icon = 0xC4785AFF,
+      btn_on = 0xD4A850FF,
+      btn_off = 0x484240FF,
+      btn_hover = 0xE4B860FF,
+      btn_text = 0xFFFFFFFF,
+    }
+  },
+  {
+    id = "arctic",
+    name = "Arctic",
+    description = "Cool blues and whites",
+    colors = {
+      waveform = 0x5A8AAFFF,
+      waveform_inactive = 0x3A5A70FF,
+      waveform_bg = 0x161A1EFF,
+      centerline = 0x262A2EFF,
+      markers = 0x70C0D8FF,
+      markers_hover = 0x88D4ECFF,
+      border = 0x4A7A95FF,
+      playhead = 0x90E0F0FF,
+      grid_bar = 0x323638FF,
+      grid_beat = 0x242628FF,
+      ruler_bg = 0x202428FF,
+      ruler_text = 0x808A92FF,
+      ruler_tick = 0x586068FF,
+      info_bar_bg = 0x1A1E22FF,
+      info_bar_text = 0xB0BCC8FF,
+      info_bar_icon = 0x5A8AAFFF,
+      btn_on = 0x70C0D8FF,
+      btn_off = 0x404448FF,
+      btn_hover = 0x80D0E8FF,
+      btn_text = 0xFFFFFFFF,
+    }
+  },
+  {
+    id = "forest",
+    name = "Forest",
+    description = "Natural greens",
+    colors = {
+      waveform = 0x5A8A60FF,
+      waveform_inactive = 0x3A5A40FF,
+      waveform_bg = 0x161A16FF,
+      centerline = 0x262A26FF,
+      markers = 0x8AB060FF,
+      markers_hover = 0x9EC474FF,
+      border = 0x4A7A50FF,
+      playhead = 0xA0D060FF,
+      grid_bar = 0x323832FF,
+      grid_beat = 0x242824FF,
+      ruler_bg = 0x202420FF,
+      ruler_text = 0x808A80FF,
+      ruler_tick = 0x586058FF,
+      info_bar_bg = 0x1A1E1AFF,
+      info_bar_text = 0xB0C0B0FF,
+      info_bar_icon = 0x5A8A60FF,
+      btn_on = 0x8AB060FF,
+      btn_off = 0x404840FF,
+      btn_hover = 0x9AC070FF,
+      btn_text = 0xFFFFFFFF,
+    }
+  },
+  {
+    id = "neon",
+    name = "Neon",
+    description = "High energy, fun",
+    colors = {
+      waveform = 0xFF4488FF,
+      waveform_inactive = 0x992A55FF,
+      waveform_bg = 0x12101AFF,
+      centerline = 0x22202AFF,
+      markers = 0x44FF88FF,
+      markers_hover = 0x66FF9AFF,
+      border = 0xCC3070FF,
+      playhead = 0x44CCFFFF,
+      grid_bar = 0x302E38FF,
+      grid_beat = 0x201E28FF,
+      ruler_bg = 0x1E1C25FF,
+      ruler_text = 0x887898FF,
+      ruler_tick = 0x605068FF,
+      info_bar_bg = 0x18161EFF,
+      info_bar_text = 0xC0B0D0FF,
+      info_bar_icon = 0xFF4488FF,
+      btn_on = 0x44FF88FF,
+      btn_off = 0x403848FF,
+      btn_hover = 0x55FF99FF,
+      btn_text = 0xFFFFFFFF,
+    }
+  },
+  {
+    id = "bitwig",
+    name = "Bitwig",
+    description = "Warm orange, modern energy",
+    colors = {
+      waveform = 0xA0A0A0FF,
+      waveform_inactive = 0x686868FF,
+      waveform_bg = 0x1E1C1AFF,
+      centerline = 0x2E2C2AFF,
+      markers = 0xFF8800FF,
+      markers_hover = 0xFFA030FF,
+      border = 0x808080FF,
+      playhead = 0xFF8800FF,
+      grid_bar = 0x3A3836FF,
+      grid_beat = 0x2A2826FF,
+      ruler_bg = 0x262422FF,
+      ruler_text = 0x909090FF,
+      ruler_tick = 0x686058FF,
+      info_bar_bg = 0x201E1CFF,
+      info_bar_text = 0xC0B8B0FF,
+      info_bar_icon = 0xFF8800FF,
+      btn_on = 0xFF8800FF,
+      btn_off = 0x484440FF,
+      btn_hover = 0xFFA030FF,
+      btn_text = 0xFFFFFFFF,
+    }
+  },
+  {
+    id = "cubase",
+    name = "Cubase",
+    description = "Cool blue precision",
+    colors = {
+      waveform = 0x7090A8FF,
+      waveform_inactive = 0x4A6070FF,
+      waveform_bg = 0x181A1EFF,
+      centerline = 0x282A2EFF,
+      markers = 0x5A8ACAFF,
+      markers_hover = 0x6A9ADAFF,
+      border = 0x607890FF,
+      playhead = 0x5A8ACAFF,
+      grid_bar = 0x323438FF,
+      grid_beat = 0x242628FF,
+      ruler_bg = 0x222428FF,
+      ruler_text = 0x8890A0FF,
+      ruler_tick = 0x586070FF,
+      info_bar_bg = 0x1C1E22FF,
+      info_bar_text = 0xB0B8C8FF,
+      info_bar_icon = 0x5A8ACAFF,
+      btn_on = 0x5A8ACAFF,
+      btn_off = 0x404448FF,
+      btn_hover = 0x6A9ADAFF,
+      btn_text = 0xFFFFFFFF,
+    }
+  },
+  {
+    id = "logic",
+    name = "Logic Pro",
+    description = "Minimal apple blue with sage green",
+    colors = {
+      waveform = 0x6A8A6AFF,
+      waveform_inactive = 0x485A48FF,
+      waveform_bg = 0x1A1A1AFF,
+      centerline = 0x2A2A2AFF,
+      markers = 0x4488CCFF,
+      markers_hover = 0x5498DCFF,
+      border = 0x5A7A5AFF,
+      playhead = 0x4488CCFF,
+      grid_bar = 0x343434FF,
+      grid_beat = 0x262626FF,
+      ruler_bg = 0x242424FF,
+      ruler_text = 0x888888FF,
+      ruler_tick = 0x606060FF,
+      info_bar_bg = 0x1C1C1CFF,
+      info_bar_text = 0xB0B0B0FF,
+      info_bar_icon = 0x4488CCFF,
+      btn_on = 0x4488CCFF,
+      btn_off = 0x424242FF,
+      btn_hover = 0x5498DCFF,
+      btn_text = 0xFFFFFFFF,
+    }
+  },
+  {
+    id = "studio_one",
+    name = "Studio One",
+    description = "Deep purple with blue waveform",
+    colors = {
+      waveform = 0x5A80B0FF,
+      waveform_inactive = 0x3A5578FF,
+      waveform_bg = 0x181620FF,
+      centerline = 0x282630FF,
+      markers = 0x8866BBFF,
+      markers_hover = 0x9876CBFF,
+      border = 0x6A5A90FF,
+      playhead = 0x8866BBFF,
+      grid_bar = 0x302E38FF,
+      grid_beat = 0x222028FF,
+      ruler_bg = 0x201E28FF,
+      ruler_text = 0x888090FF,
+      ruler_tick = 0x605868FF,
+      info_bar_bg = 0x1A181EFF,
+      info_bar_text = 0xB0A8C0FF,
+      info_bar_icon = 0x8866BBFF,
+      btn_on = 0x8866BBFF,
+      btn_off = 0x403848FF,
+      btn_hover = 0x9876CBFF,
+      btn_text = 0xFFFFFFFF,
+    }
+  },
+  {
+    id = "custom",
+    name = "Custom",
+    description = "Your own color palette",
+    colors = {
+      -- Initialized as copy of Default; overridden from ExtState on load
+      waveform = 0x5B7B8AFF,
+      waveform_inactive = 0x3D5560FF,
+      waveform_bg = 0x1C1C1CFF,
+      centerline = 0x2C2C2CFF,
+      markers = 0xC9A227FF,
+      markers_hover = 0xDCB53AFF,
+      border = 0x4B6B7AFF,
+      playhead = 0xC9A227FF,
+      grid_bar = 0x363636FF,
+      grid_beat = 0x262626FF,
+      ruler_bg = 0x242424FF,
+      ruler_text = 0x888888FF,
+      ruler_tick = 0x606060FF,
+      info_bar_bg = 0x1E1E1EFF,
+      info_bar_text = 0xB0B0B0FF,
+      info_bar_icon = 0xC9A227FF,
+      btn_on = 0xC9A227FF,
+      btn_off = 0x424242FF,
+      btn_hover = 0xD9B237FF,
+      btn_text = 0xFFFFFFFF,
+    }
+  },
 }
 
 -- Dirty flag: when true, config.refresh_colors() will run next frame
@@ -336,6 +622,25 @@ settings.current = {
   theme_id = "default",
   shortcuts = {},
 }
+
+-- Save custom theme colors to ExtState
+function settings.save_custom_colors(colors)
+  for _, key in ipairs(COLOR_KEYS) do
+    if colors[key] then
+      reaper.SetExtState(EXT_SECTION, "custom_color_" .. key, tostring(colors[key]), true)
+    end
+  end
+end
+
+-- Load custom theme colors from ExtState
+function settings.load_custom_colors()
+  local colors = {}
+  for _, key in ipairs(COLOR_KEYS) do
+    local val = reaper.GetExtState(EXT_SECTION, "custom_color_" .. key)
+    if val ~= "" then colors[key] = tonumber(val) end
+  end
+  return colors
+end
 
 -- Get theme by ID
 function settings.get_theme(id)
@@ -395,6 +700,15 @@ function settings.load()
     settings.current.theme_id = theme_id
   else
     settings.current.theme_id = "default"
+  end
+
+  -- Load custom theme colors from ExtState if saved
+  local custom_colors = settings.load_custom_colors()
+  local custom_theme = settings.get_theme("custom")
+  if custom_theme then
+    for key, val in pairs(custom_colors) do
+      custom_theme.colors[key] = val
+    end
   end
 
   -- Load shortcuts

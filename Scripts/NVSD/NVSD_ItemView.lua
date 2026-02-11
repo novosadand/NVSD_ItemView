@@ -46,7 +46,7 @@ local function get_file_size(path)
 end
 
 local initial_file_size = get_file_size(script_path)
-local lib_files = {"config", "state", "utils", "drawing", "controls", "settings", "settings_ui"}
+local lib_files = {"config", "state", "utils", "drawing", "controls", "settings", "settings_ui", "fade_curves"}
 local initial_lib_sizes = {}
 for _, name in ipairs(lib_files) do
   initial_lib_sizes[name] = get_file_size(script_dir .. "/lib/" .. name .. ".lua")
@@ -205,26 +205,7 @@ local function loop()
       end
       state.sticky_item = nil
       state.sticky_item_valid = false
-      state.dragging_start = false
-      state.dragging_end = false
-      state.dragging_fade_in = false
-      state.dragging_fade_out = false
-      state.dragging_fade_curve_in = false
-      state.dragging_fade_curve_out = false
-      state.is_panning = false
-      state.is_ruler_dragging = false
-      state.fx_dragging = false
-      state.fx_drag_activated = false
-      state.dragging_env_node = false
-      state.env_freehand_drawing = false
-      state.env_tension_dragging = false
-      state.env_segment_dragging = false
-      state.env_rect_selecting = false
-      state.env_rect_sel_activated = false
-      state.env_multi_dragging = false
-      state.env_multi_drag_activated = false
-      state.env_multi_drag_start_positions = {}
-      state.env_multi_drag_all_points = {}
+      state.reset_all_drags()
       state.undo_block_open = nil
       state.was_mouse_down = false
       state.invalidate_view_peaks()
@@ -274,24 +255,7 @@ local function loop()
   -- state from corrupting positions (ImGui_IsMouseDown/GetMousePos can return
   -- stale values on the transition frame)
   if not reaper_is_active then
-    state.dragging_start = false
-    state.dragging_end = false
-    state.dragging_fade_in = false
-    state.dragging_fade_out = false
-    state.dragging_fade_curve_in = false
-    state.dragging_fade_curve_out = false
-    state.is_panning = false
-    state.is_ruler_dragging = false
-    state.fx_dragging = false
-    state.fx_drag_activated = false
-    state.dragging_env_node = false
-    state.env_freehand_drawing = false
-    state.env_tension_dragging = false
-    state.env_segment_dragging = false
-    state.env_rect_selecting = false
-    state.env_rect_sel_activated = false
-    state.env_multi_dragging = false
-    state.env_multi_drag_activated = false
+    state.reset_all_drags()
   end
 
   -- Auto-reload check (skip during mouse-down to avoid disk I/O lag)
@@ -335,13 +299,13 @@ local function loop()
       reaper.ImGui_SetWindowFocus(ctx)
     end
 
+    -- Audio preview (configurable shortcut, default Ctrl+Space)
+    if reaper_is_active and settings.check_shortcut(ctx, "audio_preview") and reaper.CF_CreatePreview then
+      state.preview_start_requested = true  -- processed in item context where source is available
     -- Forward Space to REAPER transport (so playback works without clicking back to timeline)
-    -- Ctrl+Space: toggle audio preview
     -- Plain Space while preview is playing: stop preview instead of toggling transport
-    if reaper_is_active and not settings.listening and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Space()) then
-      if ctrl_held and reaper.CF_CreatePreview then
-        state.preview_start_requested = true  -- processed in item context where source is available
-      elseif state.preview_active and state.preview_handle then
+    elseif reaper_is_active and not settings.listening and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Space()) then
+      if state.preview_active and state.preview_handle then
         reaper.CF_Preview_Stop(state.preview_handle)
         state.preview_handle = nil
         state.preview_active = false
@@ -369,9 +333,33 @@ local function loop()
       state.pan_offset = 0
     end
 
-    -- Ctrl+4: toggle envelope snap (pitch semitones)
-    if reaper_is_active and ctrl_held and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_4()) then
+    -- Toggle envelope snap (configurable shortcut, default Ctrl+4)
+    if reaper_is_active and settings.check_shortcut(ctx, "toggle_snap") then
       state.env_snap_enabled = not state.env_snap_enabled
+    end
+
+    -- Envelope lock (configurable shortcut, default L)
+    if reaper_is_active and settings.check_shortcut(ctx, "envelope_lock") then
+      state.envelope_lock = not state.envelope_lock
+    end
+
+    -- Show/hide envelope shortcuts
+    if reaper_is_active and settings.check_shortcut(ctx, "show_volume_env") then
+      state.envelope_type = "Volume"; state.envelopes_visible = true
+    end
+    if reaper_is_active and settings.check_shortcut(ctx, "show_pitch_env") then
+      state.envelope_type = "Pitch"; state.envelopes_visible = true; state.pitch_view_offset = 0
+    end
+    if reaper_is_active and settings.check_shortcut(ctx, "show_pan_env") then
+      state.envelope_type = "Pan"; state.envelopes_visible = true
+    end
+    if reaper_is_active and settings.check_shortcut(ctx, "hide_envelopes") then
+      state.envelopes_visible = false
+    end
+
+    -- Open settings (configurable shortcut, default S)
+    if reaper_is_active and settings.check_shortcut(ctx, "open_settings") then
+      if not settings_ui.is_open() then settings_ui.open(settings) end
     end
 
     -- Escape: clear node selection first, then region selection, then close
@@ -783,6 +771,7 @@ local function loop()
           reaper.ImGui_InvisibleButton(ctx, "waveform_area", avail_w, math.max(avail_h, total_height))
 
           local mouse_x, mouse_y = reaper.ImGui_GetMousePos(ctx)
+          drawing.set_frame_time(reaper.time_precise())
           local source_item_length = item_length * playrate
 
           -- Detect looped item and track start_offset wrapping
@@ -929,16 +918,7 @@ local function loop()
           end
 
           -- Check if user is dragging in REAPER (mouse button held outside our control)
-          local we_are_dragging = state.dragging_start or state.dragging_end or state.is_panning
-                                  or state.is_ruler_dragging or state.is_any_control_dragging()
-                                  or state.dragging_fade_in or state.dragging_fade_out
-                                  or state.dragging_fade_curve_in or state.dragging_fade_curve_out
-                                  or state.fx_dragging or state.dragging_env_node
-                                  or state.env_freehand_drawing or state.env_tension_dragging
-                                  or state.env_segment_dragging or state.env_multi_dragging
-                                  or state.env_rect_selecting
-                                  or state.selecting_region
-                                  or state.pitch_gutter_dragging
+          local we_are_dragging = state.any_drag_active()
           local user_dragging_in_reaper = mouse_is_down and not we_are_dragging
 
           -- Get file path (used by info bar)
@@ -1060,7 +1040,7 @@ local function loop()
           end
 
           -- Draw file info bar at the top (file_path already fetched above for caching)
-          local _, gear_clicked, tab_clicked = drawing.draw_info_bar(draw_list, ctx, wave_x, info_bar_y, waveform_width, config.INFO_BAR_HEIGHT, source, file_path, mouse_x, mouse_y, item, config, utils, state.view_num_channels, state)
+          local _, gear_clicked, tab_clicked = drawing.draw_info_bar(draw_list, ctx, wave_x, info_bar_y, waveform_width, config.INFO_BAR_HEIGHT, source, file_path, mouse_x, mouse_y, item, config, utils, state.view_num_channels, state, settings)
 
           -- Open settings when gear is clicked
           if gear_clicked then
@@ -1242,8 +1222,6 @@ local function loop()
           -- snap_offset: override start_offset for snapping (use drag_start_offset during marker drags)
           local function snap_to_grid_if_enabled(source_t, snap_offset)
             if not state.env_snap_enabled then return source_t end
-            local snap_enabled = reaper.GetToggleCommandState(1157) == 1
-            if not snap_enabled then return source_t end
 
             local offset = snap_offset or start_offset
             local project_t = utils.source_to_project_time(source_t, item_position, offset, playrate)
@@ -1395,7 +1373,7 @@ local function loop()
           local COLOR_LEFT_COL_BG = 0x1A1A1AFF
           reaper.ImGui_DrawList_AddRectFilled(draw_list, left_col_x, left_col_y, left_col_x + config.LEFT_COLUMN_WIDTH - 2, left_col_y + panel_height, COLOR_LEFT_COL_BG)
 
-          local buttons_bottom = controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take, config, state, utils, drawing)
+          local buttons_bottom = controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take, config, state, utils, drawing, settings)
 
           -- Draw FX toolbar and scrollable FX list below buttons
           local fx_toolbar_bottom = controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
@@ -1423,7 +1401,7 @@ local function loop()
             -- Left column: gain slider (full height)
             controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y,
                 panel_x, panel_y, panel_y + panel_height,
-                item, item_vol, config, state, utils)
+                item, item_vol, config, state, utils, drawing)
 
             -- Right column: pan (top 45%) + pitch+boxes (bottom 55%)
             local knobs_x = panel_x + config.LEFT_PANEL_WIDTH
@@ -1431,15 +1409,15 @@ local function loop()
 
             controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y,
                 knobs_x, panel_y, knob_split,
-                item, take, config, state, utils, drawing)
+                item, take, config, state, utils, drawing, settings)
 
             local take_pitch, knob_cx, knob_cy = controls.draw_pitch_knob(
                 ctx, draw_list, mouse_x, mouse_y,
                 knobs_x, knob_split, panel_y + panel_height,
-                take, config, state, utils, drawing)
+                take, config, state, utils, drawing, settings)
 
             controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y,
-                knobs_x, knob_cy, take, take_pitch, config, state, utils)
+                knobs_x, knob_cy, take, take_pitch, config, state, utils, drawing)
           else
             -- Single column: knobs get fixed minimum space, gain gets the rest
             local pan_height = 70
@@ -1449,19 +1427,19 @@ local function loop()
 
             controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y,
                 panel_x, panel_y, panel_split1,
-                item, item_vol, config, state, utils)
+                item, item_vol, config, state, utils, drawing)
 
             controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y,
                 panel_x, panel_split1, panel_split2,
-                item, take, config, state, utils, drawing)
+                item, take, config, state, utils, drawing, settings)
 
             local take_pitch, knob_cx, knob_cy = controls.draw_pitch_knob(
                 ctx, draw_list, mouse_x, mouse_y,
                 panel_x, panel_split2, panel_y + panel_height,
-                take, config, state, utils, drawing)
+                take, config, state, utils, drawing, settings)
 
             controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y,
-                panel_x, knob_cy, take, take_pitch, config, state, utils)
+                panel_x, knob_cy, take, take_pitch, config, state, utils, drawing)
           end
 
           -- Hide and lock cursor while dragging any control
@@ -1597,6 +1575,13 @@ local function loop()
             state.fade_out_hovered = near_fade_out
           end
 
+          -- Fade handle tooltips
+          if near_fade_in and not state.dragging_fade_in then
+            drawing.tooltip(ctx, "fade_in", "Drag: fade length\nAlt+drag: fade curve")
+          elseif near_fade_out and not state.dragging_fade_out then
+            drawing.tooltip(ctx, "fade_out", "Drag: fade length\nAlt+drag: fade curve")
+          end
+
           -- Fade body hover detection (near the curve line, for alt+drag curvature and cursor)
           local mouse_in_fade_in_body = false
           if fade_in_len > 0 and reaper_is_active
@@ -1686,6 +1671,71 @@ local function loop()
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
           elseif mouse_in_pitch_gutter or state.pitch_gutter_dragging then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
+          end
+
+          -- Tooltips for interactive elements (only when not actively dragging)
+          if not state.any_drag_active() and not state.dragging_zone then
+            -- Envelope node tooltips (most specific first)
+            if state.envelopes_visible and state.env_node_hovered_idx >= 0 then
+              if alt_held then
+                drawing.tooltip(ctx, "env_node", "Click to delete node")
+              elseif state.env_node_hovered_is_selected and #state.env_selected_nodes > 1 then
+                drawing.tooltip(ctx, "env_node", "Drag to move selected nodes\nAlt+click: delete")
+              else
+                drawing.tooltip(ctx, "env_node", "Drag to move node\nAlt+click: delete")
+              end
+            -- Envelope segment tooltips
+            elseif state.envelopes_visible and state.envelope_hovered_segment >= 0 then
+              if alt_held then
+                drawing.tooltip(ctx, "env_segment", "Drag to adjust curve tension")
+              elseif shift_held then
+                drawing.tooltip(ctx, "env_segment", "Click to add node and drag")
+              else
+                drawing.tooltip(ctx, "env_segment", "Drag to move segment\nShift+click: add node\nAlt+drag: adjust curve")
+              end
+            -- Fade handle tooltips
+            elseif near_fade_in then
+              drawing.tooltip(ctx, "fade_in_handle", "Drag to adjust fade in\nRight-click: change shape")
+            elseif near_fade_out then
+              drawing.tooltip(ctx, "fade_out_handle", "Drag to adjust fade out\nRight-click: change shape")
+            -- Fade body tooltips (Alt+drag for curve)
+            elseif mouse_in_fade_in_body then
+              drawing.tooltip(ctx, "fade_in_body", "Alt+drag to adjust curve")
+            elseif mouse_in_fade_out_body then
+              drawing.tooltip(ctx, "fade_out_body", "Alt+drag to adjust curve")
+            -- Marker tooltips
+            elseif mouse_in_marker_area and near_start then
+              if alt_held then
+                drawing.tooltip(ctx, "marker_start", "Drag to slide both markers")
+              else
+                drawing.tooltip(ctx, "marker_start", "Drag to adjust start\nAlt+drag: slide both")
+              end
+            elseif mouse_in_marker_area and near_end then
+              if alt_held then
+                drawing.tooltip(ctx, "marker_end", "Drag to slide both markers")
+              else
+                drawing.tooltip(ctx, "marker_end", "Drag to adjust end\nAlt+drag: slide both")
+              end
+            -- Ruler tooltip
+            elseif mouse_in_ruler then
+              drawing.tooltip(ctx, "ruler", "Drag vertical: zoom\nDrag horizontal: pan")
+            -- Freehand drawing hint (Ctrl held in envelope area)
+            elseif state.envelopes_visible and ctrl_held and mouse_in_waveform
+                and state.env_node_hovered_idx < 0 then
+              drawing.tooltip(ctx, "env_freehand", "Click+drag to draw envelope freehand")
+            -- General envelope area hint
+            elseif state.envelopes_visible and mouse_in_waveform
+                and state.env_node_hovered_idx < 0
+                and state.envelope_hovered_segment < 0
+                and not near_start and not near_end
+                and not near_fade_in and not near_fade_out then
+              drawing.tooltip(ctx, "env_area", "Right-drag: rectangle select nodes\nCtrl+drag: freehand draw")
+            -- General waveform tooltip (no envelopes)
+            elseif not state.envelopes_visible and mouse_in_waveform
+                and not near_start and not near_end
+                and not near_fade_in and not near_fade_out then
+              drawing.tooltip(ctx, "waveform", "Ctrl+scroll: zoom\nMiddle-drag: pan")
+            end
           end
 
           -- Right-click: fade shape menus or generic context menu
@@ -2999,7 +3049,9 @@ local function loop()
                 if env and #state.env_multi_drag_all_points > 0 then
                   local start_src_t = px_to_time(state.env_multi_drag_start_mouse_x)
                   local current_src_t = px_to_time(mouse_x)
-                  local dt = current_src_t - start_src_t
+                  -- Snap: compute dt so that the reference node lands on a grid line
+                  local snapped_current = snap_to_grid_if_enabled(current_src_t)
+                  local dt = snapped_current - start_src_t
                   local start_raw = mouse_y_to_raw(state.env_multi_drag_start_mouse_y)
                   local current_raw = mouse_y_to_raw(mouse_y)
                   local dv = current_raw - start_raw
