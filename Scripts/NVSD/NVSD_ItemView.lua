@@ -1090,8 +1090,8 @@ local function loop()
 
             -- Draw envelope overlay on waveform
             local env_colors = config.ENV_COLORS[state.envelope_type] or config.ENV_COLORS.Volume
-            local env_anchor_end = (is_looped_item or is_extended_drag) and ext_end or source_length
-            local env_anchor_start = (is_looped_item or is_extended_drag) and ext_start or nil
+            local env_anchor_end = is_looped_item and ext_end or source_length
+            local env_anchor_start = is_looped_item and ext_start or nil
             drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_env_points,
               wave_x, wave_y, waveform_width, waveform_height,
               time_to_px, view_start, view_length,
@@ -2778,14 +2778,11 @@ local function loop()
           elseif state.dragging_start and state.marker_drag_activated and not state.dragging_zone
               and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
             local original_source_end = state.drag_start_offset + (state.drag_start_length * state.drag_start_playrate)
-            -- Use frozen drag coordinates for stable pixel-to-time mapping
-            local drag_vs = state.drag_start_view_start
-            local drag_vl = state.drag_start_view_length
             local new_start
             if mouse_x >= wave_x and mouse_x <= wave_x + waveform_width then
-              new_start = drag_vs + ((mouse_x - wave_x) / waveform_width) * drag_vl
+              new_start = px_to_time(mouse_x)
             else
-              local edge_time = mouse_x < wave_x and drag_vs or drag_vs + drag_vl
+              local edge_time = mouse_x < wave_x and view_start or view_start + view_length
               local overflow_px = mouse_x < wave_x and (wave_x - mouse_x) or (mouse_x - wave_x - waveform_width)
               local overflow_time = (overflow_px / waveform_width) * source_length
               new_start = mouse_x < wave_x and (edge_time - overflow_time) or (edge_time + overflow_time)
@@ -2850,14 +2847,11 @@ local function loop()
 
           -- Dragging end marker
           elseif state.dragging_end and state.marker_drag_activated and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
-            -- Use frozen drag coordinates for stable pixel-to-time mapping
-            local drag_vs = state.drag_start_view_start
-            local drag_vl = state.drag_start_view_length
             local new_end
             if mouse_x >= wave_x and mouse_x <= wave_x + waveform_width then
-              new_end = drag_vs + ((mouse_x - wave_x) / waveform_width) * drag_vl
+              new_end = px_to_time(mouse_x)
             else
-              local edge_time = mouse_x < wave_x and drag_vs or drag_vs + drag_vl
+              local edge_time = mouse_x < wave_x and view_start or view_start + view_length
               local overflow_px = mouse_x < wave_x and (wave_x - mouse_x) or (mouse_x - wave_x - waveform_width)
               local overflow_time = (overflow_px / waveform_width) * source_length
               new_end = mouse_x < wave_x and (edge_time - overflow_time) or (edge_time + overflow_time)

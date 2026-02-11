@@ -1467,7 +1467,30 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
   end
 
   if not has_start then
-    local start_val = (#pts > 0) and pts[1].value or default_raw
+    -- Interpolate anchor value: if anchor_s falls between existing points, use interpolated value
+    local start_val = default_raw
+    if #pts > 0 then
+      if anchor_s <= pts[1].time then
+        start_val = pts[1].value
+      elseif anchor_s >= pts[#pts].time then
+        start_val = pts[#pts].value
+      else
+        -- Find segment containing anchor_s and interpolate
+        for i = 1, #pts - 1 do
+          if anchor_s >= pts[i].time and anchor_s <= pts[i + 1].time then
+            local seg_len = pts[i + 1].time - pts[i].time
+            if seg_len < 0.0001 then
+              start_val = pts[i + 1].value
+            else
+              local frac = (anchor_s - pts[i].time) / seg_len
+              local curved_frac = apply_shape(frac, pts[i].shape, pts[i].tension)
+              start_val = pts[i].value + curved_frac * (pts[i + 1].value - pts[i].value)
+            end
+            break
+          end
+        end
+      end
+    end
     table.insert(pts, 1, { time = anchor_s, value = start_val, implicit = true, idx = -1, shape = 0, tension = 0 })
   end
   if not has_end then
