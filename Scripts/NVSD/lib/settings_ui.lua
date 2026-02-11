@@ -196,14 +196,14 @@ end
 local AUTO_DERIVE = {
   waveform_bg   = {
     {"centerline", 16, "add"}, {"ruler_bg", 10, "add"}, {"info_bar_bg", 3, "add"},
-    {"grid_bar", 28, "add"}, {"grid_beat", 12, "add"},
+    {"grid_bar", 28, "add"}, {"grid_beat", 12, "add"}, {"btn_off", 38, "add"},
   },
   waveform      = {{"waveform_inactive", 0.65}, {"border", 0.85}},
   markers       = {
     {"markers_hover", 1.12}, {"playhead", 1.0}, {"btn_on", 1.0},
     {"btn_hover", 1.08}, {"info_bar_icon", 1.0},
   },
-  info_bar_text = {{"ruler_text", 0.79}, {"ruler_tick", 0.55}, {"btn_off", 0.37}},
+  info_bar_text = {{"ruler_text", 0.79}, {"ruler_tick", 0.55}, {"btn_text", 1.57}},
 }
 
 -- Apply all derivations for a changed color key

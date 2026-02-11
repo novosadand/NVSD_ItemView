@@ -493,7 +493,7 @@ end
 -- Returns: mouse_over_filename, gear_clicked, tab_clicked
 function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file_path, mouse_x, mouse_y, item, config, utils, actual_num_channels, state, settings)
   reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, config.COLOR_INFO_BAR_BG)
-  reaper.ImGui_DrawList_AddLine(draw_list, x, y + height, x + width, y + height, 0x333333FF, 1)
+  reaper.ImGui_DrawList_AddLine(draw_list, x, y + height, x + width, y + height, config.COLOR_CENTERLINE, 1)
 
   -- Settings button (gear icon) on the right
   local gear_btn_h = height - 4
@@ -507,12 +507,12 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
                         and mouse_y >= gear_btn_y and mouse_y <= gear_btn_y + gear_btn_h
 
   -- Button background
-  local gear_btn_bg = mouse_in_gear and 0x505050FF or 0x353535FF
+  local gear_btn_bg = mouse_in_gear and config.COLOR_BTN_HOVER or config.COLOR_GRID_BAR
   reaper.ImGui_DrawList_AddRectFilled(draw_list, gear_btn_x, gear_btn_y,
       gear_btn_x + gear_btn_w, gear_btn_y + gear_btn_h, gear_btn_bg, 3)
 
   -- Draw gear icon
-  local gear_color = mouse_in_gear and 0xDDDDDDFF or 0xAAAAAAFF
+  local gear_color = mouse_in_gear and config.COLOR_BTN_TEXT or config.COLOR_INFO_BAR_TEXT
   local outer_r = 5
   local teeth = 6
 
@@ -1025,12 +1025,12 @@ function drawing.draw_preview_playhead(draw_list, x, y, height)
 end
 
 -- Draw a knob
-function drawing.draw_knob(draw_list, cx, cy, radius, angle, is_hovered, is_active, label, unit_text)
-  local COLOR_KNOB_BG = 0x303030FF
-  local COLOR_KNOB_BORDER = is_active and 0x6AB0F9FF or (is_hovered and 0x888888FF or 0x555555FF)
-  local COLOR_KNOB_POINTER = 0xFFFFFFFF
-  local COLOR_KNOB_ARC_BG = 0x404040FF
-  local COLOR_KNOB_ARC = 0x4A90D9FF
+function drawing.draw_knob(draw_list, cx, cy, radius, angle, is_hovered, is_active, label, unit_text, config)
+  local COLOR_KNOB_BG = config and config.COLOR_BTN_OFF or 0x303030FF
+  local COLOR_KNOB_BORDER = is_active and (config and config.COLOR_MARKER_HOVER or 0x6AB0F9FF) or (is_hovered and (config and config.COLOR_RULER_TEXT or 0x888888FF) or (config and config.COLOR_RULER_TICK or 0x555555FF))
+  local COLOR_KNOB_POINTER = config and config.COLOR_BTN_TEXT or 0xFFFFFFFF
+  local COLOR_KNOB_ARC_BG = config and config.COLOR_BTN_OFF or 0x404040FF
+  local COLOR_KNOB_ARC = config and config.COLOR_MARKER or 0x4A90D9FF
 
   local num_segments = 32
   reaper.ImGui_DrawList_AddCircleFilled(draw_list, cx, cy, radius, COLOR_KNOB_BG, num_segments)
@@ -1091,10 +1091,10 @@ function drawing.draw_knob(draw_list, cx, cy, radius, angle, is_hovered, is_acti
 
   if label then
     local lw = #label * 6
-    reaper.ImGui_DrawList_AddText(draw_list, cx - lw / 2, cy - radius - 18, 0xAAAAAAFF, label)
+    reaper.ImGui_DrawList_AddText(draw_list, cx - lw / 2, cy - radius - 18, config and config.COLOR_INFO_BAR_TEXT or 0xAAAAAAFF, label)
   end
   if unit_text then
-    reaper.ImGui_DrawList_AddText(draw_list, cx - 5, cy + radius + 2, 0x888888FF, unit_text)
+    reaper.ImGui_DrawList_AddText(draw_list, cx - 5, cy + radius + 2, config and config.COLOR_RULER_TEXT or 0x888888FF, unit_text)
   end
 end
 

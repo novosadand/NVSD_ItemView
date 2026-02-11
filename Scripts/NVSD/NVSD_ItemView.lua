@@ -1370,7 +1370,7 @@ local function loop()
           end
 
           -- Left panel controls
-          local COLOR_LEFT_COL_BG = 0x1A1A1AFF
+          local COLOR_LEFT_COL_BG = config.COLOR_WAVEFORM_BG
           reaper.ImGui_DrawList_AddRectFilled(draw_list, left_col_x, left_col_y, left_col_x + config.LEFT_COLUMN_WIDTH - 2, left_col_y + panel_height, COLOR_LEFT_COL_BG)
 
           local buttons_bottom = controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take, config, state, utils, drawing, settings)
@@ -1388,7 +1388,7 @@ local function loop()
           -- FX right-click context menu
           controls.draw_fx_context_menu(ctx, state)
 
-          local COLOR_PANEL_BG = 0x202020FF
+          local COLOR_PANEL_BG = config.COLOR_INFO_BAR_BG
           reaper.ImGui_DrawList_AddRectFilled(draw_list, panel_x, panel_y,
               panel_x + effective_panel_width - 4, panel_y + panel_height, COLOR_PANEL_BG)
 
@@ -1396,7 +1396,7 @@ local function loop()
             -- Two-column mode: gain on left, knobs on right
             local div_x = panel_x + config.LEFT_PANEL_WIDTH - 2
             reaper.ImGui_DrawList_AddLine(draw_list, div_x, panel_y + 4, div_x,
-                panel_y + panel_height - 4, 0x333333FF, 1)
+                panel_y + panel_height - 4, config.COLOR_CENTERLINE, 1)
 
             -- Left column: gain slider (full height)
             controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y,

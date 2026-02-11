@@ -74,7 +74,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   if state.warp_mode then
     warp_bg_color = mouse_in_warp and COLOR_BTN_HOVER or COLOR_BTN_ON
   else
-    warp_bg_color = mouse_in_warp and 0x505050FF or COLOR_BTN_OFF
+    warp_bg_color = mouse_in_warp and COLOR_BTN_HOVER or COLOR_BTN_OFF
   end
   reaper.ImGui_DrawList_AddRectFilled(draw_list, warp_btn_x, warp_btn_y, warp_btn_x + warp_btn_width, warp_btn_y + btn_height, warp_bg_color, 3)
   local warp_text_w = reaper.ImGui_CalcTextSize(ctx, "WARP")
@@ -169,13 +169,13 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
   local dropdown_bg, text_color, arrow_color
   if dropdown_enabled then
-    dropdown_bg = mouse_in_dropdown and 0x505050FF or 0x353535FF
-    text_color = 0xCCCCCCFF
-    arrow_color = 0xAAAAAAFF
+    dropdown_bg = mouse_in_dropdown and COLOR_BTN_HOVER or config.COLOR_GRID_BAR
+    text_color = config.COLOR_INFO_BAR_TEXT
+    arrow_color = config.COLOR_RULER_TEXT
   else
-    dropdown_bg = 0x252525FF
-    text_color = 0x666666FF
-    arrow_color = 0x555555FF
+    dropdown_bg = config.COLOR_RULER_BG
+    text_color = config.COLOR_RULER_TICK
+    arrow_color = config.COLOR_RULER_TICK
     state.warp_dropdown_open = false
   end
 
@@ -200,8 +200,8 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     local menu_item_height = 16
     local menu_height = #config.PITCH_MODES * menu_item_height + 4
 
-    reaper.ImGui_DrawList_AddRectFilled(draw_list, dropdown_x, menu_y, dropdown_x + dropdown_width, menu_y + menu_height, 0x2A2A2AFF, 2)
-    reaper.ImGui_DrawList_AddRect(draw_list, dropdown_x, menu_y, dropdown_x + dropdown_width, menu_y + menu_height, 0x555555FF, 2)
+    reaper.ImGui_DrawList_AddRectFilled(draw_list, dropdown_x, menu_y, dropdown_x + dropdown_width, menu_y + menu_height, config.COLOR_INFO_BAR_BG, 2)
+    reaper.ImGui_DrawList_AddRect(draw_list, dropdown_x, menu_y, dropdown_x + dropdown_width, menu_y + menu_height, config.COLOR_RULER_TICK, 2)
 
     for i, mode in ipairs(config.PITCH_MODES) do
       local item_y = menu_y + 2 + (i - 1) * menu_item_height
@@ -209,12 +209,12 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
                             and mouse_y >= item_y and mouse_y <= item_y + menu_item_height
 
       if mouse_in_item then
-        reaper.ImGui_DrawList_AddRectFilled(draw_list, dropdown_x + 1, item_y, dropdown_x + dropdown_width - 1, item_y + menu_item_height, 0x4A4A4AFF)
+        reaper.ImGui_DrawList_AddRectFilled(draw_list, dropdown_x + 1, item_y, dropdown_x + dropdown_width - 1, item_y + menu_item_height, COLOR_BTN_OFF)
       end
 
       local item_text_color = (mode.value == current_mode or
         (current_mode >= 0 and mode.value >= 0 and (mode.value >> 16) == (current_mode >> 16)))
-        and 0x4A90D9FF or 0xCCCCCCFF
+        and config.COLOR_MARKER or config.COLOR_INFO_BAR_TEXT
       reaper.ImGui_DrawList_AddText(draw_list, dropdown_x + 4, item_y + 2, item_text_color, mode.name)
 
       if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_item then
@@ -249,7 +249,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   local mouse_in_clear = mouse_x >= clear_btn_x and mouse_x <= clear_btn_x + clear_btn_width
                          and mouse_y >= clear_btn_y and mouse_y <= clear_btn_y + clear_btn_height
 
-  local clear_bg_color = mouse_in_clear and 0x505050FF or COLOR_BTN_OFF
+  local clear_bg_color = mouse_in_clear and COLOR_BTN_HOVER or COLOR_BTN_OFF
   reaper.ImGui_DrawList_AddRectFilled(draw_list, clear_btn_x, clear_btn_y, clear_btn_x + clear_btn_width, clear_btn_y + clear_btn_height, clear_bg_color, 3)
   local clear_text_w = reaper.ImGui_CalcTextSize(ctx, "Clear")
   local clear_text_x = clear_btn_x + (clear_btn_width - clear_text_w) / 2
@@ -294,7 +294,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   local mouse_in_rev = mouse_x >= rev_btn_x and mouse_x <= rev_btn_x + rev_btn_width
                        and mouse_y >= row2_y and mouse_y <= row2_y + btn_height
 
-  local rev_bg_color = mouse_in_rev and 0x505050FF or COLOR_BTN_OFF
+  local rev_bg_color = mouse_in_rev and COLOR_BTN_HOVER or COLOR_BTN_OFF
   reaper.ImGui_DrawList_AddRectFilled(draw_list, rev_btn_x, row2_y, rev_btn_x + rev_btn_width, row2_y + btn_height, rev_bg_color, 3)
   local rev_text_w = reaper.ImGui_CalcTextSize(ctx, "Reverse")
   local rev_text_x = rev_btn_x + (rev_btn_width - rev_text_w) / 2
@@ -335,7 +335,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   local mouse_in_edit = mouse_x >= edit_btn_x and mouse_x <= edit_btn_x + edit_btn_width
                         and mouse_y >= row2_y and mouse_y <= row2_y + btn_height
 
-  local edit_bg_color = mouse_in_edit and 0x505050FF or COLOR_BTN_OFF
+  local edit_bg_color = mouse_in_edit and COLOR_BTN_HOVER or COLOR_BTN_OFF
   reaper.ImGui_DrawList_AddRectFilled(draw_list, edit_btn_x, row2_y, edit_btn_x + edit_btn_width, row2_y + btn_height, edit_bg_color, 3)
   local edit_text_w = reaper.ImGui_CalcTextSize(ctx, "Edit")
   local edit_text_x = edit_btn_x + (edit_btn_width - edit_text_w) / 2
@@ -387,14 +387,14 @@ function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, pa
   local slider_height = slider_bottom - slider_top
   if slider_height < 20 then return end
 
-  local COLOR_SLIDER_TRACK = 0x404040FF
-  local COLOR_SLIDER_FILL = 0x4A90D9FF
-  local COLOR_SLIDER_HANDLE = 0xAAAAAAFF
-  local COLOR_SLIDER_HANDLE_HOVER = 0xFFFFFFFF
-  local COLOR_ZERO_LINE = 0x666666FF
-  local COLOR_TICK = 0x555555FF
-  local COLOR_TICK_MAJOR = 0x666666FF
-  local COLOR_LABEL = 0x888888FF
+  local COLOR_SLIDER_TRACK = config.COLOR_BTN_OFF
+  local COLOR_SLIDER_FILL = config.COLOR_MARKER
+  local COLOR_SLIDER_HANDLE = config.COLOR_INFO_BAR_TEXT
+  local COLOR_SLIDER_HANDLE_HOVER = config.COLOR_BTN_TEXT
+  local COLOR_ZERO_LINE = config.COLOR_RULER_TEXT
+  local COLOR_TICK = config.COLOR_RULER_TICK
+  local COLOR_TICK_MAJOR = config.COLOR_RULER_TEXT
+  local COLOR_LABEL = config.COLOR_RULER_TEXT
 
   reaper.ImGui_DrawList_AddRectFilled(draw_list, slider_x, slider_top, slider_x + config.GAIN_SLIDER_WIDTH, slider_bottom, COLOR_SLIDER_TRACK, 3)
 
@@ -487,11 +487,11 @@ function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, pa
   end
 
   local slider_center_x = slider_x + config.GAIN_SLIDER_WIDTH / 2
-  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - 14, panel_y + math.max(1, pad - 4), 0xAAAAAAFF, "Gain")
+  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - 14, panel_y + math.max(1, pad - 4), config.COLOR_INFO_BAR_TEXT, "Gain")
   local db_text = utils.format_db(item_db)
   local db_text_w = reaper.ImGui_CalcTextSize(ctx, db_text)
   local db_gap = math.max(4, math.min(8, pad - 1))
-  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - db_text_w / 2, slider_bottom + db_gap, 0xAAAAAAFF, db_text)
+  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - db_text_w / 2, slider_bottom + db_gap, config.COLOR_INFO_BAR_TEXT, db_text)
 
 end
 
@@ -513,7 +513,7 @@ function controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel
   local mouse_in_knob = knob_dist <= config.PITCH_KNOB_RADIUS + 8
 
   drawing.draw_knob(draw_list, knob_cx, knob_cy, config.PITCH_KNOB_RADIUS, knob_angle,
-    mouse_in_knob, state.is_dragging("pan"), "Pan")
+    mouse_in_knob, state.is_dragging("pan"), "Pan", nil, config)
 
   if mouse_in_knob and not state.is_dragging("pan") then
     drawing.tooltip(ctx, "pan_knob", "Pan\nDouble-click to reset\nCtrl+drag for fine control")
@@ -523,7 +523,7 @@ function controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel
   local pan_text = utils.format_pan(take_pan)
   local pan_text_w = #pan_text * 6
   reaper.ImGui_DrawList_AddText(draw_list, knob_cx - pan_text_w / 2,
-    knob_cy + config.PITCH_KNOB_RADIUS + 2, 0x888888FF, pan_text)
+    knob_cy + config.PITCH_KNOB_RADIUS + 2, config.COLOR_RULER_TEXT, pan_text)
 
   -- Double-click reset to center
   if reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_knob then
@@ -632,7 +632,7 @@ function controls.draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, pan
   local knob_dist = math.sqrt(knob_dx * knob_dx + knob_dy * knob_dy)
   local mouse_in_knob = knob_dist <= config.PITCH_KNOB_RADIUS + 8
 
-  drawing.draw_knob(draw_list, knob_cx, knob_cy, config.PITCH_KNOB_RADIUS, knob_angle, mouse_in_knob, state.is_dragging("pitch"), "Pitch", "st")
+  drawing.draw_knob(draw_list, knob_cx, knob_cy, config.PITCH_KNOB_RADIUS, knob_angle, mouse_in_knob, state.is_dragging("pitch"), "Pitch", "st", config)
 
   if mouse_in_knob and not state.is_dragging("pitch") then
     drawing.tooltip(ctx, "pitch_knob", "Pitch\nDouble-click to reset\nCtrl+drag for fine control")
@@ -681,10 +681,10 @@ function controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, p
   local box_left_x = panel_x + (config.LEFT_PANEL_WIDTH - boxes_total_width) / 2 - 2
   local box_right_x = box_left_x + box_width + box_gap
 
-  local COLOR_BOX_BG = 0x252525FF
-  local COLOR_BOX_BORDER = 0x444444FF
-  local COLOR_BOX_HOVER = 0x555555FF
-  local COLOR_BOX_TEXT = 0xCCCCCCFF
+  local COLOR_BOX_BG = config.COLOR_RULER_BG
+  local COLOR_BOX_BORDER = config.COLOR_BTN_OFF
+  local COLOR_BOX_HOVER = config.COLOR_RULER_TICK
+  local COLOR_BOX_TEXT = config.COLOR_INFO_BAR_TEXT
 
   local mouse_in_semitones_box = mouse_x >= box_left_x and mouse_x <= box_left_x + box_width
                                  and mouse_y >= box_y and mouse_y <= box_y + box_height
@@ -806,7 +806,7 @@ function controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
   local mouse_in_left = mouse_x >= left_x and mouse_x <= left_x + left_btn_width
                         and mouse_y >= left_y and mouse_y <= left_y + btn_height
 
-  local left_bg = mouse_in_left and 0x505050FF or COLOR_BTN_OFF
+  local left_bg = mouse_in_left and COLOR_BTN_HOVER or COLOR_BTN_OFF
   reaper.ImGui_DrawList_AddRectFilled(draw_list, left_x, left_y, left_x + left_btn_width, left_y + btn_height, left_bg, rounding)
 
   if has_fx then
@@ -864,7 +864,7 @@ function controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
   if has_fx then
     right_bg = mouse_in_right and COLOR_BTN_HOVER or COLOR_BTN_ON
   else
-    right_bg = mouse_in_right and 0x505050FF or COLOR_BTN_OFF
+    right_bg = mouse_in_right and COLOR_BTN_HOVER or COLOR_BTN_OFF
   end
   reaper.ImGui_DrawList_AddRectFilled(draw_list, right_x, right_y, right_x + right_btn_width, right_y + btn_height, right_bg, rounding)
 
@@ -872,7 +872,7 @@ function controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
   local fx_text_w = reaper.ImGui_CalcTextSize(ctx, fx_text)
   local fx_text_x = right_x + (right_btn_width - fx_text_w) / 2
   local fx_text_y = right_y + (btn_height - text_height) / 2
-  local fx_text_color = has_fx and 0x404040FF or COLOR_BTN_TEXT
+  local fx_text_color = has_fx and config.COLOR_WAVEFORM_BG or COLOR_BTN_TEXT
   reaper.ImGui_DrawList_AddText(draw_list, fx_text_x, fx_text_y, fx_text_color, fx_text)
 
   if mouse_in_right then
@@ -957,8 +957,8 @@ function controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
                                 fx_x, fx_y, fx_width, fx_height,
                                 take, config, state, drawing)
   -- Always draw the beveled box background
-  local BOX_FILL = 0x151515FF
-  local BOX_BORDER = 0x333333FF
+  local BOX_FILL = config.COLOR_WAVEFORM_BG
+  local BOX_BORDER = config.COLOR_CENTERLINE
   local BOX_BEVEL = 4
   drawing.draw_beveled_rect(draw_list, fx_x, fx_y, fx_x + fx_width, fx_y + fx_height, BOX_FILL, BOX_BORDER, BOX_BEVEL)
 
@@ -1040,9 +1040,9 @@ function controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
     if row_visible then
       -- Row background
       if is_drag_source then
-        reaper.ImGui_DrawList_AddRectFilled(draw_list, fx_x + inner_pad, row_y, fx_x + content_width - inner_pad, row_y + row_height, 0x2A2A2AFF)
+        reaper.ImGui_DrawList_AddRectFilled(draw_list, fx_x + inner_pad, row_y, fx_x + content_width - inner_pad, row_y + row_height, config.COLOR_INFO_BAR_BG)
       elseif mouse_in_row and not state.fx_drag_activated then
-        reaper.ImGui_DrawList_AddRectFilled(draw_list, fx_x + inner_pad, row_y, fx_x + content_width - inner_pad, row_y + row_height, 0x3A3A3AFF)
+        reaper.ImGui_DrawList_AddRectFilled(draw_list, fx_x + inner_pad, row_y, fx_x + content_width - inner_pad, row_y + row_height, config.COLOR_GRID_BAR)
       end
 
       -- Bypass toggle indicator [B]
@@ -1053,25 +1053,25 @@ function controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
                               and row_visible
 
       if is_enabled then
-        local bp_color = is_drag_source and 0x4A90D960 or 0x4A90D9FF
+        local bp_color = is_drag_source and ((config.COLOR_MARKER & 0xFFFFFF00) | 0x60) or config.COLOR_MARKER
         reaper.ImGui_DrawList_AddRectFilled(draw_list, bp_x, bp_y, bp_x + bypass_size, bp_y + bypass_size, bp_color, 2)
       else
-        local bp_border = is_drag_source and 0x55555560 or 0x555555FF
+        local bp_border = is_drag_source and ((config.COLOR_RULER_TICK & 0xFFFFFF00) | 0x60) or config.COLOR_RULER_TICK
         reaper.ImGui_DrawList_AddRect(draw_list, bp_x, bp_y, bp_x + bypass_size, bp_y + bypass_size, bp_border, 2)
       end
 
       -- FX name text
       local text_color
       if is_drag_source then
-        text_color = 0x66666660
+        text_color = (config.COLOR_RULER_TICK & 0xFFFFFF00) | 0x60
       elseif is_offline then
         text_color = 0x994444FF
       elseif not is_enabled then
-        text_color = 0x777777FF
+        text_color = config.COLOR_RULER_TEXT
       elseif is_open then
-        text_color = 0xFFFFFFFF
+        text_color = config.COLOR_BTN_TEXT
       else
-        text_color = 0xCCCCCCFF
+        text_color = config.COLOR_INFO_BAR_TEXT
       end
 
       local text_x = fx_x + text_x_offset + inner_pad
@@ -1163,7 +1163,7 @@ function controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
         if mouse_y < row_mid then
           drop_before_idx = rp.entry.index
           local line_y = rp.y
-          reaper.ImGui_DrawList_AddLine(draw_list, fx_x + 2, line_y, fx_x + content_width - 2, line_y, 0x4A90D9FF, 2)
+          reaper.ImGui_DrawList_AddLine(draw_list, fx_x + 2, line_y, fx_x + content_width - 2, line_y, config.COLOR_MARKER, 2)
           break
         end
       end
@@ -1171,26 +1171,26 @@ function controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
         local last_rp = row_positions[#row_positions]
         drop_before_idx = last_rp.entry.index + 1
         local line_y = last_rp.y + row_height
-        reaper.ImGui_DrawList_AddLine(draw_list, fx_x + 2, line_y, fx_x + content_width - 2, line_y, 0x4A90D9FF, 2)
+        reaper.ImGui_DrawList_AddLine(draw_list, fx_x + 2, line_y, fx_x + content_width - 2, line_y, config.COLOR_MARKER, 2)
       end
 
       -- Draw floating dragged row at mouse position
       if drag_entry then
         local float_y = mouse_y - row_height / 2
-        reaper.ImGui_DrawList_AddRectFilled(draw_list, fx_x + inner_pad, float_y, fx_x + content_width - inner_pad, float_y + row_height, 0x4A90D9AA)
+        reaper.ImGui_DrawList_AddRectFilled(draw_list, fx_x + inner_pad, float_y, fx_x + content_width - inner_pad, float_y + row_height, (config.COLOR_MARKER & 0xFFFFFF00) | 0xAA)
 
         local is_enabled = reaper.TakeFX_GetEnabled(take, drag_entry.index)
         local float_bp_x = fx_x + bypass_margin + inner_pad
         local float_bp_y = float_y + (row_height - bypass_size) / 2
         if is_enabled then
-          reaper.ImGui_DrawList_AddRectFilled(draw_list, float_bp_x, float_bp_y, float_bp_x + bypass_size, float_bp_y + bypass_size, 0x4A90D9FF, 2)
+          reaper.ImGui_DrawList_AddRectFilled(draw_list, float_bp_x, float_bp_y, float_bp_x + bypass_size, float_bp_y + bypass_size, config.COLOR_MARKER, 2)
         else
-          reaper.ImGui_DrawList_AddRect(draw_list, float_bp_x, float_bp_y, float_bp_x + bypass_size, float_bp_y + bypass_size, 0x555555FF, 2)
+          reaper.ImGui_DrawList_AddRect(draw_list, float_bp_x, float_bp_y, float_bp_x + bypass_size, float_bp_y + bypass_size, config.COLOR_RULER_TICK, 2)
         end
 
         local float_text_x = fx_x + text_x_offset + inner_pad
         local float_text_y = float_y + (row_height - 13) / 2
-        reaper.ImGui_DrawList_AddText(draw_list, float_text_x, float_text_y, 0xFFFFFFFF, drag_entry.name)
+        reaper.ImGui_DrawList_AddText(draw_list, float_text_x, float_text_y, config.COLOR_BTN_TEXT, drag_entry.name)
       end
 
       state.fx_drag_drop_target = drop_before_idx
@@ -1240,7 +1240,7 @@ function controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
     local sb_height = visible_height
 
     -- Track background
-    reaper.ImGui_DrawList_AddRectFilled(draw_list, sb_x, sb_top, sb_x + scrollbar_width, sb_top + sb_height, 0x1A1A1AFF)
+    reaper.ImGui_DrawList_AddRectFilled(draw_list, sb_x, sb_top, sb_x + scrollbar_width, sb_top + sb_height, config.COLOR_WAVEFORM_BG)
 
     -- Thumb
     local thumb_ratio = visible_height / content_height
@@ -1250,7 +1250,7 @@ function controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
 
     local mouse_in_scrollbar = mouse_x >= sb_x and mouse_x <= sb_x + scrollbar_width
                                and mouse_y >= sb_top and mouse_y <= sb_top + sb_height
-    local thumb_color = mouse_in_scrollbar and 0x666666FF or 0x444444FF
+    local thumb_color = mouse_in_scrollbar and config.COLOR_RULER_TEXT or config.COLOR_BTN_OFF
     reaper.ImGui_DrawList_AddRectFilled(draw_list, sb_x, thumb_y, sb_x + scrollbar_width, thumb_y + thumb_height, thumb_color, 2)
   end
 
