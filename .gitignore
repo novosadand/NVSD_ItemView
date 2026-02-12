@@ -20,3 +20,5 @@ docs/
 *.psd
 *.jpg
 gumroad*
+# Exception: README banner
+!gumroad cover2.jpg
