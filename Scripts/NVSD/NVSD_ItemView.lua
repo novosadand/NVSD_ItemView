@@ -1621,11 +1621,11 @@ local function loop()
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
             local cx, cy = mouse_x, mouse_y
             local cc = config.COLOR_MARKER or 0x4A90D9FF
-            reaper.ImGui_DrawList_AddLine(draw_list, cx - 7, cy, cx - 2, cy, cc, 1.0)
-            reaper.ImGui_DrawList_AddLine(draw_list, cx + 2, cy, cx + 7, cy, cc, 1.0)
-            reaper.ImGui_DrawList_AddLine(draw_list, cx, cy - 7, cx, cy - 2, cc, 1.0)
-            reaper.ImGui_DrawList_AddLine(draw_list, cx, cy + 2, cx, cy + 7, cc, 1.0)
-            reaper.ImGui_DrawList_AddCircle(draw_list, cx, cy, 1, cc, 8, 1.0)
+            reaper.ImGui_DrawList_AddLine(draw_list, cx - 10, cy, cx - 3, cy, cc, 1.5)
+            reaper.ImGui_DrawList_AddLine(draw_list, cx + 3, cy, cx + 10, cy, cc, 1.5)
+            reaper.ImGui_DrawList_AddLine(draw_list, cx, cy - 10, cx, cy - 3, cc, 1.5)
+            reaper.ImGui_DrawList_AddLine(draw_list, cx, cy + 3, cx, cy + 10, cc, 1.5)
+            reaper.ImGui_DrawList_AddCircle(draw_list, cx, cy, 2, cc, 8, 1.5)
           elseif state.env_tension_dragging then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
           elseif state.dragging_fade_curve_in or state.dragging_fade_curve_out then
@@ -1676,11 +1676,11 @@ local function loop()
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
             local cx, cy = mouse_x, mouse_y
             local cc = config.COLOR_MARKER or 0x4A90D9FF
-            reaper.ImGui_DrawList_AddLine(draw_list, cx - 7, cy, cx - 2, cy, cc, 1.0)
-            reaper.ImGui_DrawList_AddLine(draw_list, cx + 2, cy, cx + 7, cy, cc, 1.0)
-            reaper.ImGui_DrawList_AddLine(draw_list, cx, cy - 7, cx, cy - 2, cc, 1.0)
-            reaper.ImGui_DrawList_AddLine(draw_list, cx, cy + 2, cx, cy + 7, cc, 1.0)
-            reaper.ImGui_DrawList_AddCircle(draw_list, cx, cy, 1, cc, 8, 1.0)
+            reaper.ImGui_DrawList_AddLine(draw_list, cx - 10, cy, cx - 3, cy, cc, 1.5)
+            reaper.ImGui_DrawList_AddLine(draw_list, cx + 3, cy, cx + 10, cy, cc, 1.5)
+            reaper.ImGui_DrawList_AddLine(draw_list, cx, cy - 10, cx, cy - 3, cc, 1.5)
+            reaper.ImGui_DrawList_AddLine(draw_list, cx, cy + 3, cx, cy + 10, cc, 1.5)
+            reaper.ImGui_DrawList_AddCircle(draw_list, cx, cy, 2, cc, 8, 1.5)
           elseif state.envelopes_visible and reaper_is_active
               and state.envelope_hovered_segment >= 0 and state.env_node_hovered_idx < 0
               and not alt_held and not shift_held then
