@@ -1313,7 +1313,7 @@ local function loop()
             waveform_width, config.ENVELOPE_BAR_HEIGHT,
             mouse_x, mouse_y, config, state, settings)
 
-          -- Helper: snap time to nearest source boundary
+          -- Helper: find nearest source boundary if within threshold
           -- Always active: full threshold when snap on, weaker (40%) when snap off
           local function snap_to_source_boundary(t, src_len, threshold_time)
             local effective_threshold = state.env_snap_enabled and threshold_time or (threshold_time * 0.4)
@@ -1357,6 +1357,23 @@ local function loop()
 
             local snapped_project_t = reaper.TimeMap2_beatsToTime(0, snapped_beat, snapped_measure)
             return utils.project_to_source_time(snapped_project_t, item_position, offset, playrate)
+          end
+
+          -- Helper: snap with both grid and source boundary, pick closest to raw position
+          local function snap_best(raw_t, src_len, threshold_time, snap_offset)
+            local grid_t = snap_to_grid_if_enabled(raw_t, snap_offset)
+            local boundary_t = snap_to_source_boundary(raw_t, src_len, threshold_time)
+            -- If both snapped to different targets, pick the one closer to raw
+            if grid_t ~= raw_t and boundary_t ~= raw_t then
+              if math.abs(raw_t - grid_t) <= math.abs(raw_t - boundary_t) then
+                return grid_t
+              else
+                return boundary_t
+              end
+            end
+            -- Only one snapped, or neither
+            if boundary_t ~= raw_t then return boundary_t end
+            return grid_t
           end
 
           -- Selection now persists across sample/envelope tabs
@@ -3514,24 +3531,12 @@ local function loop()
             local raw_end = raw_start + original_source_length
 
             local new_start
-            local snapped_to_boundary = false
 
             if state.dragging_start then
-              local start_snapped = snap_to_source_boundary(raw_start, source_length, snap_threshold_time)
-              if start_snapped ~= raw_start then
-                new_start = start_snapped
-                snapped_to_boundary = true
-              else
-                new_start = snap_to_grid_if_enabled(raw_start, state.drag_start_offset)
-              end
+              new_start = snap_best(raw_start, source_length, snap_threshold_time, state.drag_start_offset)
             else
-              local end_snapped = snap_to_source_boundary(raw_end, source_length, snap_threshold_time)
-              if end_snapped ~= raw_end then
-                new_start = end_snapped - original_source_length
-                snapped_to_boundary = true
-              else
-                new_start = snap_to_grid_if_enabled(raw_start, state.drag_start_offset)
-              end
+              local snapped_end = snap_best(raw_end, source_length, snap_threshold_time, state.drag_start_offset)
+              new_start = snapped_end - original_source_length
             end
 
             local new_end = new_start + original_source_length
@@ -3591,8 +3596,7 @@ local function loop()
               local overflow_time = (overflow_px / waveform_width) * source_length
               new_start = mouse_x < wave_x and (edge_time - overflow_time) or (edge_time + overflow_time)
             end
-            new_start = snap_to_grid_if_enabled(new_start, state.drag_start_offset)
-            new_start = snap_to_source_boundary(new_start, source_length, snap_threshold_time)
+            new_start = snap_best(new_start, source_length, snap_threshold_time, state.drag_start_offset)
             new_start = math.min(new_start, original_source_end - 0.01)
             local new_source_length = original_source_end - new_start
             local new_item_length = new_source_length / state.drag_start_playrate
@@ -3663,8 +3667,7 @@ local function loop()
               local overflow_time = (overflow_px / waveform_width) * source_length
               new_end = mouse_x < wave_x and (edge_time - overflow_time) or (edge_time + overflow_time)
             end
-            new_end = snap_to_grid_if_enabled(new_end, state.drag_start_offset)
-            new_end = snap_to_source_boundary(new_end, source_length, snap_threshold_time)
+            new_end = snap_best(new_end, source_length, snap_threshold_time, state.drag_start_offset)
             new_end = math.max(state.drag_start_offset + 0.01 * state.drag_start_playrate, new_end)
             local new_source_length = new_end - state.drag_start_offset
             local new_item_length = new_source_length / state.drag_start_playrate
