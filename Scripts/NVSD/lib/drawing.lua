@@ -1130,8 +1130,12 @@ function drawing.draw_cue_markers(ctx, draw_list, markers, wave_x, wave_y, wavef
         local label_b = label_y + 13
 
         -- Hit test for double-click: select region from this cue to next
-        local mouse_in_label = mouse_x >= label_x - 1 and mouse_x <= label_r
-                                and mouse_y >= label_y - 1 and mouse_y <= label_b
+        -- Suppress hover when envelope freehand drawing is active
+        local suppress_hover = state and (state.env_freehand_drawing
+            or (state.envelopes_visible and reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())))
+        local mouse_in_label = not suppress_hover
+            and mouse_x >= label_x - 1 and mouse_x <= label_r
+            and mouse_y >= label_y - 1 and mouse_y <= label_b
         local bg = mouse_in_label and color_with_alpha(color_bg, 0xFF) or color_bg
         local txt = mouse_in_label and 0xFFFFFFFF or color_text
 

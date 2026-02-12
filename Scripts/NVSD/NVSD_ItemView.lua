@@ -1700,9 +1700,10 @@ local function loop()
           local fade_grab_h_create = 20  -- top-only zone for creating new fades
           local fade_curve_tolerance = 20  -- px above/below curve for grab zone
           local fade_top_y = wave_y + 2  -- same as used for rendering
-          -- Fade-in grab zone
+          -- Fade-in grab zone (suppress during envelope freehand draw mode)
+          local env_freehand_mode = state.env_freehand_drawing or (state.envelopes_visible and ctrl_held)
           local near_fade_in = false
-          if fade_in_len > 0 and reaper_is_active
+          if fade_in_len > 0 and reaper_is_active and not env_freehand_mode
               and not state.dragging_start and not state.dragging_end
               and not state.is_ruler_dragging and not state.is_panning then
             -- Fade exists: grab anywhere along the curve
@@ -1712,7 +1713,8 @@ local function loop()
               local fi_curve_y = drawing.get_fade_curve_y(fi_t, fade_in_shape, true, fade_in_dir, fade_top_y, wave_y, waveform_height)
               near_fade_in = math.abs(mouse_y - fi_curve_y) <= fade_curve_tolerance
             end
-          elseif reaper_is_active and not state.dragging_start and not state.dragging_end
+          elseif reaper_is_active and not env_freehand_mode
+              and not state.dragging_start and not state.dragging_end
               and not state.is_ruler_dragging and not state.is_panning then
             -- No fade: narrow top strip near marker for creation
             near_fade_in = mouse_y >= wave_y and mouse_y <= wave_y + fade_grab_h_create
@@ -1721,7 +1723,7 @@ local function loop()
           end
           -- Fade-out grab zone
           local near_fade_out = false
-          if fade_out_len > 0 and reaper_is_active
+          if fade_out_len > 0 and reaper_is_active and not env_freehand_mode
               and not state.dragging_start and not state.dragging_end
               and not state.is_ruler_dragging and not state.is_panning then
             local fo_width = end_marker_x - fade_out_start_x
@@ -1730,7 +1732,8 @@ local function loop()
               local fo_curve_y = drawing.get_fade_curve_y(fo_t, fade_out_shape, false, fade_out_dir, fade_top_y, wave_y, waveform_height)
               near_fade_out = math.abs(mouse_y - fo_curve_y) <= fade_curve_tolerance
             end
-          elseif reaper_is_active and not state.dragging_start and not state.dragging_end
+          elseif reaper_is_active and not env_freehand_mode
+              and not state.dragging_start and not state.dragging_end
               and not state.is_ruler_dragging and not state.is_panning then
             near_fade_out = mouse_y >= wave_y and mouse_y <= wave_y + fade_grab_h_create
                 and mouse_x >= fade_out_start_x - fade_grab_w
