@@ -71,6 +71,13 @@ local KEY_NAME_TO_FUNC = {
   [","] = "ImGui_Key_Comma", ["."] = "ImGui_Key_Period",
   ["/"] = "ImGui_Key_Slash", ["\\"] = "ImGui_Key_Backslash",
   ["`"] = "ImGui_Key_GraveAccent",
+  -- Arrow keys
+  Up = "ImGui_Key_UpArrow", Down = "ImGui_Key_DownArrow",
+  Left = "ImGui_Key_LeftArrow", Right = "ImGui_Key_RightArrow",
+  -- Numpad operators
+  ["Num+"] = "ImGui_Key_KeypadAdd", ["Num-"] = "ImGui_Key_KeypadSubtract",
+  ["Num*"] = "ImGui_Key_KeypadMultiply", ["Num/"] = "ImGui_Key_KeypadDivide",
+  ["Num."] = "ImGui_Key_KeypadDecimal", ["NumEnter"] = "ImGui_Key_KeypadEnter",
   -- Mouse buttons (handled specially via IsMouseClicked, not IsKeyPressed)
   Mouse4 = "MOUSE_4", Mouse5 = "MOUSE_5",
 }
@@ -102,6 +109,8 @@ local BINDABLE_KEYS = {
   "Space","Enter","Tab","Insert","Home","End","PageUp","PageDown",
   "Num0","Num1","Num2","Num3","Num4","Num5","Num6","Num7","Num8","Num9",
   "[","]","-","=",";","'",",",".","/","\\","`",
+  "Up","Down","Left","Right",
+  "Num+","Num-","Num*","Num/","Num.","NumEnter",
   "Mouse4","Mouse5",
 }
 
