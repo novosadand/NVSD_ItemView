@@ -685,8 +685,17 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
     drawing.tooltip(ctx, "filename", "Click to show in explorer")
   end
 
-  if mouse_over_filename and reaper.ImGui_IsMouseClicked(ctx, 0) then
-    reaper.Main_OnCommand(41623, 0)
+  if mouse_over_filename and reaper.ImGui_IsMouseClicked(ctx, 0) and file_path and file_path ~= "" then
+    if reaper.CF_LocateInExplorer then
+      reaper.CF_LocateInExplorer(file_path)
+    else
+      local os_name = reaper.GetOS()
+      if os_name:match("Win") then
+        os.execute('start "" "explorer" /select,"' .. file_path:gsub("/", "\\") .. '"')
+      elseif os_name:match("OSX") or os_name:match("macOS") then
+        os.execute('open -R "' .. file_path .. '"')
+      end
+    end
     return true, false, nil
   end
 
