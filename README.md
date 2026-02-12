@@ -10,6 +10,8 @@
 [![SoundCloud](https://img.shields.io/badge/SoundCloud-andrej__novosad-orange?style=flat&logo=soundcloud&logoColor=white)](https://soundcloud.com/andrej_novosad)
 [![Instagram](https://img.shields.io/badge/Instagram-andrej____novosad-E4405F?style=flat&logo=instagram&logoColor=white)](https://www.instagram.com/andrej__novosad)
 
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-andrejnovosad-FFDD00?style=flat&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/andrejnovosad)
+
 ## TL;DR
 
 - Select an audio item, run the script
