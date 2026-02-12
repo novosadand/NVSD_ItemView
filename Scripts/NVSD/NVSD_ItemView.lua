@@ -1507,6 +1507,11 @@ local function loop()
               snap_to_grid_if_enabled, env_colors, env_anchor_start,
               pitch_view_min, pitch_view_max)
 
+            -- Suppress envelope segment hover when fade body takes priority (alt+hover)
+            if alt_held and (mouse_in_fade_in_body or mouse_in_fade_out_body) then
+              state.envelope_hovered_segment = -1
+            end
+
           end
 
           -- Draw original source boundary markers in ruler
