@@ -2296,7 +2296,7 @@ local function loop()
             reaper.SetMediaItemInfo_Value(temp_item, "D_FADEOUTLEN_AUTO", 0)
             reaper.UpdateItemInProject(temp_item)
 
-            -- Adjust envelope points to match the selected region
+            -- Shift envelope points to match the new D_STARTOFFS (preserve full envelope)
             local env_delta = new_startoffs - take_offset  -- how much D_STARTOFFS moved
             local env_names = { "Volume", "Pitch", "Pan" }
             for _, ename in ipairs(env_names) do
@@ -2318,52 +2318,11 @@ local function loop()
                     end
                   end
 
-                  -- Interpolate value at a given time from the shifted points list
-                  local function interp_at(t)
-                    for j = 1, #pts - 1 do
-                      if pts[j].time <= t and pts[j + 1].time >= t then
-                        local t0, t1 = pts[j].time, pts[j + 1].time
-                        local v0, v1 = pts[j].value, pts[j + 1].value
-                        if t1 - t0 < 0.000001 then return v0 end
-                        local frac = (t - t0) / (t1 - t0)
-                        return v0 + (v1 - v0) * frac
-                      end
-                    end
-                    if #pts > 0 and t <= pts[1].time then return pts[1].value end
-                    if #pts > 0 and t >= pts[#pts].time then return pts[#pts].value end
-                    return 0
+                  -- Clear all original points and write shifted ones (no trimming)
+                  for i = np - 1, 0, -1 do
+                    reaper.DeleteEnvelopePointEx(e, -1, i)
                   end
-
-                  -- Build filtered list: only points inside [0, new_length]
-                  local new_pts = {}
-                  local has_start = false
-                  local has_end = false
-
                   for _, p in ipairs(pts) do
-                    if p.time >= 0 and p.time <= new_length then
-                      if math.abs(p.time) < 0.0001 then has_start = true end
-                      if math.abs(p.time - new_length) < 0.0001 then has_end = true end
-                      new_pts[#new_pts + 1] = p
-                    end
-                  end
-
-                  -- Add boundary points if needed (interpolated from original)
-                  if not has_start then
-                    local v = interp_at(0)
-                    table.insert(new_pts, 1, {
-                      time = 0, value = v, shape = 0, tension = 0, selected = false
-                    })
-                  end
-                  if not has_end then
-                    local v = interp_at(new_length)
-                    new_pts[#new_pts + 1] = {
-                      time = new_length, value = v, shape = 0, tension = 0, selected = false
-                    }
-                  end
-
-                  -- Clear all original points and write the new ones
-                  reaper.DeleteEnvelopePointRange(e, -1, new_length + 1)
-                  for _, p in ipairs(new_pts) do
                     reaper.InsertEnvelopePoint(e, p.time, p.value, p.shape,
                         p.tension, p.selected, true)
                   end
