@@ -709,7 +709,7 @@ local HELP_SECTIONS = {
   },
   {
     header = "KEYBOARD SHORTCUTS",
-    body = "All keyboard shortcuts can be rebound in the Shortcuts tab.\nDefault shortcuts:\n  W: Toggle WARP mode\n  M: Toggle mute\n  R: Reverse item\n  C: Clear pitch/speed\n  E: Open in external editor\n  F: Reset zoom to fit\n  +/-: Zoom in/out\n  Ctrl+4: Toggle envelope snap\n  L: Lock envelopes\n  Shift+V/H/P: Show Volume/Pitch/Pan envelope\n  H: Hide envelopes\n  Ctrl+Space: Audio preview\n  S: Open settings\n  Space: Play/Stop\n  Ctrl+Z/Y: Undo/Redo\n  Ctrl+C: Copy region",
+    body = "All keyboard shortcuts can be rebound in the Shortcuts tab.\nDefault shortcuts:\n  W: Toggle WARP mode\n  M: Toggle mute\n  R: Reverse item\n  C: Crop markers to selection\n  Shift+C: Clear pitch/speed\n  E: Open in external editor\n  F: Reset zoom to fit\n  Z: Zoom to selection / markers (toggle)\n  Alt+Z: Unzoom completely\n  +/-: Zoom in/out\n  Ctrl+4: Toggle envelope snap\n  L: Lock envelopes\n  Shift+V/H/P: Show Volume/Pitch/Pan envelope\n  H: Hide envelopes\n  Ctrl+Space: Audio preview\n  S: Open settings\n  Space: Play/Stop\n  Ctrl+Z/Y: Undo/Redo\n  Ctrl+C: Copy region",
   },
   {
     header = "TIPS",
