@@ -986,6 +986,53 @@ local function loop()
             end
           end
 
+          -- Crop markers to selection (C key)
+          if reaper_is_active and settings.check_shortcut(ctx, "crop_to_selection") and state.region_selected then
+            local sel_s = math.min(state.selection_start_time, state.selection_end_time)
+            local sel_e = math.max(state.selection_start_time, state.selection_end_time)
+            if sel_e - sel_s > 0.001 then
+              reaper.Undo_BeginBlock()
+              local new_source_length = sel_e - sel_s
+              local new_item_length = new_source_length / playrate
+              local new_take_offset = sel_s - section_offset
+
+              -- Fade adjustment
+              local fi, fo = fade_in_len, fade_out_len
+              if fi + fo > new_item_length then
+                fo = math.max(0, new_item_length - fi)
+                if fo == 0 then fi = math.min(fi, new_item_length) end
+              end
+
+              -- Shift envelope points so they stay audio-anchored
+              local offset_delta = new_take_offset - take_offset
+              if not state.envelope_lock and math.abs(offset_delta) > 0.000001 then
+                local env_names = { "Volume", "Pitch", "Pan" }
+                for _, ename in ipairs(env_names) do
+                  local e = reaper.GetTakeEnvelopeByName(take, ename)
+                  if e then
+                    local np = reaper.CountEnvelopePoints(e)
+                    for ei = 0, np - 1 do
+                      local ret, pt_time, pt_val, pt_shape, pt_tension, pt_sel = reaper.GetEnvelopePoint(e, ei)
+                      if ret then
+                        reaper.SetEnvelopePoint(e, ei, pt_time - offset_delta, pt_val, pt_shape, pt_tension, pt_sel, true)
+                      end
+                    end
+                    reaper.Envelope_SortPoints(e)
+                  end
+                end
+              end
+
+              reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
+              reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_item_length)
+              reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
+              reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
+              reaper.UpdateArrange()
+              reaper.Undo_EndBlock("NVSD_ItemView: Crop to selection", -1)
+              -- Clear selection after crop
+              state.region_selected = false
+            end
+          end
+
           -- Unzoom completely (Alt+Z)
           if reaper_is_active and settings.check_shortcut(ctx, "unzoom_all") then
             state.zoom_level = 1.0

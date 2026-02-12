@@ -9,6 +9,7 @@ local EDITABLE_SHORTCUTS = {
   {name = "toggle_mute",  label = "Toggle mute"},
   {name = "reverse",      label = "Reverse item"},
   {name = "clear",        label = "Clear pitch/speed"},
+  {name = "crop_to_selection", label = "Crop markers to selection"},
   {name = "open_editor",  label = "Open in external editor"},
   {name = "reset_zoom",   label = "Reset zoom to fit"},
   {name = "zoom_in",      label = "Zoom in"},

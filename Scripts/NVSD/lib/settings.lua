@@ -17,7 +17,8 @@ settings.DEFAULT_SHORTCUTS = {
   toggle_warp = {ctrl = false, shift = false, alt = false, key = "W"},
   toggle_mute = {ctrl = false, shift = false, alt = false, key = "M"},
   reverse = {ctrl = false, shift = false, alt = false, key = "R"},
-  clear = {ctrl = false, shift = false, alt = false, key = "C"},
+  clear = {ctrl = false, shift = true, alt = false, key = "C"},
+  crop_to_selection = {ctrl = false, shift = false, alt = false, key = "C"},
   open_editor = {ctrl = false, shift = false, alt = false, key = "E"},
   toggle_snap = {ctrl = true, shift = false, alt = false, key = "4"},
   audio_preview = {ctrl = true, shift = false, alt = false, key = "Space"},
@@ -63,6 +64,13 @@ local KEY_NAME_TO_FUNC = {
   ["Num4"] = "ImGui_Key_Keypad4", ["Num5"] = "ImGui_Key_Keypad5",
   ["Num6"] = "ImGui_Key_Keypad6", ["Num7"] = "ImGui_Key_Keypad7",
   ["Num8"] = "ImGui_Key_Keypad8", ["Num9"] = "ImGui_Key_Keypad9",
+  -- Symbol keys
+  ["["] = "ImGui_Key_LeftBracket", ["]"] = "ImGui_Key_RightBracket",
+  ["-"] = "ImGui_Key_Minus", ["="] = "ImGui_Key_Equal",
+  [";"] = "ImGui_Key_Semicolon", ["'"] = "ImGui_Key_Apostrophe",
+  [","] = "ImGui_Key_Comma", ["."] = "ImGui_Key_Period",
+  ["/"] = "ImGui_Key_Slash", ["\\"] = "ImGui_Key_Backslash",
+  ["`"] = "ImGui_Key_GraveAccent",
   -- Mouse buttons (handled specially via IsMouseClicked, not IsKeyPressed)
   Mouse4 = "MOUSE_4", Mouse5 = "MOUSE_5",
 }
@@ -93,6 +101,7 @@ local BINDABLE_KEYS = {
   "F1","F2","F3","F4","F5","F6","F7","F8","F9","F10","F11","F12",
   "Space","Enter","Tab","Insert","Home","End","PageUp","PageDown",
   "Num0","Num1","Num2","Num3","Num4","Num5","Num6","Num7","Num8","Num9",
+  "[","]","-","=",";","'",",",".","/","\\","`",
   "Mouse4","Mouse5",
 }
 
