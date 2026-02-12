@@ -29,6 +29,7 @@ local EDITABLE_SHORTCUTS = {
   {name = "zoom_to_markers", label = "Zoom to region / markers"},
   {name = "unzoom_all", label = "Unzoom completely"},
   {name = "toggle_cue_markers", label = "Toggle WAV cue markers"},
+  {name = "show_in_explorer", label = "Show in Media Explorer"},
 }
 
 -- Reference shortcuts (not editable)

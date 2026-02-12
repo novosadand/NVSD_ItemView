@@ -135,6 +135,7 @@ All shortcuts below are customizable in Settings > Shortcuts.
 | Shift+P | Show Pan envelope |
 | H | Hide envelopes |
 | S | Open settings |
+| Ctrl+F | Show in Media Explorer |
 | Ctrl+Space | Audio preview |
 
 **Not rebindable:**

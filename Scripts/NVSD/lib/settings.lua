@@ -35,6 +35,7 @@ settings.DEFAULT_SHORTCUTS = {
   zoom_to_markers = {ctrl = false, shift = false, alt = false, key = "Z"},
   unzoom_all = {ctrl = false, shift = false, alt = true, key = "Z"},
   toggle_cue_markers = {ctrl = false, shift = false, alt = false, key = "M"},
+  show_in_explorer = {ctrl = true, shift = false, alt = false, key = "F"},
 }
 
 -- Map key names to ImGui key getter function names (created once at module load)

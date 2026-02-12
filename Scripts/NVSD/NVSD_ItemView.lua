@@ -676,6 +676,22 @@ local function loop()
             end
           end
         end
+        -- Show in Media Explorer (Ctrl+F)
+        if settings.check_shortcut(ctx, "show_in_explorer") then
+          local src = reaper.GetMediaItemTake_Source(take)
+          if src then
+            -- Walk to root source
+            while true do
+              local parent = reaper.GetMediaSourceParent(src)
+              if not parent then break end
+              src = parent
+            end
+            local fp = reaper.GetMediaSourceFileName(src, "")
+            if fp and fp ~= "" and reaper.OpenMediaExplorer then
+              reaper.OpenMediaExplorer(fp, false)
+            end
+          end
+        end
       end
 
       if take and reaper.ValidatePtr(take, "MediaItem_Take*") and not reaper.TakeIsMIDI(take) then
