@@ -31,6 +31,7 @@ settings.DEFAULT_SHORTCUTS = {
   set_end_marker = {ctrl = false, shift = false, alt = false, key = "Mouse5"},
   set_fade_in = {ctrl = false, shift = true, alt = false, key = "Mouse4"},
   set_fade_out = {ctrl = false, shift = true, alt = false, key = "Mouse5"},
+  zoom_to_markers = {ctrl = false, shift = false, alt = false, key = "Z"},
 }
 
 -- Map key names to ImGui key getter function names (created once at module load)

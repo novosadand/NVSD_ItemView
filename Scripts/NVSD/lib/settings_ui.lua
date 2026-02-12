@@ -25,6 +25,7 @@ local EDITABLE_SHORTCUTS = {
   {name = "set_end_marker", label = "Set end marker at cursor"},
   {name = "set_fade_in", label = "Set fade-in at cursor"},
   {name = "set_fade_out", label = "Set fade-out at cursor"},
+  {name = "zoom_to_markers", label = "Zoom to start/end markers"},
 }
 
 -- Reference shortcuts (not editable)

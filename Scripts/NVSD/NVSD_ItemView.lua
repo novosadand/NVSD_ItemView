@@ -949,6 +949,13 @@ local function loop()
           state.prev_ext_start = ext_start
           state.prev_ext_end = ext_end
 
+          -- Zoom to start/end markers (Z key)
+          if reaper_is_active and settings.check_shortcut(ctx, "zoom_to_markers") and source_item_length > 0 then
+            state.zoom_level = math.min(500.0, ext_length / source_item_length)
+            local marker_center = start_offset + source_item_length / 2
+            state.pan_offset = marker_center - (ext_start + ext_end) / 2
+          end
+
           -- Compute view bounds
           local view_length = ext_length / state.zoom_level
           local range_center = (ext_start + ext_end) / 2
@@ -3364,7 +3371,6 @@ local function loop()
                 end
               end
             end
-          end
 
           local snap_threshold_time = (config.SNAP_THRESHOLD_PX / waveform_width) * view_length
 
