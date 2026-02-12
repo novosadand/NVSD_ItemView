@@ -9,6 +9,7 @@
 [![YouTube](https://img.shields.io/badge/YouTube-andrej__novosad-red?style=flat&logo=youtube&logoColor=white)](https://www.youtube.com/@andrej_novosad)
 [![SoundCloud](https://img.shields.io/badge/SoundCloud-andrej__novosad-orange?style=flat&logo=soundcloud&logoColor=white)](https://soundcloud.com/andrej_novosad)
 [![Instagram](https://img.shields.io/badge/Instagram-andrej____novosad-E4405F?style=flat&logo=instagram&logoColor=white)](https://www.instagram.com/andrej__novosad)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-andrejnovosad-FFDD00?style=flat&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/andrejnovosad)
 
 ## TL;DR
 
@@ -179,3 +180,11 @@ Right-click the window title bar > Dock window > Choose position (top, bottom, l
 - WARP mode stretches audio to fit markers without pitch change
 - All settings persist between sessions via ExtState
 - Hover over any element for a few seconds to see a tooltip with available actions
+
+## Support
+
+If you find this tool useful, consider supporting development:
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-andrejnovosad-FFDD00?style=flat&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/andrejnovosad)
+
+**ETH:** `0x163665f591A44E9138C6f63326B797D2dE40198d`
