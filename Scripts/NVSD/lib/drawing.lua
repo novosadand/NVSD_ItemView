@@ -686,10 +686,9 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   end
 
   if mouse_over_filename and reaper.ImGui_IsMouseClicked(ctx, 0) and file_path and file_path ~= "" then
-    -- Navigate REAPER's Media Explorer to the file's directory
-    local dir = file_path:match("(.+)[/\\]")
-    if dir and reaper.OpenMediaExplorer then
-      reaper.OpenMediaExplorer(dir, false)
+    -- Navigate REAPER's Media Explorer to the file
+    if reaper.OpenMediaExplorer then
+      reaper.OpenMediaExplorer(file_path, false)
     end
     return true, false, nil
   end
