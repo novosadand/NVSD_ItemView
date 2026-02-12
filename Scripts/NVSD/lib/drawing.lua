@@ -380,7 +380,7 @@ function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler
     px_per_label = g.px_per_bar * label_skip
   end
 
-  -- Intermediate bar ticks (half of label_skip) - ticks only, no labels
+  -- Intermediate bar ticks (half of label_skip) - dim labels
   local tick_skip = (label_skip >= 2) and (label_skip / 2) or label_skip
   local show_inter_ticks = g.px_per_bar * tick_skip >= 20
 
@@ -401,8 +401,8 @@ function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler
         DL_AddLine(draw_list, bar_px, ruler_y, bar_px, ruler_y + ruler_height, config.COLOR_RULER_TICK, 1)
         DL_AddText(draw_list, bar_px + 3, ruler_y + 3, config.COLOR_RULER_TEXT, tostring(bar + 1))
       elseif show_inter_ticks then
-        local tick_top = ruler_y + ruler_height - math.floor(ruler_height * 0.6)
-        DL_AddLine(draw_list, bar_px, tick_top, bar_px, ruler_y + ruler_height, g.inter_tick_color, 1)
+        DL_AddLine(draw_list, bar_px, ruler_y, bar_px, ruler_y + ruler_height, g.inter_tick_color, 1)
+        DL_AddText(draw_list, bar_px + 3, ruler_y + 3, inter_label_color, tostring(bar + 1))
       end
     end
 
