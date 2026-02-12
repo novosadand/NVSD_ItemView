@@ -3435,6 +3435,16 @@ local function loop()
               local effective_start = (is_looped_item and state.unwrapped_start_offset) and state.unwrapped_start_offset or start_offset
               local current_end = effective_start + source_item_length
 
+              reaper.ShowConsoleMsg(string.format(
+                "[Mouse%s] click_time=%.4f effective_start=%.4f current_end=%.4f\n" ..
+                "  is_looped=%s unwrapped=%s start_offset=%.4f src_item_len=%.4f src_len=%.4f playrate=%.4f\n" ..
+                "  view_start=%.4f view_length=%.4f ext_start=%.4f ext_end=%.4f\n",
+                set_start and "4:SET_START" or "5:SET_END",
+                click_time, effective_start, current_end,
+                tostring(is_looped_item), tostring(state.unwrapped_start_offset),
+                start_offset, source_item_length, source_length, playrate,
+                view_start, view_length, ext_start, ext_end))
+
               reaper.Undo_BeginBlock()
 
               if set_start then
