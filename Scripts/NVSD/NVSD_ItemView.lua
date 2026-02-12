@@ -953,40 +953,50 @@ local function loop()
           state.prev_ext_start = ext_start
           state.prev_ext_end = ext_end
 
-          -- Zoom (Z): selection always zooms deeper; no selection restores or zooms to markers.
+          -- Zoom (Z): toggle. New selection/markers zooms in, same target or no selection restores.
           if reaper_is_active and settings.check_shortcut(ctx, "zoom_to_markers") then
-            local target_start, target_len
+            local target_start, target_end
             if state.region_selected then
               local sel_s = math.min(state.selection_start_time, state.selection_end_time)
               local sel_e = math.max(state.selection_start_time, state.selection_end_time)
               if sel_e - sel_s > 0 then
                 target_start = sel_s
-                target_len = sel_e - sel_s
+                target_end = sel_e
               end
             end
-            if target_len then
-              -- Selection exists: zoom to it (save original state only on first zoom)
-              if not state.zoom_toggle_active then
-                state.zoom_before_toggle = state.zoom_level
-                state.pan_before_toggle = state.pan_offset
+            if not target_start and source_item_length > 0 then
+              target_start = start_offset
+              target_end = start_offset + source_item_length
+            end
+
+            if target_start then
+              -- Check if this is the same target we already zoomed to
+              local same_target = state.zoom_toggle_active
+                and state.zoom_target_start and state.zoom_target_end
+                and math.abs(target_start - state.zoom_target_start) < 0.001
+                and math.abs(target_end - state.zoom_target_end) < 0.001
+
+              if same_target then
+                -- Same target: restore
+                state.zoom_level = state.zoom_before_toggle or 1.0
+                state.pan_offset = state.pan_before_toggle or 0
+                state.zoom_toggle_active = false
+                state.zoom_target_start = nil
+                state.zoom_target_end = nil
+              else
+                -- New target: zoom in (save state only on first zoom)
+                if not state.zoom_toggle_active then
+                  state.zoom_before_toggle = state.zoom_level
+                  state.pan_before_toggle = state.pan_offset
+                end
+                local target_len = target_end - target_start
+                state.zoom_level = math.min(500.0, ext_length / target_len)
+                local target_center = (target_start + target_end) / 2
+                state.pan_offset = target_center - (ext_start + ext_end) / 2
+                state.zoom_toggle_active = true
+                state.zoom_target_start = target_start
+                state.zoom_target_end = target_end
               end
-              state.zoom_level = math.min(500.0, ext_length / target_len)
-              local target_center = target_start + target_len / 2
-              state.pan_offset = target_center - (ext_start + ext_end) / 2
-              state.zoom_toggle_active = true
-            elseif state.zoom_toggle_active then
-              -- No selection, currently zoomed: restore original state
-              state.zoom_level = state.zoom_before_toggle or 1.0
-              state.pan_offset = state.pan_before_toggle or 0
-              state.zoom_toggle_active = false
-            elseif source_item_length > 0 then
-              -- No selection, not zoomed: zoom to markers
-              state.zoom_before_toggle = state.zoom_level
-              state.pan_before_toggle = state.pan_offset
-              state.zoom_level = math.min(500.0, ext_length / source_item_length)
-              local marker_center = start_offset + source_item_length / 2
-              state.pan_offset = marker_center - (ext_start + ext_end) / 2
-              state.zoom_toggle_active = true
             end
           end
 
