@@ -965,8 +965,17 @@ local function loop()
               end
             end
             if not target_start and source_item_length > 0 then
-              target_start = start_offset
-              target_end = start_offset + source_item_length
+              -- Use unwrapped coordinates to match ext_start/ext_end coordinate space
+              if state.post_drag_ext_start ~= nil then
+                target_start = state.post_drag_ext_start
+                target_end = state.post_drag_ext_end
+              elseif state.unwrapped_start_offset ~= nil then
+                target_start = state.unwrapped_start_offset
+                target_end = state.unwrapped_start_offset + source_item_length
+              else
+                target_start = start_offset
+                target_end = start_offset + source_item_length
+              end
             end
 
             if target_start then
@@ -1009,6 +1018,10 @@ local function loop()
               local new_source_length = sel_e - sel_s
               local new_item_length = new_source_length / playrate
               local new_take_offset = sel_s - section_offset
+              -- Wrap to valid range for REAPER (selection uses unwrapped virtual coords)
+              if source_length > 0 then
+                new_take_offset = new_take_offset % source_length
+              end
 
               -- Fade adjustment
               local fi, fo = fade_in_len, fade_out_len
@@ -1017,19 +1030,40 @@ local function loop()
                 if fo == 0 then fi = math.min(fi, new_item_length) end
               end
 
-              -- Shift envelope points so they stay audio-anchored
-              local offset_delta = new_take_offset - take_offset
-              if not state.envelope_lock and math.abs(offset_delta) > 0.000001 then
+              -- Remap envelope points to new take coordinate space
+              -- Uses modular arithmetic to correctly handle source boundary crossings
+              if not state.envelope_lock then
                 local env_names = { "Volume", "Pitch", "Pan" }
                 for _, ename in ipairs(env_names) do
                   local e = reaper.GetTakeEnvelopeByName(take, ename)
                   if e then
                     local np = reaper.CountEnvelopePoints(e)
+                    local remapped = {}
                     for ei = 0, np - 1 do
                       local ret, pt_time, pt_val, pt_shape, pt_tension, pt_sel = reaper.GetEnvelopePoint(e, ei)
                       if ret then
-                        reaper.SetEnvelopePoint(e, ei, pt_time - offset_delta, pt_val, pt_shape, pt_tension, pt_sel, true)
+                        local new_pt_time
+                        if source_length > 0 then
+                          -- Source audio position of this point (wrapping around source)
+                          local src_time = (take_offset + pt_time) % source_length
+                          -- New take time relative to new D_STARTOFFS
+                          new_pt_time = (src_time - new_take_offset) % source_length
+                        else
+                          new_pt_time = pt_time - (new_take_offset - take_offset)
+                        end
+                        -- Keep only points within the new item bounds
+                        if new_pt_time >= -0.001 and new_pt_time <= new_item_length + 0.001 then
+                          new_pt_time = math.max(0, math.min(new_item_length, new_pt_time))
+                          remapped[#remapped + 1] = { time = new_pt_time, val = pt_val, shape = pt_shape, tension = pt_tension, sel = pt_sel }
+                        end
                       end
+                    end
+                    -- Delete all existing points and re-insert remapped ones
+                    for ei = np - 1, 0, -1 do
+                      reaper.DeleteEnvelopePointEx(e, -1, ei)
+                    end
+                    for _, p in ipairs(remapped) do
+                      reaper.InsertEnvelopePoint(e, p.time, p.val, p.shape, p.tension, p.sel, true)
                     end
                     reaper.Envelope_SortPoints(e)
                   end
@@ -1042,8 +1076,16 @@ local function loop()
               reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
               reaper.UpdateArrange()
               reaper.Undo_EndBlock("NVSD_ItemView: Crop to selection", -1)
-              -- Clear selection after crop
+              -- Clear selection and reset view state for clean reinitialization
               state.region_selected = false
+              state.unwrapped_start_offset = nil
+              state.prev_raw_start_offset = nil
+              state.post_drag_ext_start = nil
+              state.post_drag_ext_end = nil
+              state.post_drag_start_offset = nil
+              state.zoom_level = 1.0
+              state.pan_offset = 0
+              state.zoom_toggle_active = false
             end
           end
 
@@ -1399,12 +1441,13 @@ local function loop()
               end
               num_env_points = reaper.CountEnvelopePoints(env)
               -- Envelope points are shifted in realtime during drag, so always use live offset
-              -- During drag: use live drag position; looped: use unwrapped offset; else: REAPER offset
+              -- During drag: use live drag position; otherwise: use unwrapped offset if available
+              -- (covers both looped items and items dragged past source boundary)
               local env_time_offset
               if state.dragging_start or state.dragging_end then
                 env_time_offset = state.drag_current_start or start_offset
-              elseif is_looped_item then
-                env_time_offset = state.unwrapped_start_offset or start_offset
+              elseif state.unwrapped_start_offset ~= nil then
+                env_time_offset = state.unwrapped_start_offset
               else
                 env_time_offset = start_offset
               end
@@ -2490,14 +2533,12 @@ local function loop()
             local is_pitch = (env_name == "Pitch")
             local is_pan = (env_name == "Pan")
             local is_centered = is_pitch or is_pan
-            -- Envelope coordinate helpers: use live drag offset during drag, unwrapped for looped
+            -- Envelope coordinate helpers: use live drag offset during drag, unwrapped when available
             local env_offset
             if state.dragging_start or state.dragging_end then
               env_offset = state.drag_current_start or start_offset
-            elseif state.post_drag_ext_start ~= nil then
-              env_offset = state.post_drag_ext_start
-            elseif is_looped_item then
-              env_offset = state.unwrapped_start_offset or start_offset
+            elseif state.unwrapped_start_offset ~= nil then
+              env_offset = state.unwrapped_start_offset
             else
               env_offset = start_offset
             end
@@ -3434,16 +3475,6 @@ local function loop()
               -- Use unwrapped offset when available (px_to_time returns unwrapped/extended coords)
               local effective_start = state.unwrapped_start_offset ~= nil and state.unwrapped_start_offset or start_offset
               local current_end = effective_start + source_item_length
-
-              reaper.ShowConsoleMsg(string.format(
-                "[Mouse%s] click_time=%.4f effective_start=%.4f current_end=%.4f\n" ..
-                "  is_looped=%s unwrapped=%s start_offset=%.4f src_item_len=%.4f src_len=%.4f playrate=%.4f\n" ..
-                "  view_start=%.4f view_length=%.4f ext_start=%.4f ext_end=%.4f\n",
-                set_start and "4:SET_START" or "5:SET_END",
-                click_time, effective_start, current_end,
-                tostring(is_looped_item), tostring(state.unwrapped_start_offset),
-                start_offset, source_item_length, source_length, playrate,
-                view_start, view_length, ext_start, ext_end))
 
               reaper.Undo_BeginBlock()
 
