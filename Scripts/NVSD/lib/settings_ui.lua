@@ -46,6 +46,7 @@ local REFERENCE_SHORTCUTS = {
   {"Double-click",   "Reset knob/slider to default"},
   {"Ctrl + Drag",    "Fine control on knobs/sliders"},
   {"Right-click fade", "Pick fade shape"},
+  {"Right Drag",     "Select envelope nodes"},
 }
 
 -- Core colors: 4 essential pickers that derive all other colors
