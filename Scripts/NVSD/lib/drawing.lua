@@ -230,7 +230,7 @@ local function compute_grid_params(x, width, view_start, view_length, item_posit
   local _, start_measures = reaper.TimeMap2_timeToBeats(0, project_start)
   local first_bar = math.floor(start_measures) - 1
 
-  local min_spacing = 55  -- minimum px between grid lines at any level
+  local min_spacing = 42  -- minimum px between grid lines at any level
   local avg_bar_duration = 60 / bpm * beats_per_bar
   local px_per_bar = (avg_bar_duration / view_length) * width
   local bar_skip = math.max(1, math.ceil(min_spacing / px_per_bar))
@@ -298,7 +298,7 @@ end
 function drawing.draw_grid_lines(draw_list, x, wave_y, width, wave_height,
                                   view_start, view_length, item_position, start_offset, playrate, config, utils)
   local g = get_grid_params(x, width, view_start, view_length, item_position, start_offset, playrate, config, utils)
-  local show_beats = g.px_per_beat >= 55
+  local show_beats = g.px_per_beat >= 42
   local DL_AddLine = reaper.ImGui_DrawList_AddLine
   local p2s = utils.project_to_source_time
 
@@ -362,7 +362,7 @@ function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler
 
   local g = get_grid_params(x, width, view_start, view_length, item_position, start_offset, playrate, config, utils)
   local show_beat_labels = g.px_per_beat >= 70
-  local show_beat_ticks = g.px_per_beat >= 55
+  local show_beat_ticks = g.px_per_beat >= 42
   -- Sub-beat ruler ticks: only at quarter-beat positions, need decent spacing
   local show_sub_ticks = g.quarter_step and (g.px_per_beat / 4) >= 40
   -- Sub-beat labels: only when really zoomed in (each quarter-beat has plenty of room)

@@ -1314,10 +1314,11 @@ local function loop()
             mouse_x, mouse_y, config, state, settings)
 
           -- Helper: snap time to nearest source boundary
+          -- Always active: full threshold when snap on, weaker (40%) when snap off
           local function snap_to_source_boundary(t, src_len, threshold_time)
-            if not state.env_snap_enabled then return t end
+            local effective_threshold = state.env_snap_enabled and threshold_time or (threshold_time * 0.4)
             local nearest_boundary = math.floor(t / src_len + 0.5) * src_len
-            if math.abs(t - nearest_boundary) <= threshold_time then
+            if math.abs(t - nearest_boundary) <= effective_threshold then
               return nearest_boundary
             end
             return t
@@ -1340,7 +1341,7 @@ local function loop()
             local px_per_beat = px_per_bar / beats_per_bar
 
             local finest_sub = 1
-            while (px_per_beat / (finest_sub * 2)) >= 55 do
+            while (px_per_beat / (finest_sub * 2)) >= 42 do
               finest_sub = finest_sub * 2
             end
 
