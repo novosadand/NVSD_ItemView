@@ -2810,7 +2810,9 @@ local function loop()
                 and state.envelope_hovered_segment >= 0
                 and state.env_node_hovered_idx < 0
                 and not state.dragging_env_node
-                and not state.env_tension_dragging then
+                and not state.env_tension_dragging
+                and not state.dragging_start and not state.dragging_end
+                and not state.dragging_fade_curve_in and not state.dragging_fade_curve_out then
               local env = reaper.GetTakeEnvelopeByName(take, env_name)
               if env then
                 -- Use raw mouse time (not snapped hover_time) to find the correct segment
