@@ -372,17 +372,19 @@ function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler
   local DL_AddText = reaper.ImGui_DrawList_AddText
   local p2s = utils.project_to_source_time
 
-  -- Label skip: ensure bar labels have enough room (text needs ~60px minimum)
+  -- Label skip: ensure bar labels have enough room (text needs ~80px minimum)
   local label_skip = g.bar_skip
   local px_per_label = g.px_per_bar * label_skip
-  while px_per_label < 60 do
+  while px_per_label < 80 do
     label_skip = label_skip * 2
     px_per_label = g.px_per_bar * label_skip
   end
 
-  -- Intermediate bar ticks (half of label_skip) - dim labels
+  -- Intermediate bar ticks (half of label_skip)
   local tick_skip = (label_skip >= 2) and (label_skip / 2) or label_skip
-  local show_inter_ticks = g.px_per_bar * tick_skip >= 20
+  local inter_px = g.px_per_bar * tick_skip
+  local show_inter_ticks = inter_px >= 20
+  local show_inter_labels = inter_px >= 50  -- text only when enough room
 
   local inter_label_color = g.dim_color(config.COLOR_RULER_TEXT, 0.75)
   local bar = g.first_bar - (g.first_bar % tick_skip)
@@ -402,7 +404,9 @@ function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler
         DL_AddText(draw_list, bar_px + 3, ruler_y + 3, config.COLOR_RULER_TEXT, tostring(bar + 1))
       elseif show_inter_ticks then
         DL_AddLine(draw_list, bar_px, ruler_y, bar_px, ruler_y + ruler_height, g.inter_tick_color, 1)
-        DL_AddText(draw_list, bar_px + 3, ruler_y + 3, inter_label_color, tostring(bar + 1))
+        if show_inter_labels then
+          DL_AddText(draw_list, bar_px + 3, ruler_y + 3, inter_label_color, tostring(bar + 1))
+        end
       end
     end
 
