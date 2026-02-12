@@ -66,7 +66,6 @@ local ui_state = {
   open = false,
   pending_theme_id = nil,
   original_theme_id = nil,
-  pending_shortcuts = nil,   -- Deep copy of shortcuts, applied only on Save
   listening_for = nil,       -- Shortcut name being captured, or nil
   custom_init_from = 0,      -- Index for "Initialize from" combo
   custom_colors_dirty = false, -- True when custom colors changed but not yet saved to ExtState
@@ -103,11 +102,20 @@ local function deep_copy_shortcuts(shortcuts)
   return copy
 end
 
+-- Apply a shortcut change: update settings.current and persist to ExtState
+local function apply_shortcut(settings, name, binding)
+  settings.current.shortcuts[name] = {
+    ctrl = binding.ctrl, shift = binding.shift,
+    alt = binding.alt, key = binding.key,
+  }
+  settings.save()
+end
+
 -- Initialize pending values from current settings
 local function init_pending(settings)
   ui_state.pending_theme_id = settings.current.theme_id
   ui_state.original_theme_id = settings.current.theme_id
-  ui_state.pending_shortcuts = deep_copy_shortcuts(settings.current.shortcuts)
+  ui_state.original_shortcuts = deep_copy_shortcuts(settings.current.shortcuts)
   ui_state.listening_for = nil
   ui_state.conflict_pending = nil
   ui_state.conflict_just_cleared = nil
@@ -126,9 +134,17 @@ function settings_ui.open(settings)
 end
 
 function settings_ui.close(settings, restore_original)
-  if restore_original and settings and ui_state.original_theme_id then
-    settings.current.theme_id = ui_state.original_theme_id
-    settings.colors_dirty = true
+  if restore_original and settings then
+    -- Restore theme
+    if ui_state.original_theme_id then
+      settings.current.theme_id = ui_state.original_theme_id
+      settings.colors_dirty = true
+    end
+    -- Restore shortcuts
+    if ui_state.original_shortcuts then
+      settings.current.shortcuts = deep_copy_shortcuts(ui_state.original_shortcuts)
+      settings.save()
+    end
   end
   -- Flush any pending custom color changes to ExtState
   if ui_state.custom_colors_dirty and settings then
@@ -140,7 +156,7 @@ function settings_ui.close(settings, restore_original)
   end
   ui_state.open = false
   ui_state.original_theme_id = nil
-  ui_state.pending_shortcuts = nil
+  ui_state.original_shortcuts = nil
   ui_state.listening_for = nil
   ui_state.conflict_pending = nil
   ui_state.conflict_just_cleared = nil
@@ -490,9 +506,8 @@ local function draw_shortcuts_tab(ctx, settings)
     -- Backspace/Delete: clear binding
     elseif reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Backspace())
         or reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Delete()) then
-      ui_state.pending_shortcuts[ui_state.listening_for] = {
-        ctrl = false, shift = false, alt = false, key = ""
-      }
+      apply_shortcut(settings, ui_state.listening_for,
+        {ctrl = false, shift = false, alt = false, key = ""})
       stop_listening(settings)
 
     else
@@ -508,7 +523,7 @@ local function draw_shortcuts_tab(ctx, settings)
 
         -- Check for conflict
         local conflict = settings.find_conflict(
-          ui_state.pending_shortcuts, ui_state.listening_for, binding)
+          settings.current.shortcuts, ui_state.listening_for, binding)
         if conflict then
           -- Store pending conflict for modal confirmation
           ui_state.conflict_pending = {
@@ -519,7 +534,7 @@ local function draw_shortcuts_tab(ctx, settings)
           stop_listening(settings)
         else
           -- No conflict, apply directly
-          ui_state.pending_shortcuts[ui_state.listening_for] = binding
+          apply_shortcut(settings, ui_state.listening_for, binding)
           stop_listening(settings)
         end
       end
@@ -546,7 +561,7 @@ local function draw_shortcuts_tab(ctx, settings)
 
     for _, entry in ipairs(EDITABLE_SHORTCUTS) do
       local name = entry.name
-      local shortcut = ui_state.pending_shortcuts[name]
+      local shortcut = settings.current.shortcuts[name]
       if not shortcut then
         shortcut = {ctrl = false, shift = false, alt = false, key = ""}
       end
@@ -623,7 +638,7 @@ local function draw_shortcuts_tab(ctx, settings)
           if default and default.key ~= "" then
             -- Check if the default binding conflicts with another shortcut
             local conflict = settings.find_conflict(
-              ui_state.pending_shortcuts, name, default)
+              settings.current.shortcuts, name, default)
             if conflict then
               -- Reuse the conflict modal
               ui_state.conflict_pending = {
@@ -633,16 +648,12 @@ local function draw_shortcuts_tab(ctx, settings)
                 conflict_name = conflict,
               }
             else
-              ui_state.pending_shortcuts[name] = {
-                ctrl = default.ctrl, shift = default.shift,
-                alt = default.alt, key = default.key,
-              }
+              apply_shortcut(settings, name, default)
             end
           elseif default then
             -- Default is unbound, no conflict possible
-            ui_state.pending_shortcuts[name] = {
-              ctrl = false, shift = false, alt = false, key = "",
-            }
+            apply_shortcut(settings, name,
+              {ctrl = false, shift = false, alt = false, key = ""})
           end
           if ui_state.conflict_just_cleared == name then
             ui_state.conflict_just_cleared = nil
@@ -673,12 +684,10 @@ local function draw_shortcuts_tab(ctx, settings)
       reaper.ImGui_Spacing(ctx)
 
       if reaper.ImGui_Button(ctx, "Reassign", 90, 0) then
-        -- Apply the new binding to the target
-        ui_state.pending_shortcuts[cp.target] = cp.binding
-        -- Clear the conflicting shortcut
-        ui_state.pending_shortcuts[cp.conflict_name] = {
-          ctrl = false, shift = false, alt = false, key = ""
-        }
+        -- Clear the conflicting shortcut first, then apply the new binding
+        apply_shortcut(settings, cp.conflict_name,
+          {ctrl = false, shift = false, alt = false, key = ""})
+        apply_shortcut(settings, cp.target, cp.binding)
         -- Mark the cleared shortcut for visual highlight
         ui_state.conflict_just_cleared = cp.conflict_name
         ui_state.conflict_pending = nil
@@ -878,7 +887,6 @@ function settings_ui.draw(ctx, settings)
     if reaper.ImGui_Button(ctx, "Reset Defaults") then
       settings.reset_all()
       ui_state.pending_theme_id = settings.current.theme_id
-      ui_state.pending_shortcuts = deep_copy_shortcuts(settings.current.shortcuts)
       stop_listening(settings)
       ui_state.conflict_pending = nil
       ui_state.conflict_just_cleared = nil
@@ -905,10 +913,10 @@ function settings_ui.draw(ctx, settings)
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), COLORS.accent)
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), COLORS.accent_hover)
     if reaper.ImGui_Button(ctx, "Save & Close", save_w) then
-      settings.apply({
-        theme_id = ui_state.pending_theme_id,
-        shortcuts = ui_state.pending_shortcuts,
-      })
+      -- Theme still uses pending (live preview), shortcuts already applied
+      settings.current.theme_id = ui_state.pending_theme_id
+      settings.colors_dirty = true
+      settings.save()
       settings_ui.close(settings, false)
     end
     reaper.ImGui_PopStyleColor(ctx, 2)
