@@ -1836,7 +1836,8 @@ local function loop()
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
           elseif (state.dragging_start or state.dragging_end) and (alt_held or state.drag_alt_latched) then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())
-          elseif mouse_in_marker_area and (near_start or near_end) then
+          elseif mouse_in_marker_area and (near_start or near_end)
+              and not (ctrl_held and state.envelopes_visible) then
             if alt_held then
               reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())
             else
@@ -1927,14 +1928,16 @@ local function loop()
               else
                 drawing.tooltip(ctx, "fade_out_body", "Alt+click: remove fade\nAlt+drag: adjust curve")
               end
-            -- Marker tooltips
-            elseif mouse_in_marker_area and near_start then
+            -- Marker tooltips (skip when Ctrl+envelope = freehand draw mode)
+            elseif mouse_in_marker_area and near_start
+                and not (ctrl_held and state.envelopes_visible) then
               if alt_held then
                 drawing.tooltip(ctx, "marker_start", "Drag to slide both markers")
               else
                 drawing.tooltip(ctx, "marker_start", "Drag to adjust start\nAlt+drag: slide both")
               end
-            elseif mouse_in_marker_area and near_end then
+            elseif mouse_in_marker_area and near_end
+                and not (ctrl_held and state.envelopes_visible) then
               if alt_held then
                 drawing.tooltip(ctx, "marker_end", "Drag to slide both markers")
               else
