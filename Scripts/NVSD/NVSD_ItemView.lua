@@ -3509,6 +3509,15 @@ local function loop()
                   reaper.UpdateArrange()
                   reaper.Undo_EndBlock("NVSD_ItemView: Set end marker", -1)
                 end
+
+                -- Reset view state so next frame reinitializes cleanly from new item dimensions
+                state.unwrapped_start_offset = nil
+                state.prev_raw_start_offset = nil
+                state.post_drag_ext_start = nil
+                state.post_drag_ext_end = nil
+                state.zoom_level = 1.0
+                state.pan_offset = 0
+                state.zoom_toggle_active = false
               end
             end
 
