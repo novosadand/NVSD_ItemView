@@ -3431,8 +3431,8 @@ local function loop()
 
             elseif set_start or set_end then
               local click_time = px_to_time(mouse_x)
-              -- Use unwrapped offset for looped items (px_to_time returns unwrapped coords)
-              local effective_start = (is_looped_item and state.unwrapped_start_offset) and state.unwrapped_start_offset or start_offset
+              -- Use unwrapped offset when available (px_to_time returns unwrapped/extended coords)
+              local effective_start = state.unwrapped_start_offset ~= nil and state.unwrapped_start_offset or start_offset
               local current_end = effective_start + source_item_length
 
               reaper.ShowConsoleMsg(string.format(
