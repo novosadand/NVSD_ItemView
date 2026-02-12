@@ -986,6 +986,13 @@ local function loop()
             end
           end
 
+          -- Unzoom completely (Alt+Z)
+          if reaper_is_active and settings.check_shortcut(ctx, "unzoom_all") then
+            state.zoom_level = 1.0
+            state.pan_offset = 0
+            state.zoom_toggle_active = false
+          end
+
           -- Compute view bounds
           local view_length = ext_length / state.zoom_level
           local range_center = (ext_start + ext_end) / 2
