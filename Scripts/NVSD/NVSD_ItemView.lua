@@ -3431,7 +3431,9 @@ local function loop()
 
             elseif set_start or set_end then
               local click_time = px_to_time(mouse_x)
-              local current_end = start_offset + source_item_length
+              -- Use unwrapped offset for looped items (px_to_time returns unwrapped coords)
+              local effective_start = (is_looped_item and state.unwrapped_start_offset) and state.unwrapped_start_offset or start_offset
+              local current_end = effective_start + source_item_length
 
               reaper.Undo_BeginBlock()
 
@@ -3490,8 +3492,8 @@ local function loop()
 
                 elseif set_end then
                   local new_end = click_time
-                  new_end = math.max(new_end, start_offset + 0.01)
-                  local new_source_length = new_end - start_offset
+                  new_end = math.max(new_end, effective_start + 0.01)
+                  local new_source_length = new_end - effective_start
                   local new_item_length = new_source_length / playrate
 
                   -- Fade adjustment: preserve fade-out, shrink fade-in first
