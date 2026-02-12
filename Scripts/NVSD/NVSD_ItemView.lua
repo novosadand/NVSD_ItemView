@@ -1738,7 +1738,7 @@ local function loop()
           elseif state.dragging_fade_in or state.dragging_fade_out then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
           elseif alt_held and reaper_is_active and (mouse_in_fade_in_body or mouse_in_fade_out_body) then
-            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_NotAllowed())
           elseif alt_held and mouse_in_free_zone and not state.dragging_fade_in and not state.dragging_fade_out then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())
           elseif near_fade_in or near_fade_out then
@@ -1825,9 +1825,17 @@ local function loop()
               drawing.tooltip(ctx, "fade_out_handle", "Drag to adjust fade out\nRight-click: change shape")
             -- Fade body tooltips (Alt+drag for curve)
             elseif mouse_in_fade_in_body then
-              drawing.tooltip(ctx, "fade_in_body", "Alt+drag to adjust curve")
+              if alt_held then
+                drawing.tooltip(ctx, "fade_in_body", "Click to remove fade\nDrag to adjust curve")
+              else
+                drawing.tooltip(ctx, "fade_in_body", "Alt+click: remove fade\nAlt+drag: adjust curve")
+              end
             elseif mouse_in_fade_out_body then
-              drawing.tooltip(ctx, "fade_out_body", "Alt+drag to adjust curve")
+              if alt_held then
+                drawing.tooltip(ctx, "fade_out_body", "Click to remove fade\nDrag to adjust curve")
+              else
+                drawing.tooltip(ctx, "fade_out_body", "Alt+click: remove fade\nAlt+drag: adjust curve")
+              end
             -- Marker tooltips
             elseif mouse_in_marker_area and near_start then
               if alt_held then
