@@ -123,7 +123,7 @@ All shortcuts below are customizable in Settings > Shortcuts.
 | R | Reverse item |
 | C | Crop markers to selection |
 | Shift+C | Clear pitch/speed |
-| E | Open in external editor |
+| Ctrl+Alt+E | Open in external editor |
 | F | Reset zoom to fit |
 | Z | Zoom to selection / markers (toggle) |
 | Alt+Z | Unzoom completely |

@@ -19,7 +19,7 @@ settings.DEFAULT_SHORTCUTS = {
   reverse = {ctrl = false, shift = false, alt = false, key = "R"},
   clear = {ctrl = false, shift = true, alt = false, key = "C"},
   crop_to_selection = {ctrl = false, shift = false, alt = false, key = "C"},
-  open_editor = {ctrl = false, shift = false, alt = false, key = "E"},
+  open_editor = {ctrl = true, shift = false, alt = true, key = "E"},
   toggle_snap = {ctrl = true, shift = false, alt = false, key = "4"},
   audio_preview = {ctrl = true, shift = false, alt = false, key = "Space"},
   envelope_lock = {ctrl = false, shift = false, alt = false, key = "L"},
@@ -847,6 +847,7 @@ function settings.load()
   local MIGRATIONS = {
     {key = "shortcut_toggle_mute", old = "M"},           -- was M, now Num0
     {key = "shortcut_toggle_cue_markers", old = "T"},     -- was T, now M
+    {key = "shortcut_open_editor", old = "E"},             -- was E, now Ctrl+Alt+E
   }
   for _, m in ipairs(MIGRATIONS) do
     local saved = reaper.GetExtState(EXT_SECTION, m.key)
