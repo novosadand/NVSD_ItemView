@@ -1617,13 +1617,15 @@ local function loop()
           -- Cursor feedback (alt_held cached at top of frame)
           -- Fade grabs use Hand cursor to distinguish from marker's ResizeEW
           if state.env_freehand_drawing then
-            -- Freehand drawing active: show pencil cursor
+            -- Freehand drawing active: show crosshair cursor
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
             local cx, cy = mouse_x, mouse_y
-            local pc = config.COLOR_MARKER or 0x4A90D9FF
-            reaper.ImGui_DrawList_AddLine(draw_list, cx - 1, cy + 1, cx - 9, cy + 9, pc, 2.0)
-            reaper.ImGui_DrawList_AddTriangleFilled(draw_list, cx, cy, cx - 3, cy + 3, cx, cy + 3, pc)
-            reaper.ImGui_DrawList_AddLine(draw_list, cx - 9, cy + 9, cx - 11, cy + 7, 0xAAAAAAFF, 2.0)
+            local cc = config.COLOR_MARKER or 0x4A90D9FF
+            reaper.ImGui_DrawList_AddLine(draw_list, cx - 7, cy, cx - 2, cy, cc, 1.0)
+            reaper.ImGui_DrawList_AddLine(draw_list, cx + 2, cy, cx + 7, cy, cc, 1.0)
+            reaper.ImGui_DrawList_AddLine(draw_list, cx, cy - 7, cx, cy - 2, cc, 1.0)
+            reaper.ImGui_DrawList_AddLine(draw_list, cx, cy + 2, cx, cy + 7, cc, 1.0)
+            reaper.ImGui_DrawList_AddCircle(draw_list, cx, cy, 1, cc, 8, 1.0)
           elseif state.env_tension_dragging then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
           elseif state.dragging_fade_curve_in or state.dragging_fade_curve_out then
@@ -1670,16 +1672,15 @@ local function loop()
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
           elseif state.envelopes_visible and ctrl_held and reaper_is_active
               and mouse_in_waveform and not alt_held and not shift_held then
-            -- Ctrl = freehand draw mode: show pencil cursor
+            -- Ctrl = freehand draw mode: show crosshair cursor
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
             local cx, cy = mouse_x, mouse_y
-            local pc = config.COLOR_MARKER or 0x4A90D9FF
-            -- Pencil body (diagonal line)
-            reaper.ImGui_DrawList_AddLine(draw_list, cx - 1, cy + 1, cx - 9, cy + 9, pc, 2.0)
-            -- Pencil tip
-            reaper.ImGui_DrawList_AddTriangleFilled(draw_list, cx, cy, cx - 3, cy + 3, cx, cy + 3, pc)
-            -- Small eraser/top
-            reaper.ImGui_DrawList_AddLine(draw_list, cx - 9, cy + 9, cx - 11, cy + 7, 0xAAAAAAFF, 2.0)
+            local cc = config.COLOR_MARKER or 0x4A90D9FF
+            reaper.ImGui_DrawList_AddLine(draw_list, cx - 7, cy, cx - 2, cy, cc, 1.0)
+            reaper.ImGui_DrawList_AddLine(draw_list, cx + 2, cy, cx + 7, cy, cc, 1.0)
+            reaper.ImGui_DrawList_AddLine(draw_list, cx, cy - 7, cx, cy - 2, cc, 1.0)
+            reaper.ImGui_DrawList_AddLine(draw_list, cx, cy + 2, cx, cy + 7, cc, 1.0)
+            reaper.ImGui_DrawList_AddCircle(draw_list, cx, cy, 1, cc, 8, 1.0)
           elseif state.envelopes_visible and reaper_is_active
               and state.envelope_hovered_segment >= 0 and state.env_node_hovered_idx < 0
               and not alt_held and not shift_held then
@@ -1703,12 +1704,14 @@ local function loop()
               end
             -- Envelope segment tooltips
             elseif state.envelopes_visible and state.envelope_hovered_segment >= 0 then
-              if alt_held then
+              if ctrl_held then
+                drawing.tooltip(ctx, "env_segment", "Click+drag to draw nodes")
+              elseif alt_held then
                 drawing.tooltip(ctx, "env_segment", "Drag to adjust curve tension")
               elseif shift_held then
                 drawing.tooltip(ctx, "env_segment", "Click to add node and drag")
               else
-                drawing.tooltip(ctx, "env_segment", "Drag to move segment\nShift+click: add node\nAlt+drag: adjust curve")
+                drawing.tooltip(ctx, "env_segment", "Drag to move segment\nShift+click: add node\nAlt+drag: adjust curve\nCtrl+drag: draw nodes")
               end
             -- Fade handle tooltips
             elseif near_fade_in then
