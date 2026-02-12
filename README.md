@@ -147,7 +147,7 @@ All shortcuts below are customizable in Settings > Shortcuts.
 
 - `Shift + drag` on any control for fine adjustment
 - `Double-click` any knob or slider to reset to default
-- Click filename in info bar to show in Explorer/Finder
+- Click filename in info bar to show in Media Explorer
 
 ## Settings
 
@@ -176,7 +176,7 @@ Right-click the window title bar > Dock window > Choose position (top, bottom, l
 - Map the script to a REAPER action shortcut for quick toggle on/off
 - Markers snap to REAPER's grid and source boundaries
 - Drag markers past source boundaries to create loops
-- Click filename in info bar to show in Explorer/Finder
+- Click filename in info bar to show in Media Explorer
 - Gain changes are non-destructive and can be undone
 - WARP mode stretches audio to fit markers without pitch change
 - All settings persist between sessions via ExtState

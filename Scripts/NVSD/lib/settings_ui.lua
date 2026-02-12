@@ -677,7 +677,7 @@ local HELP_SECTIONS = {
   },
   {
     header = "WAVEFORM CONTROLS",
-    body = "Ctrl+Scroll: Zoom in/out\nMiddle-drag: Pan waveform\nRuler drag vertical: Zoom\nRuler drag horizontal: Pan\nSet start/end markers and fade positions via configurable shortcuts (see Shortcuts tab, default: Mouse 4/5)\nLeft-click+drag: Select time region\nCtrl+C: Copy selected region to clipboard\nDrag markers past source boundaries to create loops.",
+    body = "Ctrl+Scroll: Zoom in/out\nMiddle-drag: Pan waveform\nRuler drag vertical: Zoom\nRuler drag horizontal: Pan\nSet start/end markers and fade positions via configurable shortcuts (see Shortcuts tab, default: Mouse 4/5)\nLeft-click+drag: Select time region\nC: Crop item to selected region (moves markers to selection bounds)\nZ: Zoom to selection or markers (press again to restore previous zoom)\nAlt+Z: Unzoom completely\nCtrl+C: Copy selected region to clipboard\nDrag markers past source boundaries to create loops.",
   },
   {
     header = "MARKERS",
@@ -713,7 +713,7 @@ local HELP_SECTIONS = {
   },
   {
     header = "TIPS",
-    body = "Map the script to a REAPER action shortcut (Actions > Show action list > search NVSD) for quick toggle on/off.\nRight-click the title bar to dock the window anywhere.\nGain changes are non-destructive and can be undone.\nWARP mode stretches audio to fit markers without pitch change.\nClick the filename in the info bar to show the file in Explorer/Finder.\nHover over any element for a tooltip with available actions.\nAll settings persist between sessions via ExtState.",
+    body = "Map the script to a REAPER action shortcut (Actions > Show action list > search NVSD) for quick toggle on/off.\nRight-click the title bar to dock the window anywhere.\nGain changes are non-destructive and can be undone.\nWARP mode stretches audio to fit markers without pitch change.\nClick the filename in the info bar to show it in REAPER's Media Explorer.\nHover over any element for a tooltip with available actions.\nAll settings persist between sessions via ExtState.",
   },
 }
 
