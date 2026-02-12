@@ -1,6 +1,6 @@
 # NVSD ItemView for REAPER
 
-![NVSD ItemView](gumroad%20cover2.jpg)
+![NVSD ItemView](github%20cover.jpg)
 
 > Ableton-style clip view for REAPER audio items.
 

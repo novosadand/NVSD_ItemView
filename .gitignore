@@ -21,4 +21,4 @@ docs/
 *.jpg
 gumroad*
 # Exception: README banner
-!gumroad cover2.jpg
+!github cover.jpg
