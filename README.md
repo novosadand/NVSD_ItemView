@@ -186,5 +186,3 @@ Right-click the window title bar > Dock window > Choose position (top, bottom, l
 If you find this tool useful, consider supporting development:
 
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-andrejnovosad-FFDD00?style=flat&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/andrejnovosad)
-
-**ETH:** `0x163665f591A44E9138C6f63326B797D2dE40198d`
