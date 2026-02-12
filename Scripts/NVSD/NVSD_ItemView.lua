@@ -326,17 +326,14 @@ local function loop()
     -- Zoom shortcuts
     if reaper_is_active and settings.check_shortcut(ctx, "zoom_in") then
       state.zoom_level = math.min(500.0, state.zoom_level * 1.5)
-      state.zoom_to_markers_active = false
-      state.zoom_to_selection_active = false
+      state.zoom_toggle_active = false
     elseif reaper_is_active and settings.check_shortcut(ctx, "zoom_out") then
       state.zoom_level = math.max(1.0, state.zoom_level / 1.5)
-      state.zoom_to_markers_active = false
-      state.zoom_to_selection_active = false
+      state.zoom_toggle_active = false
     elseif reaper_is_active and settings.check_shortcut(ctx, "reset_zoom") then
       state.zoom_level = 1.0
       state.pan_offset = 0
-      state.zoom_to_markers_active = false
-      state.zoom_to_selection_active = false
+      state.zoom_toggle_active = false
     end
 
     -- Toggle envelope snap (configurable shortcut, default Ctrl+4)
@@ -944,8 +941,7 @@ local function loop()
             state.prev_ext_end = nil
             -- Reset pitch scroll
             state.pitch_view_offset = 0
-            state.zoom_to_markers_active = false
-            state.zoom_to_selection_active = false
+            state.zoom_toggle_active = false
           end
 
           -- Detect external ext changes (undo, REAPER edits) and reset pan_offset
@@ -957,49 +953,37 @@ local function loop()
           state.prev_ext_start = ext_start
           state.prev_ext_end = ext_end
 
-          -- Zoom to start/end markers (Z key) - toggle: first press zooms in, second press restores
-          if reaper_is_active and settings.check_shortcut(ctx, "zoom_to_markers") and source_item_length > 0 then
-            if state.zoom_to_markers_active then
-              state.zoom_level = state.zoom_before_markers or 1.0
-              state.pan_offset = state.pan_before_markers or 0
-              state.zoom_to_markers_active = false
+          -- Zoom toggle (Z): selected region takes priority, falls back to markers. Second press restores.
+          if reaper_is_active and settings.check_shortcut(ctx, "zoom_to_markers") then
+            if state.zoom_toggle_active then
+              -- Restore previous zoom
+              state.zoom_level = state.zoom_before_toggle or 1.0
+              state.pan_offset = state.pan_before_toggle or 0
+              state.zoom_toggle_active = false
             else
-              state.zoom_before_markers = state.zoom_level
-              state.pan_before_markers = state.pan_offset
-              state.zoom_level = math.min(500.0, ext_length / source_item_length)
-              local marker_center = start_offset + source_item_length / 2
-              state.pan_offset = marker_center - (ext_start + ext_end) / 2
-              state.zoom_to_markers_active = true
+              -- Determine target: selection if available, otherwise markers
+              local target_start, target_len
+              if state.region_selected then
+                local sel_s = math.min(state.selection_start_time, state.selection_end_time)
+                local sel_e = math.max(state.selection_start_time, state.selection_end_time)
+                if sel_e - sel_s > 0 then
+                  target_start = sel_s
+                  target_len = sel_e - sel_s
+                end
+              end
+              if not target_len and source_item_length > 0 then
+                target_start = start_offset
+                target_len = source_item_length
+              end
+              if target_len then
+                state.zoom_before_toggle = state.zoom_level
+                state.pan_before_toggle = state.pan_offset
+                state.zoom_level = math.min(500.0, ext_length / target_len)
+                local target_center = target_start + target_len / 2
+                state.pan_offset = target_center - (ext_start + ext_end) / 2
+                state.zoom_toggle_active = true
+              end
             end
-            state.zoom_to_selection_active = false
-          end
-
-          -- Zoom to selected area (Alt+Z) - toggle
-          if reaper_is_active and settings.check_shortcut(ctx, "zoom_to_selection") and state.region_selected then
-            local sel_s = math.min(state.selection_start_time, state.selection_end_time)
-            local sel_e = math.max(state.selection_start_time, state.selection_end_time)
-            local sel_len = sel_e - sel_s
-            if state.zoom_to_selection_active then
-              state.zoom_level = state.zoom_before_selection or 1.0
-              state.pan_offset = state.pan_before_selection or 0
-              state.zoom_to_selection_active = false
-            elseif sel_len > 0 then
-              state.zoom_before_selection = state.zoom_level
-              state.pan_before_selection = state.pan_offset
-              state.zoom_level = math.min(500.0, ext_length / sel_len)
-              local sel_center = (sel_s + sel_e) / 2
-              state.pan_offset = sel_center - (ext_start + ext_end) / 2
-              state.zoom_to_selection_active = true
-            end
-            state.zoom_to_markers_active = false
-          end
-
-          -- Unzoom completely (Shift+Z)
-          if reaper_is_active and settings.check_shortcut(ctx, "unzoom_all") then
-            state.zoom_level = 1.0
-            state.pan_offset = 0
-            state.zoom_to_markers_active = false
-            state.zoom_to_selection_active = false
           end
 
           -- Compute view bounds
@@ -1885,8 +1869,7 @@ local function loop()
             local time_under_cursor = view_start + cursor_fraction * view_length
 
             state.zoom_level = math.max(min_zoom, math.min(500.0, new_zoom))
-            state.zoom_to_markers_active = false
-            state.zoom_to_selection_active = false
+            state.zoom_toggle_active = false
 
             local new_view_length = zoom_base_view_length / state.zoom_level
 
@@ -2000,8 +1983,7 @@ local function loop()
             state.is_panning = true
             state.pan_start_mouse_x = mouse_x
             state.pan_start_offset = state.pan_offset
-            state.zoom_to_markers_active = false
-            state.zoom_to_selection_active = false
+            state.zoom_toggle_active = false
           end
 
           if reaper.ImGui_IsMouseReleased(ctx, middle_mouse) then
