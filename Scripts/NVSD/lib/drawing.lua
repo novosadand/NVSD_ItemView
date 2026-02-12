@@ -372,10 +372,20 @@ function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler
   local DL_AddText = reaper.ImGui_DrawList_AddText
   local p2s = utils.project_to_source_time
 
-  -- Adaptive density: iterate at half bar_skip to show intermediate bar ticks
-  local draw_skip = (g.bar_skip >= 2) and (g.bar_skip / 2) or g.bar_skip
+  -- Label skip: ensure bar labels have enough room (text needs ~60px minimum)
+  local label_skip = g.bar_skip
+  local px_per_label = g.px_per_bar * label_skip
+  while px_per_label < 60 do
+    label_skip = label_skip * 2
+    px_per_label = g.px_per_bar * label_skip
+  end
+
+  -- Intermediate bar ticks (half of label_skip) - ticks only, no labels
+  local tick_skip = (label_skip >= 2) and (label_skip / 2) or label_skip
+  local show_inter_ticks = g.px_per_bar * tick_skip >= 20
+
   local inter_label_color = g.dim_color(config.COLOR_RULER_TEXT, 0.75)
-  local bar = g.first_bar - (g.first_bar % draw_skip)
+  local bar = g.first_bar - (g.first_bar % tick_skip)
   local iterations = 0
   while iterations < 1000 do
     iterations = iterations + 1
@@ -386,14 +396,13 @@ function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler
 
     if bar_source_time >= g.view_start and bar_source_time <= g.view_end then
       local bar_px = g.time_to_px(bar_source_time)
-      local is_major = (g.bar_skip < 2) or (bar % g.bar_skip == 0)
-      if is_major then
+      local is_label_bar = (bar % label_skip == 0)
+      if is_label_bar then
         DL_AddLine(draw_list, bar_px, ruler_y, bar_px, ruler_y + ruler_height, config.COLOR_RULER_TICK, 1)
         DL_AddText(draw_list, bar_px + 3, ruler_y + 3, config.COLOR_RULER_TEXT, tostring(bar + 1))
-      else
+      elseif show_inter_ticks then
         local tick_top = ruler_y + ruler_height - math.floor(ruler_height * 0.6)
         DL_AddLine(draw_list, bar_px, tick_top, bar_px, ruler_y + ruler_height, g.inter_tick_color, 1)
-        DL_AddText(draw_list, bar_px + 3, ruler_y + 3, inter_label_color, tostring(bar + 1))
       end
     end
 
@@ -438,7 +447,7 @@ function drawing.draw_ruler_and_grid(draw_list, x, ruler_y, wave_y, width, ruler
       end
     end
 
-    bar = bar + draw_skip
+    bar = bar + tick_skip
   end
 
   DL_AddLine(draw_list, x, ruler_y + ruler_height, x + width, ruler_y + ruler_height, config.COLOR_GRID_BAR, 1)
