@@ -953,36 +953,40 @@ local function loop()
           state.prev_ext_start = ext_start
           state.prev_ext_end = ext_end
 
-          -- Zoom toggle (Z): selected region takes priority, falls back to markers. Second press restores.
+          -- Zoom (Z): selection always zooms deeper; no selection restores or zooms to markers.
           if reaper_is_active and settings.check_shortcut(ctx, "zoom_to_markers") then
-            if state.zoom_toggle_active then
-              -- Restore previous zoom
+            local target_start, target_len
+            if state.region_selected then
+              local sel_s = math.min(state.selection_start_time, state.selection_end_time)
+              local sel_e = math.max(state.selection_start_time, state.selection_end_time)
+              if sel_e - sel_s > 0 then
+                target_start = sel_s
+                target_len = sel_e - sel_s
+              end
+            end
+            if target_len then
+              -- Selection exists: zoom to it (save original state only on first zoom)
+              if not state.zoom_toggle_active then
+                state.zoom_before_toggle = state.zoom_level
+                state.pan_before_toggle = state.pan_offset
+              end
+              state.zoom_level = math.min(500.0, ext_length / target_len)
+              local target_center = target_start + target_len / 2
+              state.pan_offset = target_center - (ext_start + ext_end) / 2
+              state.zoom_toggle_active = true
+            elseif state.zoom_toggle_active then
+              -- No selection, currently zoomed: restore original state
               state.zoom_level = state.zoom_before_toggle or 1.0
               state.pan_offset = state.pan_before_toggle or 0
               state.zoom_toggle_active = false
-            else
-              -- Determine target: selection if available, otherwise markers
-              local target_start, target_len
-              if state.region_selected then
-                local sel_s = math.min(state.selection_start_time, state.selection_end_time)
-                local sel_e = math.max(state.selection_start_time, state.selection_end_time)
-                if sel_e - sel_s > 0 then
-                  target_start = sel_s
-                  target_len = sel_e - sel_s
-                end
-              end
-              if not target_len and source_item_length > 0 then
-                target_start = start_offset
-                target_len = source_item_length
-              end
-              if target_len then
-                state.zoom_before_toggle = state.zoom_level
-                state.pan_before_toggle = state.pan_offset
-                state.zoom_level = math.min(500.0, ext_length / target_len)
-                local target_center = target_start + target_len / 2
-                state.pan_offset = target_center - (ext_start + ext_end) / 2
-                state.zoom_toggle_active = true
-              end
+            elseif source_item_length > 0 then
+              -- No selection, not zoomed: zoom to markers
+              state.zoom_before_toggle = state.zoom_level
+              state.pan_before_toggle = state.pan_offset
+              state.zoom_level = math.min(500.0, ext_length / source_item_length)
+              local marker_center = start_offset + source_item_length / 2
+              state.pan_offset = marker_center - (ext_start + ext_end) / 2
+              state.zoom_toggle_active = true
             end
           end
 
