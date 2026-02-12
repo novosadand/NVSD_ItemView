@@ -682,19 +682,14 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   reaper.ImGui_DrawList_PopClipRect(draw_list)
 
   if mouse_over_filename then
-    drawing.tooltip(ctx, "filename", "Click to show in explorer")
+    drawing.tooltip(ctx, "filename", "Click to show in Media Explorer")
   end
 
   if mouse_over_filename and reaper.ImGui_IsMouseClicked(ctx, 0) and file_path and file_path ~= "" then
-    if reaper.CF_LocateInExplorer then
-      reaper.CF_LocateInExplorer(file_path)
-    else
-      local os_name = reaper.GetOS()
-      if os_name:match("Win") then
-        os.execute('start "" "explorer" /select,"' .. file_path:gsub("/", "\\") .. '"')
-      elseif os_name:match("OSX") or os_name:match("macOS") then
-        os.execute('open -R "' .. file_path .. '"')
-      end
+    -- Navigate REAPER's Media Explorer to the file's directory
+    local dir = file_path:match("(.+)[/\\]")
+    if dir and reaper.OpenMediaExplorer then
+      reaper.OpenMediaExplorer(dir, false)
     end
     return true, false, nil
   end
