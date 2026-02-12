@@ -360,6 +360,11 @@ local function loop()
       state.envelopes_visible = false
     end
 
+    -- Toggle WAV cue markers (configurable shortcut, default T)
+    if reaper_is_active and settings.check_shortcut(ctx, "toggle_cue_markers") then
+      state.show_cue_markers = not state.show_cue_markers
+    end
+
     -- Open settings (configurable shortcut, default S)
     if reaper_is_active and settings.check_shortcut(ctx, "open_settings") then
       if not settings_ui.is_open() then settings_ui.open(settings) end
@@ -704,6 +709,31 @@ local function loop()
             source_length = item_length
           end
           if source_length <= 0 then source_length = 0.001 end  -- Prevent division by zero
+
+          -- Cache WAV cue markers (re-enumerate when source changes)
+          if source ~= state.cached_cue_source then
+            state.cached_cue_source = source
+            state.cached_cue_markers = {}
+            if reaper.CF_EnumMediaSourceCues then
+              local idx = 0
+              while true do
+                local next_idx, time, end_time, is_region, name = reaper.CF_EnumMediaSourceCues(source, idx)
+                if not next_idx or next_idx == 0 then break end
+                state.cached_cue_markers[#state.cached_cue_markers + 1] = {
+                  time = time,
+                  name = name or "",
+                  is_region = is_region,
+                  end_time = end_time,
+                }
+                idx = next_idx
+              end
+              table.sort(state.cached_cue_markers, function(a, b) return a.time < b.time end)
+            end
+            -- Auto-show cue markers when the file has them
+            if #state.cached_cue_markers > 0 then
+              state.show_cue_markers = true
+            end
+          end
 
           local playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
           if playrate == 0 then playrate = 1 end  -- Guard against division by zero
@@ -2431,12 +2461,15 @@ local function loop()
               end
             else
               -- Click without drag threshold: clear selection, set preview cursor
-              state.region_selected = false
-              state.preview_cursor_pos = px_to_time(mouse_x)
-              if state.preview_active and state.preview_handle then
-                reaper.CF_Preview_Stop(state.preview_handle)
-                state.preview_handle = nil
-                state.preview_active = false
+              -- Skip if mouse is over a cue marker label (double-click handled there)
+              if not state.cue_label_hovered then
+                state.region_selected = false
+                state.preview_cursor_pos = px_to_time(mouse_x)
+                if state.preview_active and state.preview_handle then
+                  reaper.CF_Preview_Stop(state.preview_handle)
+                  state.preview_handle = nil
+                  state.preview_active = false
+                end
               end
             end
           end
@@ -3938,6 +3971,11 @@ local function loop()
           end
           if state.fade_out_hovered and fade_out_len == 0 and not state.dragging_fade_out then
             drawing.draw_fade_hint(draw_list, end_marker_x, wave_y, false)
+          end
+
+          -- Draw WAV cue markers (behind start/end markers)
+          if state.show_cue_markers and state.cached_cue_markers and #state.cached_cue_markers > 0 then
+            drawing.draw_cue_markers(ctx, draw_list, state.cached_cue_markers, wave_x, wave_y, waveform_width, waveform_height, view_start, view_length, source_length, is_extended_view, config, mouse_x, mouse_y, state, item)
           end
 
           -- Draw markers on top

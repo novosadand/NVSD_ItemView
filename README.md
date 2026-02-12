@@ -107,6 +107,10 @@ Drag fade handles at item edges to adjust fade in/out length. Shift+Mouse4 to se
 
 Press `Ctrl+Space` to preview audio from the cursor position. Requires SWS extension.
 
+### WAV Cue Markers
+
+Press `M` to toggle display of embedded WAV cue markers. Some WAV files (especially sound effect libraries) contain cue points with labels that describe what happens at each position. These appear as vertical dashed lines with text labels on the waveform. A "CUE" button appears in the info bar when the current file has embedded markers. Requires SWS extension.
+
 ### Keyboard Shortcuts
 
 All shortcuts below are customizable in Settings > Shortcuts.
@@ -114,7 +118,8 @@ All shortcuts below are customizable in Settings > Shortcuts.
 | Key | Action |
 |-----|--------|
 | W | Toggle WARP mode |
-| M | Toggle mute |
+| Num0 | Toggle mute |
+| M | Toggle WAV cue markers |
 | R | Reverse item |
 | C | Crop markers to selection |
 | Shift+C | Clear pitch/speed |

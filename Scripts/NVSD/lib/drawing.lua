@@ -538,8 +538,51 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
 
   local gear_clicked = mouse_in_gear and reaper.ImGui_IsMouseClicked(ctx, 0)
 
-  -- Right boundary for filename text (don't overlap settings button)
-  local text_max_x = gear_btn_x - 8
+  -- CUE button (left of gear, only when cue markers exist)
+  local has_cues = state and state.cached_cue_markers and #state.cached_cue_markers > 0
+  local cue_btn_x, cue_btn_w
+  if has_cues then
+    local cue_label = "CUE"
+    cue_btn_w = reaper.ImGui_CalcTextSize(ctx, cue_label) + 8
+    local cue_btn_h = height - 4
+    cue_btn_x = gear_btn_x - cue_btn_w - 4
+    local cue_btn_y = y + 2
+
+    local mouse_in_cue = mouse_x >= cue_btn_x and mouse_x <= cue_btn_x + cue_btn_w
+                          and mouse_y >= cue_btn_y and mouse_y <= cue_btn_y + cue_btn_h
+
+    local cue_active = state.show_cue_markers
+    local cue_bg
+    if cue_active then
+      cue_bg = mouse_in_cue and config.COLOR_BTN_HOVER or config.COLOR_BTN_ON
+    else
+      cue_bg = mouse_in_cue and config.COLOR_BTN_HOVER or config.COLOR_GRID_BAR
+    end
+    reaper.ImGui_DrawList_AddRectFilled(draw_list, cue_btn_x, cue_btn_y, cue_btn_x + cue_btn_w, cue_btn_y + cue_btn_h, cue_bg, 3)
+    local cue_text_w = reaper.ImGui_CalcTextSize(ctx, cue_label)
+    local cue_text_x = cue_btn_x + (cue_btn_w - cue_text_w) / 2
+    local cue_text_y = cue_btn_y + (cue_btn_h - 12) / 2
+    local cue_text_color = cue_active and config.COLOR_BTN_TEXT or config.COLOR_INFO_BAR_TEXT
+    reaper.ImGui_DrawList_AddText(draw_list, cue_text_x, cue_text_y, cue_text_color, cue_label)
+
+    if mouse_in_cue then
+      local cue_tip = "Toggle WAV cue markers (" .. #state.cached_cue_markers .. " found)"
+      if settings then
+        local sc = settings.current.shortcuts.toggle_cue_markers
+        if sc and sc.key ~= "" then
+          cue_tip = cue_tip .. " (" .. settings.format_shortcut(sc) .. ")"
+        end
+      end
+      drawing.tooltip(ctx, "cue_btn", cue_tip)
+    end
+
+    if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_cue then
+      state.show_cue_markers = not state.show_cue_markers
+    end
+  end
+
+  -- Right boundary for filename text (don't overlap buttons)
+  local text_max_x = (has_cues and cue_btn_x or gear_btn_x) - 8
 
   -- Mute toggle
   local mute_size = 10
@@ -1025,6 +1068,90 @@ end
 function drawing.draw_preview_playhead(draw_list, x, y, height)
   local color = 0x4A90D9FF  -- accent blue
   reaper.ImGui_DrawList_AddLine(draw_list, x, y, x, y + height, color, 1.5)
+end
+
+-- Draw WAV cue markers (embedded cue points from source file)
+-- markers must be sorted by time. Double-click a label to select the region to the next cue point.
+function drawing.draw_cue_markers(ctx, draw_list, markers, wave_x, wave_y, waveform_width, waveform_height, view_start, view_length, source_length, is_extended, config, mouse_x, mouse_y, state, item)
+  if not markers or #markers == 0 or view_length <= 0 then return end
+
+  local view_end = view_start + view_length
+  local color_line = config.COLOR_CUE_MARKER
+  local color_text = config.COLOR_CUE_MARKER_TEXT
+  local color_bg = config.COLOR_CUE_MARKER_BG
+  local DL_AddText = reaper.ImGui_DrawList_AddText
+  local DL_AddRectFilled = reaper.ImGui_DrawList_AddRectFilled
+  local clicked = reaper.ImGui_IsMouseClicked(ctx, 0)
+  if state then state.cue_label_hovered = false end
+
+  reaper.ImGui_DrawList_PushClipRect(draw_list, wave_x, wave_y, wave_x + waveform_width, wave_y + waveform_height, true)
+
+  for mi, marker in ipairs(markers) do
+    -- Collect all visible instances (tiled for looped/extended items)
+    local positions = {}
+    if is_extended and source_length > 0 then
+      local base = marker.time % source_length
+      local first = base + math.floor((view_start - base) / source_length) * source_length
+      if first > view_start then first = first - source_length end
+      for t = first, view_end, source_length do
+        if t >= view_start and t <= view_end then
+          positions[#positions + 1] = t
+        end
+      end
+    else
+      if marker.time >= view_start and marker.time <= view_end then
+        positions[#positions + 1] = marker.time
+      end
+    end
+
+    for _, t in ipairs(positions) do
+      local px = wave_x + ((t - view_start) / view_length) * waveform_width
+      -- Dashed vertical line
+      drawing.draw_dashed_line(draw_list, px, wave_y, wave_y + waveform_height, color_line, 4, 3, 1)
+      -- Label at top
+      if marker.name and marker.name ~= "" then
+        local text_w = reaper.ImGui_CalcTextSize(ctx, marker.name)
+        local label_x = px + 3
+        local label_y = wave_y + 2
+        local label_r = label_x + text_w + 3
+        local label_b = label_y + 13
+
+        -- Hit test for double-click: select region from this cue to next
+        local mouse_in_label = mouse_x >= label_x - 1 and mouse_x <= label_r
+                                and mouse_y >= label_y - 1 and mouse_y <= label_b
+        local bg = mouse_in_label and color_with_alpha(color_bg, 0xFF) or color_bg
+        local txt = mouse_in_label and 0xFFFFFFFF or color_text
+
+        DL_AddRectFilled(draw_list, label_x - 1, label_y - 1, label_r, label_b, bg, 2)
+        DL_AddText(draw_list, label_x + 1, label_y, txt, marker.name)
+
+        if mouse_in_label then
+          reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
+          if state then state.cue_label_hovered = true end
+        end
+
+        if mouse_in_label and clicked and state and item then
+          -- Find next cue marker's time (or source_length if last)
+          local next_time = source_length
+          if markers[mi + 1] then
+            next_time = markers[mi + 1].time
+          end
+          state.selection_start_time = marker.time
+          state.selection_end_time = next_time
+          state.region_selected = true
+          state.region_sel_start = marker.time
+          state.region_sel_end = next_time
+          state.region_sel_item = item
+          state.selecting_region = false
+          state.selection_drag_activated = false
+          -- Move preview cursor to marker position
+          state.preview_cursor_pos = marker.time
+        end
+      end
+    end
+  end
+
+  reaper.ImGui_DrawList_PopClipRect(draw_list)
 end
 
 -- Draw a knob

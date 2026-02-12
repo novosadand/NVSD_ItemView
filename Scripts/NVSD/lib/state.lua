@@ -187,6 +187,11 @@ state.env_multi_drag_env_offset = nil      -- saved for scoping
 state.env_multi_drag_all_points = {}       -- full envelope snapshot for sweep rebuild
 state.env_node_hovered_is_selected = false -- true when hovered node is in selection
 
+-- WAV cue marker state
+state.show_cue_markers = false       -- Toggle visibility of embedded WAV cue markers
+state.cached_cue_markers = nil       -- Cached cue marker data: {{time=, name=}, ...} or empty table
+state.cached_cue_source = nil        -- Source pointer for which cue markers were loaded
+
 -- Audio preview state (CF_Preview API from SWS extension)
 state.preview_cursor_pos = nil       -- source time (seconds) where preview starts
 state.preview_handle = nil           -- CF_Preview handle (userdata)

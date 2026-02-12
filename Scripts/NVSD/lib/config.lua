@@ -94,6 +94,11 @@ config.PITCH_AUTO_SCROLL_RATE = 0.5   -- semitones per frame at edge (scales lin
 config.COLOR_SELECTION = 0x66AAFF30        -- semi-transparent blue overlay
 config.COLOR_SELECTION_EDGE = 0x66AAFFAA   -- selection edge lines
 
+-- WAV cue markers
+config.COLOR_CUE_MARKER = 0x88AABBAA      -- semi-transparent dashed lines
+config.COLOR_CUE_MARKER_TEXT = 0xBBCCDDFF  -- label text
+config.COLOR_CUE_MARKER_BG = 0x222222DD    -- dark background behind labels
+
 -- Default colors (0xRRGGBBAA format)
 local DEFAULT_COLORS = {
   waveform = 0x5A9F5AFF,

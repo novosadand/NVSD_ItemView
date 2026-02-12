@@ -15,7 +15,7 @@ settings.DEFAULT_SHORTCUTS = {
   zoom_out = {ctrl = false, shift = false, alt = false, key = ""},
   reset_zoom = {ctrl = false, shift = false, alt = false, key = "F"},
   toggle_warp = {ctrl = false, shift = false, alt = false, key = "W"},
-  toggle_mute = {ctrl = false, shift = false, alt = false, key = "M"},
+  toggle_mute = {ctrl = false, shift = false, alt = false, key = "Num0"},
   reverse = {ctrl = false, shift = false, alt = false, key = "R"},
   clear = {ctrl = false, shift = true, alt = false, key = "C"},
   crop_to_selection = {ctrl = false, shift = false, alt = false, key = "C"},
@@ -34,6 +34,7 @@ settings.DEFAULT_SHORTCUTS = {
   set_fade_out = {ctrl = false, shift = true, alt = false, key = "Mouse5"},
   zoom_to_markers = {ctrl = false, shift = false, alt = false, key = "Z"},
   unzoom_all = {ctrl = false, shift = false, alt = true, key = "Z"},
+  toggle_cue_markers = {ctrl = false, shift = false, alt = false, key = "M"},
 }
 
 -- Map key names to ImGui key getter function names (created once at module load)
@@ -839,6 +840,18 @@ function settings.load()
   if custom_theme then
     for key, val in pairs(custom_colors) do
       custom_theme.colors[key] = val
+    end
+  end
+
+  -- One-time migration: clear stale saved shortcuts whose defaults changed
+  local MIGRATIONS = {
+    {key = "shortcut_toggle_mute", old = "M"},           -- was M, now Num0
+    {key = "shortcut_toggle_cue_markers", old = "T"},     -- was T, now M
+  }
+  for _, m in ipairs(MIGRATIONS) do
+    local saved = reaper.GetExtState(EXT_SECTION, m.key)
+    if saved == m.old then
+      reaper.DeleteExtState(EXT_SECTION, m.key, true)
     end
   end
 

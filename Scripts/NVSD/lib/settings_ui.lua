@@ -28,6 +28,7 @@ local EDITABLE_SHORTCUTS = {
   {name = "set_fade_out", label = "Set fade-out at cursor"},
   {name = "zoom_to_markers", label = "Zoom to region / markers"},
   {name = "unzoom_all", label = "Unzoom completely"},
+  {name = "toggle_cue_markers", label = "Toggle WAV cue markers"},
 }
 
 -- Reference shortcuts (not editable)
@@ -709,7 +710,11 @@ local HELP_SECTIONS = {
   },
   {
     header = "KEYBOARD SHORTCUTS",
-    body = "All keyboard shortcuts can be rebound in the Shortcuts tab.\nDefault shortcuts:\n  W: Toggle WARP mode\n  M: Toggle mute\n  R: Reverse item\n  C: Crop markers to selection\n  Shift+C: Clear pitch/speed\n  E: Open in external editor\n  F: Reset zoom to fit\n  Z: Zoom to selection / markers (toggle)\n  Alt+Z: Unzoom completely\n  +/-: Zoom in/out\n  Ctrl+4: Toggle envelope snap\n  L: Lock envelopes\n  Shift+V/H/P: Show Volume/Pitch/Pan envelope\n  H: Hide envelopes\n  Ctrl+Space: Audio preview\n  S: Open settings\n  Space: Play/Stop\n  Ctrl+Z/Y: Undo/Redo\n  Ctrl+C: Copy region",
+    body = "All keyboard shortcuts can be rebound in the Shortcuts tab.\nDefault shortcuts:\n  W: Toggle WARP mode\n  Num0: Toggle mute\n  M: Toggle WAV cue markers\n  R: Reverse item\n  C: Crop markers to selection\n  Shift+C: Clear pitch/speed\n  E: Open in external editor\n  F: Reset zoom to fit\n  Z: Zoom to selection / markers (toggle)\n  Alt+Z: Unzoom completely\n  +/-: Zoom in/out\n  Ctrl+4: Toggle envelope snap\n  L: Lock envelopes\n  Shift+V/H/P: Show Volume/Pitch/Pan envelope\n  H: Hide envelopes\n  Ctrl+Space: Audio preview\n  S: Open settings\n  Space: Play/Stop\n  Ctrl+Z/Y: Undo/Redo\n  Ctrl+C: Copy region",
+  },
+  {
+    header = "WAV CUE MARKERS",
+    body = "M: Toggle display of embedded WAV cue markers\n\nSome WAV files contain embedded cue points (markers with labels). These appear as vertical dashed lines with text labels on the waveform.\nThe CUE button in the info bar appears when the current file has cue markers.\nRequires SWS extension.",
   },
   {
     header = "TIPS",
