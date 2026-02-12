@@ -2321,8 +2321,7 @@ local function loop()
             state.selection_start_mouse_x = mouse_x
             state.selection_start_time = px_to_time(mouse_x)
             state.selection_end_time = state.selection_start_time
-            -- Clear any existing finalized selection
-            state.region_selected = false
+            -- Don't clear region_selected here; only replace when new drag finalizes
             state.env_selected_nodes = {}
           end
 
@@ -2355,14 +2354,15 @@ local function loop()
               local clamp_max = is_extended_view and ext_end or source_length
               s = math.max(clamp_min, math.min(clamp_max, s))
               e = math.max(clamp_min, math.min(clamp_max, e))
-              if e - s > 0.001 then  -- minimum 1ms selection
+              if e - s > 0 then
                 state.region_selected = true
                 state.region_sel_start = s
                 state.region_sel_end = e
                 state.region_sel_item = item
               end
             else
-              -- Click without drag threshold: set preview cursor (existing behavior)
+              -- Click without drag threshold: clear selection, set preview cursor
+              state.region_selected = false
               state.preview_cursor_pos = px_to_time(mouse_x)
               if state.preview_active and state.preview_handle then
                 reaper.CF_Preview_Stop(state.preview_handle)
