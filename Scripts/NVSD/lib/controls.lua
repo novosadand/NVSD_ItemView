@@ -484,6 +484,7 @@ function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, pa
     local new_db = utils.slider_to_db(new_pos)
     local new_gain = utils.db_to_gain(new_db)
     reaper.SetMediaItemInfo_Value(item, "D_VOL", new_gain)
+    reaper.UpdateArrange()
   end
 
   local slider_center_x = slider_x + config.GAIN_SLIDER_WIDTH / 2
