@@ -1616,7 +1616,15 @@ local function loop()
 
           -- Cursor feedback (alt_held cached at top of frame)
           -- Fade grabs use Hand cursor to distinguish from marker's ResizeEW
-          if state.env_tension_dragging then
+          if state.env_freehand_drawing then
+            -- Freehand drawing active: show pencil cursor
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
+            local cx, cy = mouse_x, mouse_y
+            local pc = config.COLOR_MARKER or 0x4A90D9FF
+            reaper.ImGui_DrawList_AddLine(draw_list, cx - 1, cy + 1, cx - 9, cy + 9, pc, 2.0)
+            reaper.ImGui_DrawList_AddTriangleFilled(draw_list, cx, cy, cx - 3, cy + 3, cx, cy + 3, pc)
+            reaper.ImGui_DrawList_AddLine(draw_list, cx - 9, cy + 9, cx - 11, cy + 7, 0xAAAAAAFF, 2.0)
+          elseif state.env_tension_dragging then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
           elseif state.dragging_fade_curve_in or state.dragging_fade_curve_out then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
@@ -1660,13 +1668,22 @@ local function loop()
               and mouse_in_waveform and state.envelope_hovered_segment < 0
               and state.env_node_hovered_idx < 0 then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
+          elseif state.envelopes_visible and ctrl_held and reaper_is_active
+              and mouse_in_waveform and not alt_held and not shift_held then
+            -- Ctrl = freehand draw mode: show pencil cursor
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
+            local cx, cy = mouse_x, mouse_y
+            local pc = config.COLOR_MARKER or 0x4A90D9FF
+            -- Pencil body (diagonal line)
+            reaper.ImGui_DrawList_AddLine(draw_list, cx - 1, cy + 1, cx - 9, cy + 9, pc, 2.0)
+            -- Pencil tip
+            reaper.ImGui_DrawList_AddTriangleFilled(draw_list, cx, cy, cx - 3, cy + 3, cx, cy + 3, pc)
+            -- Small eraser/top
+            reaper.ImGui_DrawList_AddLine(draw_list, cx - 9, cy + 9, cx - 11, cy + 7, 0xAAAAAAFF, 2.0)
           elseif state.envelopes_visible and reaper_is_active
               and state.envelope_hovered_segment >= 0 and state.env_node_hovered_idx < 0
               and not alt_held and not shift_held then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
-          elseif state.envelopes_visible and mouse_in_waveform
-              and reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl()) then
-            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
           elseif state.selecting_region and state.selection_drag_activated then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
           elseif mouse_in_pitch_gutter or state.pitch_gutter_dragging then
