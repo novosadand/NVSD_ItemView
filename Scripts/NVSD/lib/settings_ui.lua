@@ -68,8 +68,6 @@ local ui_state = {
   original_theme_id = nil,
   pending_shortcuts = nil,   -- Deep copy of shortcuts, applied only on Save
   listening_for = nil,       -- Shortcut name being captured, or nil
-  conflict_warning = nil,    -- {shortcut = name, text = "..."} or nil
-  conflict_clear_time = 0,   -- Frame counter for auto-clearing warning
   custom_init_from = 0,      -- Index for "Initialize from" combo
   custom_colors_dirty = false, -- True when custom colors changed but not yet saved to ExtState
   custom_save_time = 0,      -- Debounce: time of last deferred save request
@@ -77,6 +75,8 @@ local ui_state = {
   show_save_input = false,   -- Show the name input field
   delete_confirm_id = nil,   -- Theme ID pending deletion confirmation
   hovered_theme_id = nil,    -- Theme ID currently hovered (for delete button)
+  -- Shortcut conflict modal state
+  conflict_pending = nil,    -- {target = name, binding = {}, conflict_name = name} or nil
 }
 
 -- Colors matching main window dark theme
@@ -109,8 +109,8 @@ local function init_pending(settings)
   ui_state.original_theme_id = settings.current.theme_id
   ui_state.pending_shortcuts = deep_copy_shortcuts(settings.current.shortcuts)
   ui_state.listening_for = nil
-  ui_state.conflict_warning = nil
-  ui_state.conflict_clear_time = 0
+  ui_state.conflict_pending = nil
+  ui_state.conflict_just_cleared = nil
   settings.listening = false
 end
 
@@ -142,7 +142,8 @@ function settings_ui.close(settings, restore_original)
   ui_state.original_theme_id = nil
   ui_state.pending_shortcuts = nil
   ui_state.listening_for = nil
-  ui_state.conflict_warning = nil
+  ui_state.conflict_pending = nil
+  ui_state.conflict_just_cleared = nil
   settings.listening = false
 end
 
@@ -509,31 +510,33 @@ local function draw_shortcuts_tab(ctx, settings)
         local conflict = settings.find_conflict(
           ui_state.pending_shortcuts, ui_state.listening_for, binding)
         if conflict then
-          ui_state.conflict_warning = {
-            shortcut = ui_state.listening_for,
-            text = "Conflicts with " .. get_shortcut_label(conflict),
+          -- Store pending conflict for modal confirmation
+          ui_state.conflict_pending = {
+            target = ui_state.listening_for,
+            binding = binding,
+            conflict_name = conflict,
           }
-          ui_state.conflict_clear_time = 180  -- ~3 seconds at 60fps
+          stop_listening(settings)
+        else
+          -- No conflict, apply directly
+          ui_state.pending_shortcuts[ui_state.listening_for] = binding
+          stop_listening(settings)
         end
-
-        -- Apply binding regardless of conflict
-        ui_state.pending_shortcuts[ui_state.listening_for] = binding
-        stop_listening(settings)
       end
     end
   end
 
-  -- Auto-clear conflict warning
-  if ui_state.conflict_warning then
-    ui_state.conflict_clear_time = ui_state.conflict_clear_time - 1
-    if ui_state.conflict_clear_time <= 0 then
-      ui_state.conflict_warning = nil
-    end
+  -- Open conflict modal if pending
+  if ui_state.conflict_pending then
+    reaper.ImGui_OpenPopup(ctx, "Shortcut Conflict##confirm")
   end
 
   -- Editable shortcuts header
   reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Keyboard Shortcuts")
   reaper.ImGui_Spacing(ctx)
+
+  -- Track which shortcut was just cleared by conflict resolution (highlight it)
+  local just_cleared_name = ui_state.conflict_just_cleared
 
   local flags = reaper.ImGui_TableFlags_None()
   if reaper.ImGui_BeginTable(ctx, "editable_shortcuts", 3, flags) then
@@ -562,16 +565,12 @@ local function draw_shortcuts_tab(ctx, settings)
       -- Column 1: Action label
       reaper.ImGui_TableNextColumn(ctx)
 
-      -- Conflict indicator
-      if ui_state.conflict_warning and ui_state.conflict_warning.shortcut == name then
-        reaper.ImGui_TextColored(ctx, COLORS.warning, "!")
-        if reaper.ImGui_IsItemHovered(ctx) then
-          reaper.ImGui_SetTooltip(ctx, ui_state.conflict_warning.text)
-        end
-        reaper.ImGui_SameLine(ctx)
+      -- Highlight label if this shortcut was just cleared by conflict overwrite
+      if just_cleared_name == name then
+        reaper.ImGui_TextColored(ctx, COLORS.warning, entry.label)
+      else
+        reaper.ImGui_Text(ctx, entry.label)
       end
-
-      reaper.ImGui_Text(ctx, entry.label)
 
       -- Column 2: Binding button
       reaper.ImGui_TableNextColumn(ctx)
@@ -583,7 +582,7 @@ local function draw_shortcuts_tab(ctx, settings)
         btn_color = COLORS.accent
       elseif is_unbound then
         btn_label = "---"
-        btn_color = COLORS.unbound
+        btn_color = just_cleared_name == name and COLORS.warning or COLORS.unbound
       else
         btn_label = settings.format_shortcut(shortcut)
         btn_color = nil
@@ -606,6 +605,10 @@ local function draw_shortcuts_tab(ctx, settings)
         if not is_listening then
           ui_state.listening_for = name
           settings.listening = true
+          -- Clear the "just cleared" highlight when user starts rebinding
+          if ui_state.conflict_just_cleared then
+            ui_state.conflict_just_cleared = nil
+          end
         end
       end
 
@@ -623,9 +626,8 @@ local function draw_shortcuts_tab(ctx, settings)
               alt = default.alt, key = default.key,
             }
           end
-          -- Clear conflict if it was on this shortcut
-          if ui_state.conflict_warning and ui_state.conflict_warning.shortcut == name then
-            ui_state.conflict_warning = nil
+          if ui_state.conflict_just_cleared == name then
+            ui_state.conflict_just_cleared = nil
           end
         end
         if reaper.ImGui_IsItemHovered(ctx) then
@@ -637,6 +639,42 @@ local function draw_shortcuts_tab(ctx, settings)
     end
 
     reaper.ImGui_EndTable(ctx)
+  end
+
+  -- Shortcut conflict confirmation modal
+  if reaper.ImGui_BeginPopupModal(ctx, "Shortcut Conflict##confirm", nil, reaper.ImGui_WindowFlags_AlwaysAutoResize()) then
+    local cp = ui_state.conflict_pending
+    if cp then
+      local key_text = settings.format_shortcut(cp.binding)
+      local conflict_label = get_shortcut_label(cp.conflict_name)
+      reaper.ImGui_Text(ctx, key_text .. " is already used for:")
+      reaper.ImGui_Spacing(ctx)
+      reaper.ImGui_TextColored(ctx, COLORS.accent, "  " .. conflict_label)
+      reaper.ImGui_Spacing(ctx)
+      reaper.ImGui_Text(ctx, "Reassign it?")
+      reaper.ImGui_Spacing(ctx)
+
+      if reaper.ImGui_Button(ctx, "Reassign", 90, 0) then
+        -- Apply the new binding to the target
+        ui_state.pending_shortcuts[cp.target] = cp.binding
+        -- Clear the conflicting shortcut
+        ui_state.pending_shortcuts[cp.conflict_name] = {
+          ctrl = false, shift = false, alt = false, key = ""
+        }
+        -- Mark the cleared shortcut for visual highlight
+        ui_state.conflict_just_cleared = cp.conflict_name
+        ui_state.conflict_pending = nil
+        reaper.ImGui_CloseCurrentPopup(ctx)
+      end
+      reaper.ImGui_SameLine(ctx)
+      if reaper.ImGui_Button(ctx, "Cancel", 90, 0) then
+        ui_state.conflict_pending = nil
+        reaper.ImGui_CloseCurrentPopup(ctx)
+      end
+    else
+      reaper.ImGui_CloseCurrentPopup(ctx)
+    end
+    reaper.ImGui_EndPopup(ctx)
   end
 
   -- Helper text
@@ -824,7 +862,8 @@ function settings_ui.draw(ctx, settings)
       ui_state.pending_theme_id = settings.current.theme_id
       ui_state.pending_shortcuts = deep_copy_shortcuts(settings.current.shortcuts)
       stop_listening(settings)
-      ui_state.conflict_warning = nil
+      ui_state.conflict_pending = nil
+      ui_state.conflict_just_cleared = nil
     end
 
     -- Right-aligned Cancel + Save & Close
