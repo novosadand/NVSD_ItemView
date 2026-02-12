@@ -1725,15 +1725,18 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
   end
 
   -- 3. Segment hover detection: find closest line segment to mouse
-  state.envelope_hovered_segment = -1
-  state.env_node_hovered_idx = -1
-
   local mouse_in_waveform = mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
                             and mouse_y >= wave_y and mouse_y <= wave_y + waveform_height
 
+  -- During active tension/segment drag, preserve the hovered segment for highlight
+  local drag_active = state.env_tension_dragging or state.env_segment_dragging
+  if not drag_active then
+    state.envelope_hovered_segment = -1
+  end
+  state.env_node_hovered_idx = -1
   state.env_node_hovered_is_selected = false
 
-  if mouse_in_waveform and not state.dragging_env_node then
+  if mouse_in_waveform and not state.dragging_env_node and not drag_active then
     -- Check if mouse is near an existing node first
     local closest_node_dist = config.ENV_NODE_HIT_RADIUS + 1
     local best_pts_i = -1

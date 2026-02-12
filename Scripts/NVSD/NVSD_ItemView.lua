@@ -2579,13 +2579,15 @@ local function loop()
                 and not state.env_tension_dragging then
               local env = reaper.GetTakeEnvelopeByName(take, env_name)
               if env then
+                -- Use raw mouse time (not snapped hover_time) to find the correct segment
+                local raw_source_time = px_to_time(mouse_x)
+                local raw_take_time = raw_source_time - env_offset
                 local seg_pt_idx = -1
                 local np = reaper.CountEnvelopePoints(env)
-                local hover_take_time = state.envelope_hover_time - env_offset
                 for pi = 0, np - 2 do
                   local ret1, t1 = reaper.GetEnvelopePoint(env, pi)
                   local ret2, t2 = reaper.GetEnvelopePoint(env, pi + 1)
-                  if ret1 and ret2 and hover_take_time >= t1 - 0.001 and hover_take_time <= t2 + 0.001 then
+                  if ret1 and ret2 and raw_take_time >= t1 - 0.001 and raw_take_time <= t2 + 0.001 then
                     seg_pt_idx = pi
                     break
                   end
@@ -2610,22 +2612,17 @@ local function loop()
                 and state.env_node_hovered_idx < 0
                 and not state.dragging_env_node
                 and not state.env_tension_dragging then
-              -- Find which point controls this segment's shape
-              -- envelope_hovered_segment is the segment index in the pts list;
-              -- we need the REAPER point index of the segment's start point.
-              -- The drawing code sets hovered_segment = i-1 where i is the pts index.
-              -- We need the REAPER idx from the corresponding pts entry.
               local env = reaper.GetTakeEnvelopeByName(take, env_name)
               if env then
-                -- Find the point whose shape controls this segment
-                -- hover_time falls between two points; we need the first point's REAPER index
+                -- Use raw mouse time (not snapped hover_time) to find the correct segment
+                local raw_source_time = px_to_time(mouse_x)
+                local raw_take_time = raw_source_time - env_offset
                 local seg_pt_idx = -1
                 local np = reaper.CountEnvelopePoints(env)
-                local hover_take_time = state.envelope_hover_time - env_offset
                 for pi = 0, np - 2 do
                   local ret1, t1 = reaper.GetEnvelopePoint(env, pi)
                   local ret2, t2 = reaper.GetEnvelopePoint(env, pi + 1)
-                  if ret1 and ret2 and hover_take_time >= t1 - 0.001 and hover_take_time <= t2 + 0.001 then
+                  if ret1 and ret2 and raw_take_time >= t1 - 0.001 and raw_take_time <= t2 + 0.001 then
                     seg_pt_idx = pi
                     break
                   end
@@ -2695,13 +2692,15 @@ local function loop()
                   end
                   reaper.UpdateArrange()
                 else
-                  local hover_take_time = state.envelope_hover_time - env_offset
+                  -- Use raw mouse time (not snapped hover_time) to find the correct segment
+                  local raw_source_time = px_to_time(mouse_x)
+                  local raw_take_time = raw_source_time - env_offset
                   local found = false
 
                   -- Check implicit left segment (before first REAPER point)
                   if np > 0 and not found then
                     local ret0, t0, v0 = reaper.GetEnvelopePoint(env, 0)
-                    if ret0 and hover_take_time < t0 + 0.001 then
+                    if ret0 and raw_take_time < t0 + 0.001 then
                       state.env_segment_dragging = true
                       state.env_segment_idx1 = -1  -- implicit anchor
                       state.env_segment_idx2 = 0
@@ -2721,7 +2720,7 @@ local function loop()
                     for pi = 0, np - 2 do
                       local ret1, t1, v1 = reaper.GetEnvelopePoint(env, pi)
                       local ret2, t2, v2 = reaper.GetEnvelopePoint(env, pi + 1)
-                      if ret1 and ret2 and hover_take_time >= t1 - 0.001 and hover_take_time <= t2 + 0.001 then
+                      if ret1 and ret2 and raw_take_time >= t1 - 0.001 and raw_take_time <= t2 + 0.001 then
                         state.env_segment_dragging = true
                         state.env_segment_idx1 = pi
                         state.env_segment_idx2 = pi + 1
@@ -2741,7 +2740,7 @@ local function loop()
                   -- Check implicit right segment (after last REAPER point)
                   if np > 0 and not found then
                     local retN, tN, vN = reaper.GetEnvelopePoint(env, np - 1)
-                    if retN and hover_take_time > tN - 0.001 then
+                    if retN and raw_take_time > tN - 0.001 then
                       state.env_segment_dragging = true
                       state.env_segment_idx1 = np - 1
                       state.env_segment_idx2 = -1  -- implicit anchor
