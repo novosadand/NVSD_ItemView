@@ -2551,7 +2551,7 @@ local function loop()
                   state.env_selected_nodes = {}
                   local env = reaper.GetTakeEnvelopeByName(take, env_name)
                   if env then
-                    local retval, pt_time, pt_value = reaper.GetEnvelopePoint(env, state.env_node_hovered_idx)
+                    local retval, pt_time, pt_value, pt_shape, pt_tension = reaper.GetEnvelopePoint(env, state.env_node_hovered_idx)
                     if retval then
                       state.dragging_env_node = true
                       state.env_drag_node_idx = state.env_node_hovered_idx
@@ -2559,6 +2559,8 @@ local function loop()
                       state.env_drag_start_mouse_y = mouse_y
                       state.env_drag_start_time = pt_time
                       state.env_drag_start_value = pt_value
+                      state.env_drag_node_shape = pt_shape
+                      state.env_drag_node_tension = pt_tension
                       state.env_drag_activated = false
                       if not state.undo_block_open then
                         state.undo_block_open = "env_node"
@@ -2798,6 +2800,8 @@ local function loop()
                   state.env_drag_start_mouse_y = mouse_y
                   state.env_drag_start_time = take_time
                   state.env_drag_start_value = state.envelope_hover_value
+                  state.env_drag_node_shape = 0
+                  state.env_drag_node_tension = 0
                   state.env_drag_activated = false
                   if not state.undo_block_open then
                     state.undo_block_open = "env_node"
@@ -2852,6 +2856,8 @@ local function loop()
                   state.env_drag_start_mouse_y = mouse_y
                   state.env_drag_start_time = take_time
                   state.env_drag_start_value = raw_val
+                  state.env_drag_node_shape = 0
+                  state.env_drag_node_tension = 0
                   state.env_drag_activated = false
                   if not state.undo_block_open then
                     state.undo_block_open = "env_node"
@@ -2895,7 +2901,7 @@ local function loop()
                   new_source_time = snap_to_grid_if_enabled(new_source_time)
                   -- Convert source time to take time
                   local take_time = new_source_time - env_offset
-                  reaper.SetEnvelopePoint(env, state.env_drag_node_idx, take_time, new_raw, 0, 0, false, true)
+                  reaper.SetEnvelopePoint(env, state.env_drag_node_idx, take_time, new_raw, state.env_drag_node_shape or 0, state.env_drag_node_tension or 0, false, true)
                   reaper.Envelope_SortPoints(env)
                   -- Re-find the point after sort (index may have changed)
                   local count = reaper.CountEnvelopePoints(env)
