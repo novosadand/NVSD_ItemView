@@ -3424,6 +3424,10 @@ local function loop()
                   local new_source_length = current_end - new_start
                   local new_item_length = new_source_length / playrate
                   local new_take_offset = new_start - section_offset
+                  -- Wrap for REAPER when extending past source boundaries
+                  if source_length > 0 then
+                    new_take_offset = new_take_offset % source_length
+                  end
 
                   -- Fade adjustment: preserve fade-in, shrink fade-out first
                   local fi, fo = fade_in_len, fade_out_len
@@ -3439,6 +3443,14 @@ local function loop()
                   -- Shift envelope points so they stay audio-anchored
                   if not state.envelope_lock then
                     local offset_delta = new_take_offset - take_offset
+                    -- Unwrap delta when crossing source boundary to avoid huge jumps
+                    if source_length > 0 then
+                      if offset_delta > source_length * 0.5 then
+                        offset_delta = offset_delta - source_length
+                      elseif offset_delta < -source_length * 0.5 then
+                        offset_delta = offset_delta + source_length
+                      end
+                    end
                     if math.abs(offset_delta) > 0.000001 then
                       local env_names = { "Volume", "Pitch", "Pan" }
                       for _, ename in ipairs(env_names) do
