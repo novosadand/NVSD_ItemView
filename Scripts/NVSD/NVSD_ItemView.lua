@@ -3915,8 +3915,9 @@ local function loop()
             reaper.UpdateArrange()
           end
 
-          -- Alt-hover free zone highlight
-          if alt_held and mouse_in_free_zone and not we_are_dragging then
+          -- Alt-hover zone highlight (free zone or marker = both slide both markers)
+          if alt_held and not we_are_dragging
+              and (mouse_in_free_zone or (mouse_in_marker_area and (near_start or near_end))) then
             reaper.ImGui_DrawList_AddRectFilled(draw_list,
               start_marker_x, wave_y, end_marker_x, wave_y + waveform_height, 0xFFFFFF08)
           end
