@@ -36,10 +36,16 @@ local REFERENCE_SHORTCUTS = {
   {"Ctrl + Scroll",  "Zoom in/out"},
   {"Middle Drag",    "Pan waveform"},
   {"Ruler Drag",     "Zoom + Pan"},
+  {"Left Drag",      "Select time region"},
   {"Drag Marker",    "Move start/end point"},
   {"Alt + Drag",     "Slide both markers"},
   {"Mouse 4",        "Set start at cursor"},
   {"Mouse 5",        "Set end at cursor"},
+  {"Shift+Mouse 4",  "Set fade-in end at cursor"},
+  {"Shift+Mouse 5",  "Set fade-out start at cursor"},
+  {"Double-click",   "Reset knob/slider to default"},
+  {"Ctrl + Drag",    "Fine control on knobs/sliders"},
+  {"Right-click fade", "Pick fade shape"},
 }
 
 -- Core colors: 4 essential pickers that derive all other colors
