@@ -21,6 +21,10 @@ local EDITABLE_SHORTCUTS = {
   {name = "show_pan_env", label = "Show Pan envelope"},
   {name = "hide_envelopes", label = "Hide envelopes"},
   {name = "open_settings", label = "Open settings"},
+  {name = "set_start_marker", label = "Set start marker at cursor"},
+  {name = "set_end_marker", label = "Set end marker at cursor"},
+  {name = "set_fade_in", label = "Set fade-in at cursor"},
+  {name = "set_fade_out", label = "Set fade-out at cursor"},
 }
 
 -- Reference shortcuts (not editable)
@@ -39,10 +43,6 @@ local REFERENCE_SHORTCUTS = {
   {"Left Drag",      "Select time region"},
   {"Drag Marker",    "Move start/end point"},
   {"Alt + Drag",     "Slide both markers"},
-  {"Mouse 4",        "Set start at cursor"},
-  {"Mouse 5",        "Set end at cursor"},
-  {"Shift+Mouse 4",  "Set fade-in end at cursor"},
-  {"Shift+Mouse 5",  "Set fade-out start at cursor"},
   {"Double-click",   "Reset knob/slider to default"},
   {"Ctrl + Drag",    "Fine control on knobs/sliders"},
   {"Right-click fade", "Pick fade shape"},
@@ -674,7 +674,7 @@ local HELP_SECTIONS = {
   },
   {
     header = "WAVEFORM CONTROLS",
-    body = "Ctrl+Scroll: Zoom in/out\nMiddle-drag: Pan waveform\nRuler drag vertical: Zoom\nRuler drag horizontal: Pan\nMouse 4: Set start at cursor\nMouse 5: Set end at cursor\nShift+Mouse4: Set fade-in end at cursor\nShift+Mouse5: Set fade-out start at cursor\nLeft-click+drag: Select time region\nCtrl+C: Copy selected region to clipboard\nDrag markers past source boundaries to create loops.",
+    body = "Ctrl+Scroll: Zoom in/out\nMiddle-drag: Pan waveform\nRuler drag vertical: Zoom\nRuler drag horizontal: Pan\nSet start/end markers and fade positions via configurable shortcuts (see Shortcuts tab, default: Mouse 4/5)\nLeft-click+drag: Select time region\nCtrl+C: Copy selected region to clipboard\nDrag markers past source boundaries to create loops.",
   },
   {
     header = "MARKERS",
@@ -690,7 +690,7 @@ local HELP_SECTIONS = {
   },
   {
     header = "FADES",
-    body = "Drag fade handles at item edges to adjust fade in/out length.\nShift+Mouse4: Set fade-in end at cursor position.\nShift+Mouse5: Set fade-out start at cursor position.\nAlt+drag fade curve to adjust curve tension.\nRight-click fade handle to pick fade shape.\nFade shapes: Linear, Fast Start, Fast End, Fast Start Steep, Fast End Steep, Slow Start/End, Slow Start/End Steep.",
+    body = "Drag fade handles at item edges to adjust fade in/out length.\nSet fade positions via configurable shortcuts (see Shortcuts tab, default: Shift+Mouse 4/5).\nAlt+drag fade curve to adjust curve tension.\nRight-click fade handle to pick fade shape.\nFade shapes: Linear, Fast Start, Fast End, Fast Start Steep, Fast End Steep, Slow Start/End, Slow Start/End Steep.",
   },
   {
     header = "AUDIO PREVIEW",

@@ -3255,55 +3255,54 @@ local function loop()
             state.env_rect_sel_activated = false
           end
 
-          -- Mouse button 4/5 quick marker positioning
+          -- Mouse button quick marker/fade positioning (configurable shortcuts)
           if mouse_in_waveform or mouse_in_marker_area then
-            local clicked_mouse4 = reaper.ImGui_IsMouseClicked(ctx, 4)
-            local clicked_mouse5 = reaper.ImGui_IsMouseClicked(ctx, 3)
+            local set_start = settings.check_shortcut(ctx, "set_start_marker")
+            local set_end = settings.check_shortcut(ctx, "set_end_marker")
+            local set_fi = settings.check_shortcut(ctx, "set_fade_in")
+            local set_fo = settings.check_shortcut(ctx, "set_fade_out")
 
-            if clicked_mouse4 or clicked_mouse5 then
+            if set_fi or set_fo then
               local click_time = px_to_time(mouse_x)
+              reaper.Undo_BeginBlock()
 
-              if shift_held then
-                -- Set fade length so fade boundary lands at click position
-                reaper.Undo_BeginBlock()
-
-                if clicked_mouse4 then
-                  -- Fade-in ends at click position
-                  local new_fi = (click_time - start_offset) / playrate
-                  new_fi = math.max(0, math.min(item_length, new_fi))
-                  local fo = fade_out_len
-                  if new_fi + fo > item_length then
-                    fo = math.max(0, item_length - new_fi)
-                  end
-                  reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", new_fi)
-                  reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN_AUTO", 0)
-                  reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
-                  reaper.UpdateArrange()
-                  reaper.Undo_EndBlock("NVSD_ItemView: Set fade-in position", -1)
-
-                elseif clicked_mouse5 then
-                  -- Fade-out starts at click position
-                  local current_end = start_offset + source_item_length
-                  local new_fo = (current_end - click_time) / playrate
-                  new_fo = math.max(0, math.min(item_length, new_fo))
-                  local fi = fade_in_len
-                  if fi + new_fo > item_length then
-                    fi = math.max(0, item_length - new_fo)
-                  end
-                  reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", new_fo)
-                  reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN_AUTO", 0)
-                  reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
-                  reaper.UpdateArrange()
-                  reaper.Undo_EndBlock("NVSD_ItemView: Set fade-out position", -1)
+              if set_fi then
+                -- Fade-in ends at click position
+                local new_fi = (click_time - start_offset) / playrate
+                new_fi = math.max(0, math.min(item_length, new_fi))
+                local fo = fade_out_len
+                if new_fi + fo > item_length then
+                  fo = math.max(0, item_length - new_fi)
                 end
+                reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", new_fi)
+                reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN_AUTO", 0)
+                reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
+                reaper.UpdateArrange()
+                reaper.Undo_EndBlock("NVSD_ItemView: Set fade-in position", -1)
 
-              else
-                -- Existing marker positioning logic
+              elseif set_fo then
+                -- Fade-out starts at click position
                 local current_end = start_offset + source_item_length
+                local new_fo = (current_end - click_time) / playrate
+                new_fo = math.max(0, math.min(item_length, new_fo))
+                local fi = fade_in_len
+                if fi + new_fo > item_length then
+                  fi = math.max(0, item_length - new_fo)
+                end
+                reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", new_fo)
+                reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN_AUTO", 0)
+                reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
+                reaper.UpdateArrange()
+                reaper.Undo_EndBlock("NVSD_ItemView: Set fade-out position", -1)
+              end
 
-                reaper.Undo_BeginBlock()
+            elseif set_start or set_end then
+              local click_time = px_to_time(mouse_x)
+              local current_end = start_offset + source_item_length
 
-                if clicked_mouse4 then
+              reaper.Undo_BeginBlock()
+
+              if set_start then
                   local new_start = click_time
                   new_start = math.min(new_start, current_end - 0.01)
                   local new_source_length = current_end - new_start
@@ -3344,7 +3343,7 @@ local function loop()
                   reaper.UpdateArrange()
                   reaper.Undo_EndBlock("NVSD_ItemView: Set start marker", -1)
 
-                elseif clicked_mouse5 then
+                elseif set_end then
                   local new_end = click_time
                   new_end = math.max(new_end, start_offset + 0.01)
                   local new_source_length = new_end - start_offset

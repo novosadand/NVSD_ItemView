@@ -27,6 +27,10 @@ settings.DEFAULT_SHORTCUTS = {
   show_pan_env = {ctrl = false, shift = true, alt = false, key = "P"},
   hide_envelopes = {ctrl = false, shift = false, alt = false, key = "H"},
   open_settings = {ctrl = false, shift = false, alt = false, key = "S"},
+  set_start_marker = {ctrl = false, shift = false, alt = false, key = "Mouse4"},
+  set_end_marker = {ctrl = false, shift = false, alt = false, key = "Mouse5"},
+  set_fade_in = {ctrl = false, shift = true, alt = false, key = "Mouse4"},
+  set_fade_out = {ctrl = false, shift = true, alt = false, key = "Mouse5"},
 }
 
 -- Map key names to ImGui key getter function names (created once at module load)
@@ -57,6 +61,8 @@ local KEY_NAME_TO_FUNC = {
   ["Num4"] = "ImGui_Key_Keypad4", ["Num5"] = "ImGui_Key_Keypad5",
   ["Num6"] = "ImGui_Key_Keypad6", ["Num7"] = "ImGui_Key_Keypad7",
   ["Num8"] = "ImGui_Key_Keypad8", ["Num9"] = "ImGui_Key_Keypad9",
+  -- Mouse buttons (handled specially via IsMouseClicked, not IsKeyPressed)
+  Mouse4 = "MOUSE_4", Mouse5 = "MOUSE_5",
 }
 
 -- Cache resolved ImGui key integer values (populated on first use, avoids repeated C calls)
@@ -85,15 +91,22 @@ local BINDABLE_KEYS = {
   "F1","F2","F3","F4","F5","F6","F7","F8","F9","F10","F11","F12",
   "Space","Enter","Tab","Insert","Home","End","PageUp","PageDown",
   "Num0","Num1","Num2","Num3","Num4","Num5","Num6","Num7","Num8","Num9",
+  "Mouse4","Mouse5",
 }
 
 -- Check which bindable key was pressed this frame (for capture mode)
 -- Returns key name string or nil
 function settings.capture_pressed_key(ctx)
+  -- Check mouse buttons first
+  if reaper.ImGui_IsMouseClicked(ctx, 4) then return "Mouse4" end
+  if reaper.ImGui_IsMouseClicked(ctx, 3) then return "Mouse5" end
+  -- Check keyboard keys
   for _, key_name in ipairs(BINDABLE_KEYS) do
-    local imgui_key = get_imgui_key(key_name)
-    if imgui_key and reaper.ImGui_IsKeyPressed(ctx, imgui_key) then
-      return key_name
+    if key_name ~= "Mouse4" and key_name ~= "Mouse5" then
+      local imgui_key = get_imgui_key(key_name)
+      if imgui_key and reaper.ImGui_IsKeyPressed(ctx, imgui_key) then
+        return key_name
+      end
     end
   end
   return nil
@@ -886,6 +899,9 @@ function settings.format_shortcut(shortcut)
   return table.concat(parts, "+")
 end
 
+-- Mouse button index map (ImGui button indices: 3=X2/Mouse5, 4=X1/Mouse4 on this hardware)
+local MOUSE_BUTTON_MAP = { Mouse4 = 4, Mouse5 = 3 }
+
 -- Check if a shortcut matches current key state
 function settings.check_shortcut(ctx, name)
   if settings.listening then return false end
@@ -903,6 +919,12 @@ function settings.check_shortcut(ctx, name)
   if reaper.ImGui_IsKeyDown(ctx, MOD_CTRL) ~= shortcut.ctrl then return false end
   if reaper.ImGui_IsKeyDown(ctx, MOD_SHIFT) ~= shortcut.shift then return false end
   if reaper.ImGui_IsKeyDown(ctx, MOD_ALT) ~= shortcut.alt then return false end
+
+  -- Mouse buttons use IsMouseClicked instead of IsKeyPressed
+  local mouse_btn = MOUSE_BUTTON_MAP[shortcut.key]
+  if mouse_btn then
+    return reaper.ImGui_IsMouseClicked(ctx, mouse_btn)
+  end
 
   local imgui_key = get_imgui_key(shortcut.key)
   if not imgui_key then return false end
