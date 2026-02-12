@@ -9,7 +9,6 @@
 [![YouTube](https://img.shields.io/badge/YouTube-andrej__novosad-red?style=flat&logo=youtube&logoColor=white)](https://www.youtube.com/@andrej_novosad)
 [![SoundCloud](https://img.shields.io/badge/SoundCloud-andrej__novosad-orange?style=flat&logo=soundcloud&logoColor=white)](https://soundcloud.com/andrej_novosad)
 [![Instagram](https://img.shields.io/badge/Instagram-andrej____novosad-E4405F?style=flat&logo=instagram&logoColor=white)](https://www.instagram.com/andrej__novosad)
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-andrejnovosad-FFDD00?style=flat&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/andrejnovosad)
 
 ## TL;DR
 
@@ -183,6 +182,6 @@ Right-click the window title bar > Dock window > Choose position (top, bottom, l
 
 ## Support
 
-If you find this tool useful, consider supporting development:
+If you find this tool useful, you can consider supporting me develop it further by buying me a coffee, thank you!
 
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-andrejnovosad-FFDD00?style=flat&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/andrejnovosad)
