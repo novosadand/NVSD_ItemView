@@ -327,13 +327,16 @@ local function loop()
     if reaper_is_active and settings.check_shortcut(ctx, "zoom_in") then
       state.zoom_level = math.min(500.0, state.zoom_level * 1.5)
       state.zoom_to_markers_active = false
+      state.zoom_to_selection_active = false
     elseif reaper_is_active and settings.check_shortcut(ctx, "zoom_out") then
       state.zoom_level = math.max(1.0, state.zoom_level / 1.5)
       state.zoom_to_markers_active = false
+      state.zoom_to_selection_active = false
     elseif reaper_is_active and settings.check_shortcut(ctx, "reset_zoom") then
       state.zoom_level = 1.0
       state.pan_offset = 0
       state.zoom_to_markers_active = false
+      state.zoom_to_selection_active = false
     end
 
     -- Toggle envelope snap (configurable shortcut, default Ctrl+4)
@@ -942,6 +945,7 @@ local function loop()
             -- Reset pitch scroll
             state.pitch_view_offset = 0
             state.zoom_to_markers_active = false
+            state.zoom_to_selection_active = false
           end
 
           -- Detect external ext changes (undo, REAPER edits) and reset pan_offset
@@ -967,6 +971,35 @@ local function loop()
               state.pan_offset = marker_center - (ext_start + ext_end) / 2
               state.zoom_to_markers_active = true
             end
+            state.zoom_to_selection_active = false
+          end
+
+          -- Zoom to selected area (Alt+Z) - toggle
+          if reaper_is_active and settings.check_shortcut(ctx, "zoom_to_selection") and state.region_selected then
+            local sel_s = math.min(state.selection_start_time, state.selection_end_time)
+            local sel_e = math.max(state.selection_start_time, state.selection_end_time)
+            local sel_len = sel_e - sel_s
+            if state.zoom_to_selection_active then
+              state.zoom_level = state.zoom_before_selection or 1.0
+              state.pan_offset = state.pan_before_selection or 0
+              state.zoom_to_selection_active = false
+            elseif sel_len > 0 then
+              state.zoom_before_selection = state.zoom_level
+              state.pan_before_selection = state.pan_offset
+              state.zoom_level = math.min(500.0, ext_length / sel_len)
+              local sel_center = (sel_s + sel_e) / 2
+              state.pan_offset = sel_center - (ext_start + ext_end) / 2
+              state.zoom_to_selection_active = true
+            end
+            state.zoom_to_markers_active = false
+          end
+
+          -- Unzoom completely (Shift+Z)
+          if reaper_is_active and settings.check_shortcut(ctx, "unzoom_all") then
+            state.zoom_level = 1.0
+            state.pan_offset = 0
+            state.zoom_to_markers_active = false
+            state.zoom_to_selection_active = false
           end
 
           -- Compute view bounds
@@ -1853,6 +1886,7 @@ local function loop()
 
             state.zoom_level = math.max(min_zoom, math.min(500.0, new_zoom))
             state.zoom_to_markers_active = false
+            state.zoom_to_selection_active = false
 
             local new_view_length = zoom_base_view_length / state.zoom_level
 
@@ -1967,6 +2001,7 @@ local function loop()
             state.pan_start_mouse_x = mouse_x
             state.pan_start_offset = state.pan_offset
             state.zoom_to_markers_active = false
+            state.zoom_to_selection_active = false
           end
 
           if reaper.ImGui_IsMouseReleased(ctx, middle_mouse) then
