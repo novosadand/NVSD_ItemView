@@ -2315,10 +2315,11 @@ local function loop()
             end
           end
 
-          -- Start marker dragging (skip if fade drag already started this click)
+          -- Start marker dragging (skip if fade drag already started this click, or Ctrl+envelope freehand)
           if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_marker_area
               and not state.dragging_fade_in and not state.dragging_fade_out
-              and not state.is_ruler_dragging and not state.is_panning then
+              and not state.is_ruler_dragging and not state.is_panning
+              and not (ctrl_held and state.envelopes_visible) then
             if near_start then
               -- Compute drag_offset from post_drag_ext BEFORE clearing it (handles the case
               -- where snap_to_source_boundary made source_item_length == source_length exactly,
