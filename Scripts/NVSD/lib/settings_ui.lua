@@ -620,10 +620,28 @@ local function draw_shortcuts_tab(ctx, settings)
       reaper.ImGui_TableNextColumn(ctx)
       if not is_default then
         if reaper.ImGui_SmallButton(ctx, "R##reset_" .. name) then
-          if default then
+          if default and default.key ~= "" then
+            -- Check if the default binding conflicts with another shortcut
+            local conflict = settings.find_conflict(
+              ui_state.pending_shortcuts, name, default)
+            if conflict then
+              -- Reuse the conflict modal
+              ui_state.conflict_pending = {
+                target = name,
+                binding = {ctrl = default.ctrl, shift = default.shift,
+                           alt = default.alt, key = default.key},
+                conflict_name = conflict,
+              }
+            else
+              ui_state.pending_shortcuts[name] = {
+                ctrl = default.ctrl, shift = default.shift,
+                alt = default.alt, key = default.key,
+              }
+            end
+          elseif default then
+            -- Default is unbound, no conflict possible
             ui_state.pending_shortcuts[name] = {
-              ctrl = default.ctrl, shift = default.shift,
-              alt = default.alt, key = default.key,
+              ctrl = false, shift = false, alt = false, key = "",
             }
           end
           if ui_state.conflict_just_cleared == name then
