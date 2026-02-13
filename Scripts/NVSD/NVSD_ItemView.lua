@@ -2958,6 +2958,14 @@ local function loop()
                 -- In warp mode, drag coordinates are in pos-time
                 state.drag_current_start = 0
                 state.drag_current_end = item_length
+                -- Save original stretch markers for real-time shifting during drag
+                state.drag_start_warp_markers = {}
+                for _, sm in ipairs(state.warp_markers) do
+                  state.drag_start_warp_markers[#state.drag_start_warp_markers + 1] = {
+                    pos = sm.pos, srcpos = sm.srcpos
+                  }
+                end
+                state.drag_start_warp_map = state.warp_map
               else
                 state.drag_current_start = drag_offset
                 state.drag_current_end = drag_offset + source_item_length
@@ -4014,32 +4022,14 @@ local function loop()
               if is_warped_view then
                 state.post_drag_ext_start = nil
                 state.post_drag_ext_end = nil
-                -- Warp mode start marker: apply deferred trim on release
-                -- During drag we only updated the visual preview (drag_current_start).
-                -- Now shift all stretch markers and update D_LENGTH atomically.
-                if state.dragging_start and state.drag_current_start and state.drag_current_start > 0.001 then
-                  local delta = state.drag_current_start
-                  -- Get the source position at the trim point from the current warp map
-                  local new_srcpos = utils.warp_pos_to_src(state.warp_map, delta, playrate)
-                  local new_take_offset = new_srcpos - section_offset
-                  if source_length > 0 then new_take_offset = new_take_offset % source_length end
-                  -- Shift stretch markers by -delta, remove those that end up before pos=0
-                  local sm_count = reaper.GetTakeNumStretchMarkers(take)
-                  for si = sm_count - 1, 0, -1 do
-                    local _, pos, srcpos = reaper.GetTakeStretchMarker(take, si)
-                    local new_pos = pos - delta
-                    if new_pos < -0.001 then
-                      reaper.DeleteTakeStretchMarkers(take, si)
-                    else
-                      if new_pos < 0 then new_pos = 0 end
-                      reaper.SetTakeStretchMarker(take, si, new_pos, srcpos)
-                    end
-                  end
-                  reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
-                  reaper.SetMediaItemInfo_Value(item, "D_LENGTH", math.max(0.01, state.drag_start_length - delta))
+                -- Stretch markers were already shifted in real-time during drag.
+                -- Just mark item dirty for undo.
+                if state.dragging_start then
                   reaper.UpdateItemInProject(item)
-                  reaper.UpdateArrange()
                 end
+                -- Clean up saved warp state
+                state.drag_start_warp_markers = nil
+                state.drag_start_warp_map = nil
               else
                 state.post_drag_ext_start = state.drag_current_start
                 state.post_drag_ext_end = state.drag_current_end
@@ -4182,13 +4172,60 @@ local function loop()
 
             elseif set_start or set_end then
               local click_time = px_to_time(mouse_x)
-              -- Use unwrapped offset when available (px_to_time returns unwrapped/extended coords)
-              local effective_start = state.unwrapped_start_offset ~= nil and state.unwrapped_start_offset or start_offset
-              local current_end = effective_start + source_item_length
 
               reaper.Undo_BeginBlock()
 
-              if set_start then
+              if is_warped_view then
+                -- Warp mode: click_time is in pos-time
+                if set_start then
+                  local delta = click_time  -- pos-time offset from current start
+                  delta = math.min(delta, item_length - 0.01)
+                  -- Shift stretch markers by -delta, remove those before pos=0
+                  local sm_count = reaper.GetTakeNumStretchMarkers(take)
+                  -- Save markers first (modifying in-place causes index issues)
+                  local saved = {}
+                  for si = 0, sm_count - 1 do
+                    local _, pos, srcpos = reaper.GetTakeStretchMarker(take, si)
+                    saved[#saved + 1] = { pos = pos, srcpos = srcpos }
+                  end
+                  -- Clear all
+                  for si = sm_count - 1, 0, -1 do
+                    reaper.DeleteTakeStretchMarkers(take, si)
+                  end
+                  -- Re-add shifted
+                  for _, sm in ipairs(saved) do
+                    local new_pos = sm.pos - delta
+                    if new_pos >= -0.001 then
+                      if new_pos < 0 then new_pos = 0 end
+                      reaper.SetTakeStretchMarker(take, -1, new_pos, sm.srcpos)
+                    end
+                  end
+                  -- Compute new D_STARTOFFS
+                  local new_srcpos = utils.warp_pos_to_src(state.warp_map, delta, playrate)
+                  new_srcpos = math.max(0, new_srcpos)
+                  local new_take_offset = new_srcpos - section_offset
+                  if source_length > 0 then new_take_offset = new_take_offset % source_length end
+                  reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
+                  reaper.SetMediaItemInfo_Value(item, "D_LENGTH", math.max(0.01, item_length - delta))
+                  reaper.UpdateItemInProject(item)
+                  reaper.UpdateArrange()
+                  reaper.Undo_EndBlock("NVSD_ItemView: Set start marker", -1)
+
+                elseif set_end then
+                  -- In warp mode, click_time is pos-time = item-time, set D_LENGTH directly
+                  local new_end = math.max(0.01, click_time)
+                  reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_end)
+                  reaper.UpdateArrange()
+                  reaper.Undo_EndBlock("NVSD_ItemView: Set end marker", -1)
+                end
+
+              else
+                -- Non-warp mode (original logic)
+                -- Use unwrapped offset when available (px_to_time returns unwrapped/extended coords)
+                local effective_start = state.unwrapped_start_offset ~= nil and state.unwrapped_start_offset or start_offset
+                local current_end = effective_start + source_item_length
+
+                if set_start then
                   local new_start = click_time
                   new_start = math.min(new_start, current_end - 0.01)
                   local new_source_length = current_end - new_start
@@ -4260,6 +4297,7 @@ local function loop()
                   reaper.UpdateArrange()
                   reaper.Undo_EndBlock("NVSD_ItemView: Set end marker", -1)
                 end
+              end
 
                 -- Reset view state so next frame reinitializes cleanly from new item dimensions
                 state.unwrapped_start_offset = nil
@@ -4382,12 +4420,11 @@ local function loop()
               new_start = mouse_x < wave_x and (edge_time - overflow_time) or (edge_time + overflow_time)
             end
 
-            if is_warped_view then
-              -- In warp mode: visual-only preview during drag.
-              -- Don't modify D_STARTOFFS or D_LENGTH here because stretch markers override
-              -- D_STARTOFFS and changing D_LENGTH mid-drag creates inconsistent state.
-              -- Actual REAPER state changes (shift stretch markers, update D_LENGTH) happen on release.
-              new_start = math.max(0, new_start)
+            if is_warped_view and state.drag_start_warp_markers then
+              -- In warp mode: shift stretch markers in real time.
+              -- Allow extending left (to source start) and trimming right.
+              local min_start = -(state.drag_start_offset / state.drag_start_playrate)
+              new_start = math.max(min_start, new_start)
               new_start = math.min(new_start, state.drag_start_length - 0.01)
               -- Snap to grid in pos-time
               if state.env_snap_enabled then
@@ -4411,11 +4448,35 @@ local function loop()
                   snapped_measure = measure + 1
                 end
                 local snapped_proj_t = reaper.TimeMap2_beatsToTime(0, snapped_beat, snapped_measure)
-                new_start = math.max(0, snapped_proj_t - item_position)
+                new_start = math.max(min_start, snapped_proj_t - item_position)
                 new_start = math.min(new_start, state.drag_start_length - 0.01)
               end
-              state.drag_current_start = new_start
-              state.drag_current_end = state.drag_start_length  -- end stays at original item_length
+              local delta = new_start
+              -- Clear all existing stretch markers
+              local sm_count = reaper.GetTakeNumStretchMarkers(take)
+              for si = sm_count - 1, 0, -1 do
+                reaper.DeleteTakeStretchMarkers(take, si)
+              end
+              -- Re-add shifted markers from saved originals
+              for _, sm in ipairs(state.drag_start_warp_markers) do
+                local new_pos = sm.pos - delta
+                if new_pos >= -0.001 then
+                  if new_pos < 0 then new_pos = 0 end
+                  reaper.SetTakeStretchMarker(take, -1, new_pos, sm.srcpos)
+                end
+              end
+              -- Compute new D_STARTOFFS from original warp map
+              local new_srcpos = utils.warp_pos_to_src(state.drag_start_warp_map, delta, state.drag_start_playrate)
+              new_srcpos = math.max(0, new_srcpos)
+              local new_take_offset = new_srcpos - section_offset
+              if source_length > 0 then new_take_offset = new_take_offset % source_length end
+              reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
+              local new_length = math.max(0.01, state.drag_start_length - delta)
+              reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_length)
+              -- Update drag_current in the NEW coordinate system (after shift)
+              state.drag_current_start = 0
+              state.drag_current_end = new_length
+              reaper.UpdateArrange()
             else
               local original_source_end = state.drag_start_offset + (state.drag_start_length * state.drag_start_playrate)
               new_start = snap_best(new_start, source_length, snap_threshold_time, state.drag_start_offset)
