@@ -3372,6 +3372,8 @@ local function loop()
                 state.slope_drag_start_mouse_y = mouse_y
                 state.slope_drag_start_slope = sm.slope or 0
                 state.slope_drag_activated = false
+                reaper.ShowConsoleMsg(string.format("[SLOPE DRAG] started seg=%d idx=%d slope=%.3f\n",
+                  state.slope_hovered_segment, sm.idx, sm.slope or 0))
               end
             end
           end
@@ -4155,6 +4157,7 @@ local function loop()
               if not state.slope_drag_activated then
                 if math.abs(mouse_y - state.slope_drag_start_mouse_y) >= 4 then
                   state.slope_drag_activated = true
+                  reaper.ShowConsoleMsg("[SLOPE DRAG] activated! dragging now\n")
                 end
               end
               if state.slope_drag_activated then
