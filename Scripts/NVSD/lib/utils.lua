@@ -384,7 +384,7 @@ function utils.build_warp_map(warp_markers)
   if not warp_markers or #warp_markers == 0 then return {} end
   local sorted = {}
   for _, sm in ipairs(warp_markers) do
-    sorted[#sorted + 1] = {pos = sm.pos, srcpos = sm.srcpos}
+    sorted[#sorted + 1] = {pos = sm.pos, srcpos = sm.srcpos, slope = sm.slope or 0}
   end
   table.sort(sorted, function(a, b) return a.pos < b.pos end)
   return sorted
@@ -408,7 +408,13 @@ function utils.warp_pos_to_src(warp_map, pos, playrate)
       local span = warp_map[i+1].pos - warp_map[i].pos
       if span < 0.000001 then return warp_map[i].srcpos end
       local t = (pos - warp_map[i].pos) / span
-      return warp_map[i].srcpos + t * (warp_map[i+1].srcpos - warp_map[i].srcpos)
+      local slope = warp_map[i].slope or 0
+      local delta_src = warp_map[i+1].srcpos - warp_map[i].srcpos
+      if math.abs(slope) < 0.001 then
+        return warp_map[i].srcpos + t * delta_src
+      else
+        return warp_map[i].srcpos + t * (1 - slope * (1 - t)) * delta_src
+      end
     end
   end
   return pos * (playrate or 1)
@@ -429,10 +435,23 @@ function utils.warp_src_to_pos(warp_map, srcpos, playrate)
   end
   for i = 1, #warp_map - 1 do
     if srcpos >= warp_map[i].srcpos and srcpos <= warp_map[i+1].srcpos then
-      local span = warp_map[i+1].srcpos - warp_map[i].srcpos
-      if span < 0.000001 then return warp_map[i].pos end
-      local t = (srcpos - warp_map[i].srcpos) / span
-      return warp_map[i].pos + t * (warp_map[i+1].pos - warp_map[i].pos)
+      local delta_src = warp_map[i+1].srcpos - warp_map[i].srcpos
+      local pos_span = warp_map[i+1].pos - warp_map[i].pos
+      if math.abs(delta_src) < 0.000001 then return warp_map[i].pos end
+      local slope = warp_map[i].slope or 0
+      if math.abs(slope) < 0.001 then
+        local t = (srcpos - warp_map[i].srcpos) / delta_src
+        return warp_map[i].pos + t * pos_span
+      else
+        local a = slope * delta_src
+        local b = (1 - slope) * delta_src
+        local c = -(srcpos - warp_map[i].srcpos)
+        local disc = b*b - 4*a*c
+        if disc < 0 then disc = 0 end
+        local t = (-b + math.sqrt(disc)) / (2 * a)
+        t = math.max(0, math.min(1, t))
+        return warp_map[i].pos + t * pos_span
+      end
     end
   end
   return srcpos / (playrate or 1)
