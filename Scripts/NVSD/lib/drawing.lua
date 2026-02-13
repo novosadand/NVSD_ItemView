@@ -2272,7 +2272,7 @@ function drawing.slope_handle_positions(wave_y, wave_h, slope, rate)
 end
 
 -- Get color for slope handle based on local playback rate at that endpoint
--- Red = compressed (rate > 1), Blue = stretched (rate < 1), Grey = neutral
+-- Red = stretched (rate < 1, audio slowed down), Blue = compressed (rate > 1, audio sped up), Grey = neutral
 function drawing.slope_handle_color(local_rate, hover_state)
   local alpha
   if hover_state == 2 then alpha = 0xFF
@@ -2280,9 +2280,9 @@ function drawing.slope_handle_color(local_rate, hover_state)
   else alpha = 0xBB end
 
   if local_rate > 1.05 then
-    return 0xD0503000 + alpha   -- red-orange (compressed/faster)
+    return 0x3070D000 + alpha   -- blue (compressed/faster)
   elseif local_rate < 0.95 then
-    return 0x3070D000 + alpha   -- blue (stretched/slower)
+    return 0xD0503000 + alpha   -- red-orange (stretched/slower)
   else
     return 0x90909000 + alpha   -- grey (neutral, rate ~ 1)
   end

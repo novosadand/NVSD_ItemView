@@ -1924,8 +1924,8 @@ local function loop()
           if state.warp_mode and #state.warp_markers > 1
               and mouse_in_waveform and not state.any_drag_active()
               and not (state.envelopes_visible and state.env_node_hovered_idx >= 0) then
-            local HIT_R = 18  -- radius for proximity check (generous for 4K)
-            local best_dist = HIT_R + 1
+            local HIT_X = 14  -- horizontal hit range from marker line
+            local HIT_Y = 14  -- vertical hit range from handle center
             for i = 1, #state.warp_markers - 1 do
               local sm1 = state.warp_markers[i]
               local sm2 = state.warp_markers[i + 1]
@@ -1934,19 +1934,15 @@ local function loop()
               local slope = sm1.slope or 0
               local rate = (sm2.pos ~= sm1.pos) and (sm2.srcpos - sm1.srcpos) / (sm2.pos - sm1.pos) or 1
               local y_left, y_right = drawing.slope_handle_positions(wave_y, waveform_height, slope, rate)
-              -- Check left handle (flat edge at marker line)
-              local dx, dy = mouse_x - px1, mouse_y - y_left
-              local dist = math.sqrt(dx * dx + dy * dy)
-              if dist < best_dist then
-                best_dist = dist
+              -- Check left handle (right-pointing triangle at left marker)
+              if math.abs(mouse_x - px1) <= HIT_X and math.abs(mouse_y - y_left) <= HIT_Y then
                 state.slope_hovered_segment = i
+                break
               end
-              -- Check right handle (flat edge at marker line)
-              dx, dy = mouse_x - px2, mouse_y - y_right
-              dist = math.sqrt(dx * dx + dy * dy)
-              if dist < best_dist then
-                best_dist = dist
+              -- Check right handle (left-pointing triangle at right marker)
+              if math.abs(mouse_x - px2) <= HIT_X and math.abs(mouse_y - y_right) <= HIT_Y then
                 state.slope_hovered_segment = i
+                break
               end
             end
           end
@@ -5232,6 +5228,8 @@ local function loop()
 
           -- Slope curves and handles at warp markers (warp mode only)
           if state.warp_mode and #state.warp_markers > 1 then
+            -- Clip to waveform area so curves/handles don't bleed outside
+            reaper.ImGui_DrawList_PushClipRect(draw_list, wave_x, wave_y, wave_x + waveform_width, wave_y + waveform_height, true)
             for i = 1, #state.warp_markers - 1 do
               local sm1 = state.warp_markers[i]
               local sm2 = state.warp_markers[i + 1]
@@ -5256,6 +5254,7 @@ local function loop()
               drawing.draw_slope_handle(draw_list, px1, y_left, 1, rate_left, hover_state)
               drawing.draw_slope_handle(draw_list, px2, y_right, -1, rate_right, hover_state)
             end
+            reaper.ImGui_DrawList_PopClipRect(draw_list)
           end
 
           -- Fade drag indicator: vertical line showing current fade boundary
