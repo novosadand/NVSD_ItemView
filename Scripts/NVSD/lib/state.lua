@@ -139,6 +139,14 @@ state.warp_drag_start_srcpos = 0
 state.warp_drag_activated = false
 state.warp_drag_start_view_start = 0
 state.warp_drag_start_view_length = 0
+-- Slope curve hover/drag (waveform-based)
+state.slope_hovered_segment = -1        -- warp_markers index of left marker of hovered segment
+state.slope_dragging = false
+state.slope_drag_marker_idx = -1        -- REAPER stretch marker index (sm.idx)
+state.slope_drag_segment = -1           -- warp_markers array index of left marker
+state.slope_drag_start_mouse_y = 0
+state.slope_drag_start_slope = 0
+state.slope_drag_activated = false
 
 -- Transient detection
 state.transients = {}
@@ -326,6 +334,21 @@ function state.reset_all_drags()
   state.env_multi_drag_all_points = {}
   state.dragging_warp_marker = false
   state.warp_drag_activated = false
+  state.slope_dragging = false
+  state.slope_drag_activated = false
+end
+
+-- Stop any active audio preview (CF_Preview or REAPER transport)
+function state.stop_preview()
+  if not state.preview_active then return end
+  if state.preview_via_transport then
+    reaper.Main_OnCommand(1016, 0) -- Transport: Stop
+    state.preview_via_transport = false
+  elseif state.preview_handle then
+    reaper.CF_Preview_Stop(state.preview_handle)
+    state.preview_handle = nil
+  end
+  state.preview_active = false
 end
 
 -- Check if any interactive drag is active (markers, fades, envelopes, panning, etc.)
@@ -340,6 +363,7 @@ function state.any_drag_active()
       or state.fx_dragging or state.env_rect_selecting
       or state.pitch_gutter_dragging
       or state.dragging_warp_marker
+      or state.slope_dragging
       or state.is_any_control_dragging()
 end
 

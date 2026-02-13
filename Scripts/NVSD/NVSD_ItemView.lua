@@ -210,11 +210,7 @@ local function loop()
       state.was_mouse_down = false
       state.invalidate_view_peaks()
       -- Stop audio preview on dialog recovery
-      if state.preview_active and state.preview_handle and reaper.CF_Preview_Stop then
-        reaper.CF_Preview_Stop(state.preview_handle)
-      end
-      state.preview_handle = nil
-      state.preview_active = false
+      state.stop_preview()
       state.preview_start_requested = false
     end
     reaper.defer(loop)
@@ -271,9 +267,7 @@ local function loop()
   -- Toggle close: another instance signaled us to close
   if reaper.GetExtState("NVSD_ItemView", "close_requested") == "1" then
     reaper.DeleteExtState("NVSD_ItemView", "close_requested", false)
-    if state.preview_active and state.preview_handle and reaper.CF_Preview_Stop then
-      reaper.CF_Preview_Stop(state.preview_handle)
-    end
+    state.stop_preview()
     return
   end
 
@@ -305,10 +299,8 @@ local function loop()
     -- Forward Space to REAPER transport (so playback works without clicking back to timeline)
     -- Plain Space while preview is playing: stop preview instead of toggling transport
     elseif reaper_is_active and not settings.listening and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Space()) then
-      if state.preview_active and state.preview_handle then
-        reaper.CF_Preview_Stop(state.preview_handle)
-        state.preview_handle = nil
-        state.preview_active = false
+      if state.preview_active then
+        state.stop_preview()
       else
         reaper.Main_OnCommand(40044, 0)  -- Transport: Play/Stop
       end
@@ -468,12 +460,8 @@ local function loop()
         state.sticky_item = nil
         state.sticky_item_valid = false
         state.sticky_validation_counter = 0
-        if state.preview_active and state.preview_handle then
-          reaper.CF_Preview_Stop(state.preview_handle)
-        end
+        state.stop_preview()
         state.preview_cursor_pos = nil
-        state.preview_handle = nil
-        state.preview_active = false
         state.preview_item = nil
         state.region_selected = false
         state.selecting_region = false
@@ -781,6 +769,15 @@ local function loop()
 
           local start_offset = section_offset + take_offset
 
+          -- During warp marker drag: freeze item properties to prevent REAPER's
+          -- internal recalculations from shifting the view frame-to-frame
+          if state.dragging_warp_marker and state.warp_drag_activated
+              and state.warp_drag_start_item_position then
+            item_position = state.warp_drag_start_item_position
+            item_length = state.warp_drag_start_item_length
+            start_offset = state.warp_drag_start_start_offset
+          end
+
           if source_length <= 0 then
             source_length = item_length
           end
@@ -1024,7 +1021,13 @@ local function loop()
 
           -- Extended view range (source-time or pos-time when warped)
           local ext_start, ext_end, ext_length
-          if is_warped_view then
+          if state.dragging_warp_marker and state.warp_drag_activated
+              and state.warp_drag_start_ext_start then
+            -- During warp marker drag: freeze ext to prevent view jitter
+            ext_start = state.warp_drag_start_ext_start
+            ext_end = state.warp_drag_start_ext_end
+            ext_length = ext_end - ext_start
+          elseif is_warped_view then
             -- In warped view, the axis is item-time (pos-space).
             -- Map full source extent into pos-time so the user can zoom out
             -- to see the entire source audio, with start/end markers showing the crop.
@@ -1340,16 +1343,30 @@ local function loop()
             end
           end
 
-          -- Compute view bounds
-          local view_length = ext_length / state.zoom_level
+          -- Compute view bounds.
+          -- During active marker drag, pin to frozen coordinates so the view
+          -- doesn't jump as ext grows/shifts with the drag.
           local range_center = (ext_start + ext_end) / 2
-          local view_center = range_center + state.pan_offset
-          local view_start = view_center - view_length / 2
-          local view_end = view_start + view_length
-          if view_start < ext_start then view_start = ext_start; view_end = ext_start + view_length end
-          if view_end > ext_end then view_end = ext_end; view_start = ext_end - view_length end
-          if view_start < ext_start then view_start = ext_start end
-          view_length = view_end - view_start
+          local view_length, view_start, view_end
+          if (state.dragging_start or state.dragging_end) and state.marker_drag_activated
+              and state.drag_start_view_length then
+            view_length = state.drag_start_view_length
+            view_start = state.drag_start_view_start
+            view_end = view_start + view_length
+          elseif state.dragging_warp_marker and state.warp_drag_activated then
+            view_length = state.warp_drag_start_view_length
+            view_start = state.warp_drag_start_view_start
+            view_end = view_start + view_length
+          else
+            view_length = ext_length / state.zoom_level
+            local view_center = range_center + state.pan_offset
+            view_start = view_center - view_length / 2
+            view_end = view_start + view_length
+            if view_start < ext_start then view_start = ext_start; view_end = ext_start + view_length end
+            if view_end > ext_end then view_end = ext_end; view_start = ext_end - view_length end
+            if view_start < ext_start then view_start = ext_start end
+            view_length = view_end - view_start
+          end
           if view_length <= 0 then view_length = 0.001 end
 
           -- Per-view peak loading: load exactly screen-width peaks for the visible range.
@@ -1453,6 +1470,10 @@ local function loop()
                 and state.drag_start_src_pos_start then
               state.wf_bounds_start = state.drag_start_src_pos_start
               state.wf_bounds_end = state.drag_start_src_pos_end
+            elseif state.dragging_warp_marker and state.warp_drag_activated
+                and state.warp_drag_start_wf_bounds_start then
+              state.wf_bounds_start = state.warp_drag_start_wf_bounds_start
+              state.wf_bounds_end = state.warp_drag_start_wf_bounds_end
             else
               state.wf_bounds_start = utils.warp_src_to_pos(state.warp_map, 0, playrate)
               state.wf_bounds_end = utils.warp_src_to_pos(state.warp_map, source_length, playrate)
@@ -1555,6 +1576,8 @@ local function loop()
             -- Draw transient ticks (skip those that have a stretch marker nearby)
             if state.transients_computed then
               local best_dist = config.WARP_MARKER_HIT_RADIUS
+              local px_per_sec = view_length > 0 and (waveform_width / view_length) or 0
+              local transient_zoomed = px_per_sec > 500
               for i, t in ipairs(state.transients) do
                 -- Map transient source-time to display coordinate
                 local t_display = is_warped_view and utils.warp_src_to_pos(state.warp_map, t, playrate) or t
@@ -1574,7 +1597,7 @@ local function loop()
                         end
                       end
                       drawing.draw_transient(draw_list, t_px, warp_bar_y, warp_bar_height,
-                          state.transient_hovered_idx == i, config)
+                          state.transient_hovered_idx == i, config, transient_zoomed)
                     end
                   end
                 end
@@ -1896,6 +1919,24 @@ local function loop()
 
           end
 
+          -- Slope handle hover detection (triangle at each marker, warp mode only)
+          state.slope_hovered_segment = -1
+          if state.warp_mode and #state.warp_markers > 1
+              and mouse_in_waveform and not state.any_drag_active()
+              and not (state.envelopes_visible and state.env_node_hovered_idx >= 0) then
+            local HIT_HW = 7
+            local HIT_TOP = 20  -- how far above wave_y the hit zone extends
+            for i = 1, #state.warp_markers - 1 do
+              local sm = state.warp_markers[i]
+              local sm_px = is_warped_view and time_to_px(sm.pos) or time_to_px(sm.srcpos)
+              if math.abs(mouse_x - sm_px) <= HIT_HW
+                  and mouse_y >= wave_y - HIT_TOP and mouse_y <= wave_y + 4 then
+                state.slope_hovered_segment = i
+                break
+              end
+            end
+          end
+
           -- Draw original source boundary markers in ruler
           -- (reuse wf_bounds computed earlier for draw_waveform; nil in non-warp mode → defaults to 0/source_length)
           local COLOR_SOURCE_MARKER = 0xFFAA44FF
@@ -2200,6 +2241,7 @@ local function loop()
               and not mouse_in_fade_in_body and not mouse_in_fade_out_body
               and not (state.envelopes_visible and state.env_node_hovered_idx >= 0)
               and not (state.envelopes_visible and state.envelope_hovered_segment >= 0)
+              and not (state.warp_mode and state.slope_hovered_segment > 0)
 
           -- Cursor feedback (alt_held cached at top of frame)
           -- Warp bar cursors
@@ -2207,6 +2249,11 @@ local function loop()
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
           elseif mouse_in_warp_bar and state.warp_marker_hovered_idx > 0 then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
+          elseif state.slope_dragging then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
+          elseif state.slope_hovered_segment > 0
+              and not (state.envelopes_visible and state.envelope_hovered_segment >= 0) then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
           elseif mouse_in_warp_bar and state.transient_hovered_idx > 0 then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
           -- Fade grabs use Hand cursor to distinguish from marker's ResizeEW
@@ -2286,23 +2333,6 @@ local function loop()
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
           elseif ctrl_held and alt_held and mouse_in_waveform and not we_are_dragging then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())
-          elseif ctrl_held and not alt_held and mouse_in_waveform and not we_are_dragging
-              and not state.envelopes_visible then
-            -- Custom drawn cursor: arrow pointing left (start marker) or right (end marker)
-            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
-            local cx, cy = mouse_x, mouse_y
-            local cc = 0xFFAA44FF  -- orange, matching bracket color
-            if shift_held then
-              -- Right-pointing arrow (end marker): ▶|
-              reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-                cx - 4, cy - 6, cx - 4, cy + 6, cx + 6, cy, cc)
-              reaper.ImGui_DrawList_AddLine(draw_list, cx + 8, cy - 7, cx + 8, cy + 7, cc, 2.0)
-            else
-              -- Left-pointing arrow (start marker): |◀
-              reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-                cx + 4, cy - 6, cx + 4, cy + 6, cx - 6, cy, cc)
-              reaper.ImGui_DrawList_AddLine(draw_list, cx - 8, cy - 7, cx - 8, cy + 7, cc, 2.0)
-            end
           end
 
           -- Tooltips for interactive elements (only when not actively dragging)
@@ -2366,13 +2396,21 @@ local function loop()
               if sm then
                 local time_str = utils.format_source_time(sm.srcpos, true)
                 drawing.tooltip(ctx, "warp_marker_" .. sm.idx,
-                    time_str .. "\nDrag: adjust timing\nDbl-click: delete\nDel: delete")
+                    time_str .. "\nDrag: adjust timing\nShift+drag: slide source\nDbl-click: delete")
               end
             elseif mouse_in_warp_bar and state.transient_hovered_idx > 0 then
               local t = state.transients[state.transient_hovered_idx]
               if t then
                 drawing.tooltip(ctx, "transient_" .. state.transient_hovered_idx,
                     utils.format_source_time(t, true) .. "\nDouble-click: add stretch marker")
+              end
+            elseif state.slope_hovered_segment > 0
+                and not (state.envelopes_visible and state.envelope_hovered_segment >= 0) then
+              local sm = state.warp_markers[state.slope_hovered_segment]
+              if sm then
+                local slope_pct = string.format("%.0f%%", (sm.slope or 0) * 100)
+                drawing.tooltip(ctx, "slope_" .. state.slope_hovered_segment,
+                    "Slope: " .. slope_pct .. "\nDrag vertical: adjust\nDbl-click: reset")
               end
             -- Ruler tooltip
             elseif mouse_in_ruler then
@@ -2712,8 +2750,16 @@ local function loop()
               state.warp_drag_start_pos = sm.pos
               state.warp_drag_start_srcpos = sm.srcpos
               state.warp_drag_activated = false
+              state.warp_drag_shift = shift_held  -- Shift+drag: slide source under marker
               state.warp_drag_start_view_start = view_start
               state.warp_drag_start_view_length = view_length
+              state.warp_drag_start_ext_start = ext_start
+              state.warp_drag_start_ext_end = ext_end
+              state.warp_drag_start_wf_bounds_start = state.wf_bounds_start
+              state.warp_drag_start_wf_bounds_end = state.wf_bounds_end
+              state.warp_drag_start_item_position = item_position
+              state.warp_drag_start_item_length = item_length
+              state.warp_drag_start_start_offset = start_offset
               -- Select clicked marker
               state.warp_marker_selected_idx = sm.idx
             end
@@ -2750,6 +2796,13 @@ local function loop()
                     state.warp_drag_activated = true  -- already past threshold
                     state.warp_drag_start_view_start = view_start
                     state.warp_drag_start_view_length = view_length
+                    state.warp_drag_start_ext_start = ext_start
+                    state.warp_drag_start_ext_end = ext_end
+                    state.warp_drag_start_wf_bounds_start = state.wf_bounds_start
+                    state.warp_drag_start_wf_bounds_end = state.wf_bounds_end
+                    state.warp_drag_start_item_position = item_position
+                    state.warp_drag_start_item_length = item_length
+                    state.warp_drag_start_start_offset = start_offset
                     state.warp_marker_selected_idx = sm.idx
                     break
                   end
@@ -2772,52 +2825,84 @@ local function loop()
             end
           end
 
-          -- Warp marker drag: execution (move pos, srcpos stays fixed)
+          -- Warp marker drag: execution
+          -- Normal drag: move pos (timeline position), srcpos stays fixed.
+          -- Shift+drag: pos stays fixed, srcpos (source mapping) slides under marker.
           if state.dragging_warp_marker and state.warp_drag_activated
               and reaper.ImGui_IsMouseDown(ctx, 0) then
             local mouse_delta_px = mouse_x - state.warp_drag_start_mouse_x
             local mouse_delta_time = (mouse_delta_px / waveform_width) * state.warp_drag_start_view_length
-            local new_pos = state.warp_drag_start_pos + mouse_delta_time
 
-            -- Snap pos to grid when snap is enabled
-            if state.env_snap_enabled then
-              local proj_t = item_position + new_pos
-              local bpm, bpi = reaper.GetProjectTimeSignature2(0, proj_t)
-              local beats_per_bar = math.floor(bpi)
-              if beats_per_bar < 1 then beats_per_bar = 4 end
-              local avg_bar_duration = 60 / bpm * beats_per_bar
-              local px_per_bar = (avg_bar_duration / view_length) * waveform_width
-              local px_per_beat = px_per_bar / beats_per_bar
-              local finest_sub = 1
-              while (px_per_beat / (finest_sub * 2)) >= 42 do
-                finest_sub = finest_sub * 2
+            if state.warp_drag_shift then
+              -- Shift+drag: slide source audio under the marker.
+              -- Marker pos stays fixed; srcpos changes by the delta (scaled by playrate).
+              -- Dragging right = source slides right = srcpos decreases (earlier audio at this point).
+              local srcpos_delta = -mouse_delta_time * playrate
+              local new_srcpos = state.warp_drag_start_srcpos + srcpos_delta
+
+              -- Constrain: don't cross adjacent markers' srcpos values.
+              -- This keeps the source-time ordering consistent.
+              local sm_count = reaper.GetTakeNumStretchMarkers(take)
+              local prev_srcpos, next_srcpos = 0, source_length
+              for si = 0, sm_count - 1 do
+                if si ~= state.warp_drag_idx then
+                  local _, spos, ssrc = reaper.GetTakeStretchMarker(take, si)
+                  if spos < state.warp_drag_start_pos and ssrc > prev_srcpos then prev_srcpos = ssrc end
+                  if spos > state.warp_drag_start_pos and ssrc < next_srcpos then next_srcpos = ssrc end
+                end
               end
-              local snap_unit = 1 / finest_sub
-              local beat_in_measure, measure = reaper.TimeMap2_timeToBeats(0, proj_t)
-              local snapped_beat = math.floor(beat_in_measure / snap_unit + 0.5) * snap_unit
-              local snapped_measure = measure
-              if snapped_beat >= beats_per_bar then
-                snapped_beat = snapped_beat - beats_per_bar
-                snapped_measure = measure + 1
+              new_srcpos = math.max(prev_srcpos + 0.001, math.min(next_srcpos - 0.001, new_srcpos))
+              new_srcpos = math.max(0, math.min(source_length, new_srcpos))
+
+              reaper.SetTakeStretchMarker(take, state.warp_drag_idx, state.warp_drag_start_pos, new_srcpos)
+            else
+              -- Normal drag: move pos, srcpos stays fixed
+              local new_pos = state.warp_drag_start_pos + mouse_delta_time
+
+              -- Snap pos to grid when snap is enabled
+              if state.env_snap_enabled then
+                local proj_t = item_position + new_pos
+                local bpm, bpi = reaper.GetProjectTimeSignature2(0, proj_t)
+                local beats_per_bar = math.floor(bpi)
+                if beats_per_bar < 1 then beats_per_bar = 4 end
+                local avg_bar_duration = 60 / bpm * beats_per_bar
+                local px_per_bar = (avg_bar_duration / view_length) * waveform_width
+                local px_per_beat = px_per_bar / beats_per_bar
+                local finest_sub = 1
+                while (px_per_beat / (finest_sub * 2)) >= 42 do
+                  finest_sub = finest_sub * 2
+                end
+                local snap_unit = 1 / finest_sub
+                local beat_in_measure, measure = reaper.TimeMap2_timeToBeats(0, proj_t)
+                local snapped_beat = math.floor(beat_in_measure / snap_unit + 0.5) * snap_unit
+                local snapped_measure = measure
+                if snapped_beat >= beats_per_bar then
+                  snapped_beat = snapped_beat - beats_per_bar
+                  snapped_measure = measure + 1
+                end
+                local snapped_proj_t = reaper.TimeMap2_beatsToTime(0, snapped_beat, snapped_measure)
+                new_pos = snapped_proj_t - item_position
               end
-              local snapped_proj_t = reaper.TimeMap2_beatsToTime(0, snapped_beat, snapped_measure)
-              new_pos = snapped_proj_t - item_position
+
+              -- Constrain: don't cross adjacent markers
+              local sm_count = reaper.GetTakeNumStretchMarkers(take)
+              local prev_pos, next_pos = -math.huge, math.huge
+              for si = 0, sm_count - 1 do
+                if si ~= state.warp_drag_idx then
+                  local _, spos = reaper.GetTakeStretchMarker(take, si)
+                  if spos < state.warp_drag_start_pos and spos > prev_pos then prev_pos = spos end
+                  if spos > state.warp_drag_start_pos and spos < next_pos then next_pos = spos end
+                end
+              end
+              new_pos = math.max(prev_pos + 0.001, math.min(next_pos - 0.001, new_pos))
+
+              reaper.SetTakeStretchMarker(take, state.warp_drag_idx, new_pos, state.warp_drag_start_srcpos)
             end
-
-            -- Constrain: don't cross adjacent markers
-            local sm_count = reaper.GetTakeNumStretchMarkers(take)
-            local prev_pos, next_pos = -math.huge, math.huge
-            for si = 0, sm_count - 1 do
-              if si ~= state.warp_drag_idx then
-                local _, spos = reaper.GetTakeStretchMarker(take, si)
-                if spos < state.warp_drag_start_pos and spos > prev_pos then prev_pos = spos end
-                if spos > state.warp_drag_start_pos and spos < next_pos then next_pos = spos end
-              end
-            end
-            new_pos = math.max(prev_pos + 0.001, math.min(next_pos - 0.001, new_pos))
-
-            reaper.SetTakeStretchMarker(take, state.warp_drag_idx, new_pos, state.warp_drag_start_srcpos)
-            reaper.UpdateArrange()
+            -- Don't call UpdateArrange() during drag: it causes REAPER to recalculate
+            -- item properties (D_STARTOFFS, D_POSITION) which shifts the view on the
+            -- next frame, creating an oscillation feedback loop with snap.
+            -- UpdateArrange is called on drag release instead.
+            reaper.UpdateItemInProject(item)
             state.warp_markers = utils.get_stretch_markers(take)
           end
 
@@ -3255,6 +3340,32 @@ local function loop()
             end
           end
 
+          -- Slope curve drag: click on hovered slope curve (no modifier)
+          if reaper.ImGui_IsMouseClicked(ctx, 0) and state.slope_hovered_segment > 0
+              and not state.any_drag_active()
+              and not (state.envelopes_visible and state.envelope_hovered_segment >= 0)
+              and not near_start and not near_end
+              and not near_fade_in and not near_fade_out then
+            local sm = state.warp_markers[state.slope_hovered_segment]
+            if sm then
+              if reaper.ImGui_IsMouseDoubleClicked(ctx, 0) then
+                -- Double-click: reset slope to 0
+                reaper.SetTakeStretchMarkerSlope(take, sm.idx, 0)
+                reaper.UpdateItemInProject(item)
+                reaper.UpdateArrange()
+                state.warp_markers = utils.get_stretch_markers(take)
+                reaper.Undo_OnStateChangeEx("NVSD_ItemView: Reset stretch marker slope", -1, -1)
+              else
+                state.slope_dragging = true
+                state.slope_drag_marker_idx = sm.idx
+                state.slope_drag_segment = state.slope_hovered_segment
+                state.slope_drag_start_mouse_y = mouse_y
+                state.slope_drag_start_slope = sm.slope or 0
+                state.slope_drag_activated = false
+              end
+            end
+          end
+
           -- Region selection: click+drag in waveform (sample & envelope tabs)
           if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_waveform
               and not (state.envelopes_visible
@@ -3266,6 +3377,7 @@ local function loop()
               and not state.dragging_fade_curve_in and not state.dragging_fade_curve_out
               and not near_start and not near_end
               and not near_fade_in and not near_fade_out
+              and not (state.slope_hovered_segment > 0)
               and not alt_held and not shift_held then
             state.selecting_region = true
             state.selection_drag_activated = false
@@ -3317,11 +3429,7 @@ local function loop()
               if not state.cue_label_hovered then
                 state.region_selected = false
                 state.preview_cursor_pos = px_to_time(mouse_x)
-                if state.preview_active and state.preview_handle then
-                  reaper.CF_Preview_Stop(state.preview_handle)
-                  state.preview_handle = nil
-                  state.preview_active = false
-                end
+                state.stop_preview()
               end
             end
           end
@@ -4032,6 +4140,23 @@ local function loop()
               end
             end
 
+            -- Slope curve drag: threshold + execution
+            if state.slope_dragging and reaper.ImGui_IsMouseDown(ctx, 0) then
+              if not state.slope_drag_activated then
+                if math.abs(mouse_y - state.slope_drag_start_mouse_y) >= 4 then
+                  state.slope_drag_activated = true
+                end
+              end
+              if state.slope_drag_activated then
+                local mouse_delta_y = state.slope_drag_start_mouse_y - mouse_y  -- up = positive
+                local new_slope = state.slope_drag_start_slope + mouse_delta_y / 200
+                new_slope = math.max(-1, math.min(1, new_slope))
+                reaper.SetTakeStretchMarkerSlope(take, state.slope_drag_marker_idx, new_slope)
+                reaper.UpdateArrange()
+                state.warp_markers = utils.get_stretch_markers(take)
+              end
+            end
+
             -- Right-click in waveform: start rectangle selection
             if reaper.ImGui_IsMouseClicked(ctx, 1) and mouse_in_waveform
                 and state.envelopes_visible
@@ -4208,14 +4333,12 @@ local function loop()
               and not near_start and not near_end
               and not near_fade_in and not near_fade_out
               and not alt_held
+              and not (state.slope_hovered_segment > 0)
+              and not state.slope_dragging
               and not (state.envelopes_visible and (state.env_node_hovered_idx >= 0 or state.envelope_hovered_segment >= 0 or reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl()))) then
             state.preview_cursor_pos = px_to_time(mouse_x)
             -- Stop any active preview when cursor moves
-            if state.preview_active and state.preview_handle then
-              reaper.CF_Preview_Stop(state.preview_handle)
-              state.preview_handle = nil
-              state.preview_active = false
-            end
+            state.stop_preview()
           end
 
           -- End dragging
@@ -4224,11 +4347,34 @@ local function loop()
             if state.dragging_warp_marker then
               if state.warp_drag_activated then
                 reaper.UpdateItemInProject(item)
-                reaper.Undo_OnStateChangeEx("NVSD_ItemView: Move stretch marker", -1, -1)
+                reaper.UpdateArrange()
+                local undo_text = state.warp_drag_shift
+                    and "NVSD_ItemView: Slide source under stretch marker"
+                    or "NVSD_ItemView: Move stretch marker"
+                reaper.Undo_OnStateChangeEx(undo_text, -1, -1)
+              else
+                -- Click without drag: move edit cursor to marker position for preview
+                local marker_pos = state.warp_drag_start_pos
+                local proj_time = item_position + marker_pos
+                reaper.SetEditCurPos(proj_time, false, false)
+                state.preview_cursor_pos = marker_pos
               end
               state.dragging_warp_marker = false
               state.warp_drag_activated = false
+              state.warp_drag_shift = false
               state.warp_drag_idx = -1
+              state.warp_markers = utils.get_stretch_markers(take)
+            end
+            -- Slope curve drag release
+            if state.slope_dragging then
+              if state.slope_drag_activated then
+                reaper.UpdateItemInProject(item)
+                reaper.Undo_OnStateChangeEx("NVSD_ItemView: Adjust stretch marker slope", -1, -1)
+              end
+              state.slope_dragging = false
+              state.slope_drag_activated = false
+              state.slope_drag_marker_idx = -1
+              state.slope_drag_segment = -1
               state.warp_markers = utils.get_stretch_markers(take)
             end
             if (state.dragging_start or state.dragging_end) and state.marker_drag_activated then
@@ -4309,11 +4455,7 @@ local function loop()
               -- Click on marker without dragging: place preview cursor at marker position
               local marker_pos = state.dragging_start and state.drag_current_start or state.drag_current_end
               state.preview_cursor_pos = marker_pos
-              if state.preview_active and state.preview_handle then
-                reaper.CF_Preview_Stop(state.preview_handle)
-                state.preview_handle = nil
-                state.preview_active = false
-              end
+              state.stop_preview()
             end
             -- Alt+click on fade curve (no drag movement): remove the fade
             if state.dragging_fade_curve_in and not state.fade_curve_was_dragged then
@@ -4364,6 +4506,8 @@ local function loop()
             state.env_segment_idx2 = -1
             state.env_rect_selecting = false
             state.env_rect_sel_activated = false
+            state.slope_dragging = false
+            state.slope_drag_activated = false
           end
 
           -- Mouse button quick marker/fade positioning (configurable shortcuts)
@@ -4549,14 +4693,11 @@ local function loop()
                 end
               end
 
-                -- Reset view state so next frame reinitializes cleanly from new item dimensions
+                -- Reset unwrapped offset so next frame reinitializes from new item dimensions
                 state.unwrapped_start_offset = nil
                 state.prev_raw_start_offset = nil
                 state.post_drag_ext_start = nil
                 state.post_drag_ext_end = nil
-                state.zoom_level = 1.0
-                state.pan_offset = 0
-                state.zoom_toggle_active = false
               end
             end
 
@@ -4782,6 +4923,19 @@ local function loop()
               reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_item_length)
               reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
               reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
+              -- Shift stretch markers so audio mapping is preserved (pure trim, no warping)
+              if state.drag_start_stretch_markers then
+                local sm_count = reaper.GetTakeNumStretchMarkers(take)
+                for si = sm_count - 1, 0, -1 do
+                  reaper.DeleteTakeStretchMarkers(take, si)
+                end
+                for _, sm in ipairs(state.drag_start_stretch_markers) do
+                  local new_sm_pos = sm.pos - pos_delta
+                  if new_sm_pos >= 0 and new_sm_pos <= new_item_length then
+                    reaper.SetTakeStretchMarker(take, -1, new_sm_pos, sm.srcpos)
+                  end
+                end
+              end
               -- Shift envelope points in realtime so they stay audio-anchored in arrange view
               if not state.envelope_lock then
                 local offset_delta = new_take_offset - take_offset
@@ -5062,6 +5216,22 @@ local function loop()
               or (alt_held and mouse_in_fade_out_body), fade_out_dir)
           end
 
+          -- Slope handles at warp markers (warp mode only)
+          if state.warp_mode and #state.warp_markers > 1 then
+            for i = 1, #state.warp_markers - 1 do
+              local sm = state.warp_markers[i]
+              local sm_px = is_warped_view and time_to_px(sm.pos) or time_to_px(sm.srcpos)
+              local slope = sm.slope or 0
+              local hover_state = 0
+              if state.slope_dragging and state.slope_drag_segment == i then
+                hover_state = 2
+              elseif state.slope_hovered_segment == i then
+                hover_state = 1
+              end
+              drawing.draw_slope_handle(draw_list, sm_px, wave_y, slope, hover_state)
+            end
+          end
+
           -- Fade drag indicator: vertical line showing current fade boundary
           if state.dragging_fade_in and fade_in_len > 0 then
             local line_x = fade_in_end_x
@@ -5118,53 +5288,83 @@ local function loop()
           -- Audio preview: handle Ctrl+Space toggle
           if state.preview_start_requested then
             state.preview_start_requested = false
-            if state.preview_active and state.preview_handle then
+            if state.preview_active then
               -- Stop preview
-              reaper.CF_Preview_Stop(state.preview_handle)
-              state.preview_handle = nil
+              if state.preview_via_transport then
+                -- Stop REAPER transport (action 1016 = Transport: Stop)
+                reaper.Main_OnCommand(1016, 0)
+                state.preview_via_transport = false
+              elseif state.preview_handle then
+                reaper.CF_Preview_Stop(state.preview_handle)
+                state.preview_handle = nil
+              end
               state.preview_active = false
             else
               -- Start preview from cursor position (or item start if no cursor set)
               local pos = state.preview_cursor_pos or start_offset
-              -- In warped view, cursor pos is in item-time; convert to source-time
-              if is_warped_view and state.warp_map then
-                pos = utils.warp_pos_to_src(state.warp_map, pos, playrate)
-              end
-              -- Wrap to source coordinates for looped/extended items
-              local source_pos = pos
-              if source_length > 0 then
-                source_pos = pos % source_length
-                if source_pos < 0 then source_pos = source_pos + source_length end
-              end
-              local handle = reaper.CF_CreatePreview(source)
-              if handle then
-                reaper.CF_Preview_SetValue(handle, "D_POSITION", source_pos)
-                reaper.CF_Preview_SetValue(handle, "D_VOLUME", item_vol)
-                -- Loop when playing in a looped/extended item so preview crosses source boundaries
-                local needs_loop = is_extended_view
-                reaper.CF_Preview_SetValue(handle, "B_LOOP", needs_loop and 1 or 0)
-                local track = reaper.GetMediaItemTrack(item)
-                if track then
-                  reaper.CF_Preview_SetOutputTrack(handle, 0, track)
-                end
-                reaper.CF_Preview_Play(handle)
-                state.preview_handle = handle
+
+              if is_warped_view then
+                -- Warp mode: use REAPER transport so stretch markers are audible.
+                -- Move edit cursor to the marker's project-time position and play.
+                local proj_time = item_position + (pos or 0)
+                reaper.SetEditCurPos(proj_time, false, false)
+                -- Start transport (action 1007 = Transport: Play)
+                reaper.Main_OnCommand(1007, 0)
                 state.preview_active = true
                 state.preview_item = item
-                -- Track virtual position for looped playhead drawing
+                state.preview_via_transport = true
                 state.preview_virtual_start = pos
                 state.preview_start_realtime = reaper.time_precise()
+              else
+                -- Non-warp: use CF_Preview for isolated source playback
+                -- In warped view, cursor pos is in item-time; convert to source-time
+                if state.warp_map then
+                  pos = utils.warp_pos_to_src(state.warp_map, pos, playrate)
+                end
+                -- Wrap to source coordinates for looped/extended items
+                local source_pos = pos
+                if source_length > 0 then
+                  source_pos = pos % source_length
+                  if source_pos < 0 then source_pos = source_pos + source_length end
+                end
+                local handle = reaper.CF_CreatePreview(source)
+                if handle then
+                  reaper.CF_Preview_SetValue(handle, "D_POSITION", source_pos)
+                  reaper.CF_Preview_SetValue(handle, "D_VOLUME", item_vol)
+                  -- Loop when playing in a looped/extended item so preview crosses source boundaries
+                  local needs_loop = is_extended_view
+                  reaper.CF_Preview_SetValue(handle, "B_LOOP", needs_loop and 1 or 0)
+                  local track = reaper.GetMediaItemTrack(item)
+                  if track then
+                    reaper.CF_Preview_SetOutputTrack(handle, 0, track)
+                  end
+                  reaper.CF_Preview_Play(handle)
+                  state.preview_handle = handle
+                  state.preview_active = true
+                  state.preview_item = item
+                  -- Track virtual position for looped playhead drawing
+                  state.preview_virtual_start = pos
+                  state.preview_start_realtime = reaper.time_precise()
+                end
               end
             end
           end
 
           -- Audio preview: poll position and auto-stop at end
-          if state.preview_active and state.preview_handle then
-            -- Stop if item changed
-            if item ~= state.preview_item then
-              reaper.CF_Preview_Stop(state.preview_handle)
-              state.preview_handle = nil
+          if state.preview_active and state.preview_via_transport then
+            -- Transport-based preview (warp mode): track REAPER's play state
+            local play_state = reaper.GetPlayState()
+            if play_state == 0 then
+              -- Transport stopped externally (user pressed stop, reached end, etc.)
               state.preview_active = false
+              state.preview_via_transport = false
+            elseif item ~= state.preview_item then
+              state.stop_preview()
+            end
+          elseif state.preview_active and state.preview_handle then
+            -- CF_Preview-based preview (non-warp mode)
+            if item ~= state.preview_item then
+              state.stop_preview()
             else
               local retval, pos = reaper.CF_Preview_GetValue(state.preview_handle, "D_POSITION")
               if retval then
@@ -5184,9 +5384,7 @@ local function loop()
                 -- Auto-stop: past item extent for looped, past source end for normal
                 local stop_pos = is_extended_view and ext_end or source_length
                 if virtual_pos >= stop_pos then
-                  reaper.CF_Preview_Stop(state.preview_handle)
-                  state.preview_handle = nil
-                  state.preview_active = false
+                  state.stop_preview()
                 end
               else
                 -- Handle became invalid (preview ended)
@@ -5244,11 +5442,7 @@ local function loop()
   -- Handle reload outside pcall (dofile replaces the running script)
   if needs_reload then
     -- Stop audio preview before reload
-    if state.preview_active and state.preview_handle and reaper.CF_Preview_Stop then
-      reaper.CF_Preview_Stop(state.preview_handle)
-    end
-    state.preview_handle = nil
-    state.preview_active = false
+    state.stop_preview()
     ctx = nil
     dofile(script_path)
     return
@@ -5291,20 +5485,14 @@ local function loop()
     state.sticky_item = nil
     state.sticky_item_valid = false
     -- Stop audio preview on error
-    if state.preview_active and state.preview_handle and reaper.CF_Preview_Stop then
-      reaper.CF_Preview_Stop(state.preview_handle)
-    end
-    state.preview_handle = nil
-    state.preview_active = false
+    state.stop_preview()
   end
 
   if open then
     reaper.defer(loop)
   else
     -- Stop audio preview on script close
-    if state.preview_active and state.preview_handle and reaper.CF_Preview_Stop then
-      reaper.CF_Preview_Stop(state.preview_handle)
-    end
+    state.stop_preview()
   end
 end
 

@@ -2181,12 +2181,23 @@ function drawing.draw_warp_marker(draw_list, x, bar_y, bar_h, wave_y, wave_h,
   reaper.ImGui_DrawList_AddLine(draw_list, x, bar_y + bar_h, x, wave_y + wave_h, line_color, 1)
 end
 
--- Draw a transient tick (small gray line from bottom of warp bar)
-function drawing.draw_transient(draw_list, x, bar_y, bar_h, is_hovered, config)
+-- Draw a transient tick. When zoomed out: small line from bottom of warp bar.
+-- When zoomed in: small downward-pointing triangle from top of warp bar (Ableton style).
+function drawing.draw_transient(draw_list, x, bar_y, bar_h, is_hovered, config, zoomed)
   local color = is_hovered and config.COLOR_TRANSIENT_HOVER or config.COLOR_TRANSIENT
-  local tick_h = math.min(4, bar_h - 4)
-  local bottom = bar_y + bar_h - 1
-  reaper.ImGui_DrawList_AddLine(draw_list, x, bottom - tick_h, x, bottom, color, 1)
+  if zoomed then
+    -- Downward-pointing triangle at bottom of warp bar
+    local tri_w = 3
+    local tri_h = math.min(5, bar_h - 2)
+    local bottom = bar_y + bar_h
+    reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
+        x - tri_w, bottom - tri_h, x + tri_w, bottom - tri_h, x, bottom, color)
+  else
+    -- Small line from bottom
+    local tick_h = math.min(4, bar_h - 4)
+    local bottom = bar_y + bar_h - 1
+    reaper.ImGui_DrawList_AddLine(draw_list, x, bottom - tick_h, x, bottom, color, 1)
+  end
 end
 
 -- Draw rate text between adjacent stretch markers
@@ -2197,6 +2208,42 @@ function drawing.draw_warp_rate(draw_list, x1, x2, bar_y, rate, config)
   local text_w = 40  -- approximate
   local cx = (x1 + x2) / 2 - text_w / 2
   reaper.ImGui_DrawList_AddText(draw_list, cx, bar_y + 1, 0xAAAAAAAA, text)
+end
+
+-- Draw triangular slope handle at a warp marker position
+-- Draws just above the waveform top, sized to be clearly visible
+function drawing.draw_slope_handle(draw_list, x, wave_y, slope, hover_state)
+  local hw = 5   -- half-width
+  local h = 8    -- full height of triangle
+  local base_y = wave_y  -- base sits at waveform top edge
+
+  local alpha
+  if hover_state == 2 then alpha = 0xFF       -- dragging: full
+  elseif hover_state == 1 then alpha = 0xCC   -- hovered: bright
+  elseif math.abs(slope) < 0.001 then
+    -- Flat slope: draw a small diamond as grab hint (two triangles)
+    local dh = 3
+    local dw = 3
+    local cy = base_y - dh
+    local diamond_color = 0xE8A02044
+    reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
+      x, cy - dh, x + dw, cy, x, cy + dh, diamond_color)
+    reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
+      x, cy - dh, x - dw, cy, x, cy + dh, diamond_color)
+    return
+  else alpha = 0xAA end
+
+  local color = 0xE8A02000 + alpha
+
+  -- Triangle points upward from waveform top edge
+  -- Apex offset by slope: positive slope = apex higher, negative = lower
+  local apex_y = base_y - h - slope * h
+  apex_y = math.max(base_y - h * 2.5, math.min(base_y - 2, apex_y))
+
+  reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
+    x - hw, base_y, x + hw, base_y, x, apex_y, color)
+  reaper.ImGui_DrawList_AddTriangle(draw_list,
+    x - hw, base_y, x + hw, base_y, x, apex_y, 0xFFFFFF40, 1.0)
 end
 
 return drawing

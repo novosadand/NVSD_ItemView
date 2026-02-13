@@ -532,16 +532,21 @@ function utils.get_peaks_for_range_warped(source, pos_start, pos_length, num_sam
   return { mins = mins, maxs = maxs, count = num_samples, channels = num_ch, output_mode = src_peaks.output_mode }, num_ch
 end
 
--- Detect transients in an audio source using peak-based onset detection
+-- Detect transients using dual-envelope follower (FluCoMa AmpSlice approach).
+-- A fast envelope tracks attacks instantly; a slow envelope tracks the average
+-- level. Onset fires when fast significantly exceeds slow. This naturally
+-- produces one detection per sound event: after the initial attack, the slow
+-- envelope catches up, suppressing secondary peaks and reverb tails.
+-- Log compression ensures quiet transients in dynamic material are detectable.
 function utils.detect_transients(source, sensitivity, min_spacing)
   sensitivity = sensitivity or 0.5
-  min_spacing = min_spacing or 0.02
+  min_spacing = min_spacing or 0.03
   local source_length = reaper.GetMediaSourceLength(source)
   local num_channels = reaper.GetMediaSourceNumChannels(source)
   if source_length <= 0 then return {} end
 
-  -- Get high-resolution peaks (cap at 500K for memory)
-  local peakrate = 10000
+  -- Peakrate: 2000 Hz (0.5ms resolution)
+  local peakrate = 2000
   local total_peaks = math.floor(source_length * peakrate)
   if total_peaks > 500000 then
     peakrate = math.floor(500000 / source_length)
@@ -556,50 +561,126 @@ function utils.detect_transients(source, sensitivity, min_spacing)
 
   local min_off = actual * num_channels
 
-  -- Energy envelope (max peak across channels)
+  -- Step 1: Raw energy envelope (max absolute peak across channels)
   local energy = {}
+  local max_energy = 0
   for i = 1, actual do
+    local e
     if num_channels == 1 then
-      energy[i] = math.max(math.abs(buf[i] or 0), math.abs(buf[min_off + i] or 0))
+      e = math.max(math.abs(buf[i] or 0), math.abs(buf[min_off + i] or 0))
     else
       local base = (i - 1) * num_channels + 1
-      local e = 0
+      e = 0
       for ch = 0, num_channels - 1 do
         e = math.max(e, math.abs(buf[base + ch] or 0), math.abs(buf[min_off + base + ch] or 0))
       end
-      energy[i] = e
     end
+    energy[i] = e
+    if e > max_energy then max_energy = e end
   end
 
-  -- Onset function (positive energy difference)
-  local onset = {[1] = 0}
-  for i = 2, actual do
-    local d = energy[i] - energy[i - 1]
-    onset[i] = d > 0 and d or 0
-  end
+  if max_energy < 0.001 then return {} end -- silence
 
-  -- Adaptive threshold (running mean over ~50ms window)
-  local win = math.max(3, math.floor(peakrate * 0.05))
-  local factor = 2.5 - sensitivity
-  local min_onset = 0.002
-  local running = 0
-  local thresh = {}
+  -- Step 2: Log compression. Compresses dynamic range so a quiet transient
+  -- (e.g. 0.05) registers proportionally closer to a loud one (0.8).
+  -- gamma=10: log(1+10*0.05)=0.41, log(1+10*0.8)=2.20 (5.4x ratio vs 16x linear)
+  local gamma = 10
+  local log_e = {}
   for i = 1, actual do
-    running = running + onset[i]
-    if i > win then running = running - onset[i - win] end
-    local w = math.min(i, win)
-    thresh[i] = math.max(min_onset, (running / w) * factor + min_onset)
+    log_e[i] = math.log(1 + gamma * energy[i])
   end
 
-  -- Peak-pick with minimum spacing
-  local min_gap = math.floor(peakrate * min_spacing)
+  -- Step 3: Dual envelope follower.
+  -- Fast envelope: short attack (1ms), moderate release (5ms). Tracks onsets.
+  -- Slow envelope: longer attack (40ms), slow release (80ms). Tracks average level.
+  -- Envelope formula: env = coeff * input + (1-coeff) * env
+  -- coeff = 1 - exp(-1/(time_sec * peakrate))
+  local function make_coeff(time_ms) return 1 - math.exp(-1000 / (time_ms * peakrate)) end
+  local fast_atk = make_coeff(1)    -- ~1ms: jump to peaks instantly
+  local fast_rel = make_coeff(5)    -- ~5ms: drop fairly quick
+  local slow_atk = make_coeff(40)   -- ~40ms: rise slowly (this is the key parameter)
+  local slow_rel = make_coeff(80)   -- ~80ms: release slowly
+
+  local fast_env = 0
+  local slow_env = 0
+  local onset = {}
+
+  for i = 1, actual do
+    local x = log_e[i]
+    -- Fast envelope: attack when rising, release when falling
+    if x > fast_env then
+      fast_env = fast_atk * x + (1 - fast_atk) * fast_env
+    else
+      fast_env = fast_rel * x + (1 - fast_rel) * fast_env
+    end
+    -- Slow envelope: attack when rising, release when falling
+    if x > slow_env then
+      slow_env = slow_atk * x + (1 - slow_atk) * slow_env
+    else
+      slow_env = slow_rel * x + (1 - slow_rel) * slow_env
+    end
+    -- Onset signal = how much fast exceeds slow (half-wave rectified)
+    local diff = fast_env - slow_env
+    onset[i] = diff > 0 and diff or 0
+  end
+
+  -- Step 4: Schmitt trigger peak picking.
+  -- Sensitivity maps to on-threshold. Lower threshold = more detections.
+  -- The onset signal for a clear transient (silence->loud) is typically 1.0-2.0.
+  -- For a subtle onset it's 0.2-0.5.
+  -- sensitivity 0.3 (default): on_thresh ~ 0.40 (only clear transients)
+  -- sensitivity 0.5: on_thresh ~ 0.25
+  -- sensitivity 0.8: on_thresh ~ 0.07
+  local on_thresh = 0.55 * (1.0 - sensitivity) * (1.0 - sensitivity) + 0.04
+  local off_thresh = on_thresh * 0.25  -- rearm well below trigger point
+
+  -- Absolute energy floor: ignore detections in near-silence
+  local abs_floor = max_energy * 0.01
+
+  local min_gap = math.max(2, math.floor(peakrate * min_spacing))
   local result = {}
   local last = -min_gap
-  for i = 2, actual - 1 do
-    if onset[i] > thresh[i] and onset[i] >= onset[i-1] and onset[i] >= onset[i+1]
-        and (i - last) >= min_gap then
-      result[#result + 1] = (i - 1) / peakrate
-      last = i
+  local armed = true
+  local peak_val = 0
+  local peak_idx = 0
+
+  for i = 1, actual do
+    if armed then
+      if onset[i] > on_thresh and energy[i] >= abs_floor then
+        -- Entered onset region. Track the peak of the onset signal
+        -- to place the marker at the exact moment of maximum attack.
+        armed = false
+        peak_val = onset[i]
+        peak_idx = i
+      end
+    else
+      if onset[i] > peak_val then
+        -- Still rising, update peak position
+        peak_val = onset[i]
+        peak_idx = i
+      end
+      if onset[i] < off_thresh or i == actual then
+        -- Onset signal dropped below off threshold.
+        -- Backtrack from peak to find the true onset start: walk backwards
+        -- to where energy first rose above the noise floor. This places
+        -- the marker at the leading edge of the transient, not the peak.
+        local onset_idx = peak_idx
+        local floor_log = math.log(1 + gamma * abs_floor * 2)
+        for j = peak_idx - 1, math.max(1, peak_idx - math.floor(peakrate * 0.02)), -1 do
+          if log_e[j] <= floor_log or log_e[j] >= log_e[j + 1] then
+            onset_idx = j + 1
+            break
+          end
+          onset_idx = j
+        end
+        if (onset_idx - last) >= min_gap then
+          result[#result + 1] = (onset_idx - 1) / peakrate
+          last = onset_idx
+        end
+        armed = true
+        peak_val = 0
+        peak_idx = 0
+      end
     end
   end
   return result
