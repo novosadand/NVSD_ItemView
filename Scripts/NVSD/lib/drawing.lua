@@ -2253,26 +2253,42 @@ function drawing.draw_slope_curve(draw_list, x1, x2, wave_y, wave_h, slope, hove
   DL_PathStroke(draw_list, color, 0, thickness)
 end
 
--- Draw triangular slope handle at bottom of waveform (matching REAPER's native style)
--- Small downward-pointing orange triangle at the base of each stretch marker line
-function drawing.draw_slope_handle(draw_list, x, wave_y, wave_h, slope, hover_state)
-  local hw = 4   -- half-width
-  local h = 6    -- triangle height
-  local top_y = wave_y + wave_h - h  -- flat edge at top
-  local tip_y = wave_y + wave_h      -- point at bottom
+-- Compute the Y positions of slope handle endpoints (matching the curve endpoints)
+-- Returns y_left, y_right so handles sit exactly where the curve starts/ends
+function drawing.slope_handle_positions(wave_y, wave_h, slope, rate)
+  local rate_offset = 0
+  if rate and rate > 0 then
+    rate_offset = math.log(rate) * wave_h * 0.2
+  end
+  local cy = wave_y + wave_h / 2 - rate_offset
+  cy = math.max(wave_y + wave_h * 0.1, math.min(wave_y + wave_h * 0.9, cy))
+  local band = wave_h * 0.15
+  -- Must match draw_slope_curve formula:
+  -- at t=0: rate_norm = (1 - slope), y = cy - (rate_norm - 1) * band = cy + slope * band
+  -- at t=1: rate_norm = (1 + slope), y = cy - (rate_norm - 1) * band = cy - slope * band
+  local y_left = cy + slope * band
+  local y_right = cy - slope * band
+  return y_left, y_right
+end
+
+-- Draw a single slope handle triangle at the given (x, y) position
+-- Small downward-pointing orange triangle centered on the curve endpoint
+function drawing.draw_slope_handle(draw_list, x, y, hover_state)
+  local hw = 5   -- half-width
+  local h = 6    -- triangle height (points downward from y)
 
   local alpha
   if hover_state == 2 then alpha = 0xFF       -- dragging: full
   elseif hover_state == 1 then alpha = 0xDD   -- hovered: bright
-  else alpha = 0xAA end                       -- always visible (even flat slope)
+  else alpha = 0xAA end                       -- normal
 
   local color = 0xE8A02000 + alpha
 
   reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-    x - hw, top_y, x + hw, top_y, x, tip_y, color)
+    x - hw, y, x + hw, y, x, y + h, color)
   if hover_state >= 1 then
     reaper.ImGui_DrawList_AddTriangle(draw_list,
-      x - hw, top_y, x + hw, top_y, x, tip_y, 0xFFFFFF60, 1.0)
+      x - hw, y, x + hw, y, x, y + h, 0xFFFFFF60, 1.0)
   end
 end
 
