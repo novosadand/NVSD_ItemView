@@ -1925,7 +1925,6 @@ local function loop()
               and mouse_in_waveform and not state.any_drag_active()
               and not (state.envelopes_visible and state.env_node_hovered_idx >= 0) then
             local HIT_R = 18  -- radius for proximity check (generous for 4K)
-            local TRI_H_HALF = 5  -- offset hit center to middle of triangle (h=10, half=5)
             local best_dist = HIT_R + 1
             for i = 1, #state.warp_markers - 1 do
               local sm1 = state.warp_markers[i]
@@ -1935,15 +1934,15 @@ local function loop()
               local slope = sm1.slope or 0
               local rate = (sm2.pos ~= sm1.pos) and (sm2.srcpos - sm1.srcpos) / (sm2.pos - sm1.pos) or 1
               local y_left, y_right = drawing.slope_handle_positions(wave_y, waveform_height, slope, rate)
-              -- Check left handle (hit center at middle of triangle, not top)
-              local dx, dy = mouse_x - px1, mouse_y - (y_left + TRI_H_HALF)
+              -- Check left handle (flat edge at marker line)
+              local dx, dy = mouse_x - px1, mouse_y - y_left
               local dist = math.sqrt(dx * dx + dy * dy)
               if dist < best_dist then
                 best_dist = dist
                 state.slope_hovered_segment = i
               end
-              -- Check right handle
-              dx, dy = mouse_x - px2, mouse_y - (y_right + TRI_H_HALF)
+              -- Check right handle (flat edge at marker line)
+              dx, dy = mouse_x - px2, mouse_y - y_right
               dist = math.sqrt(dx * dx + dy * dy)
               if dist < best_dist then
                 best_dist = dist
@@ -5246,12 +5245,16 @@ local function loop()
                 hover_state = 1
               end
               local rate = (sm2.pos ~= sm1.pos) and (sm2.srcpos - sm1.srcpos) / (sm2.pos - sm1.pos) or 1
-              -- Draw slope curve
+              -- Draw slope curve between markers
               drawing.draw_slope_curve(draw_list, px1, px2, wave_y, waveform_height, slope, hover_state, rate)
-              -- Draw triangle handles at both endpoints of the curve
+              -- Draw triangle handles at both endpoints on the marker vertical lines
+              -- Left handle: right-pointing (→), sits on left marker line
+              -- Right handle: left-pointing (←), sits on right marker line
               local y_left, y_right = drawing.slope_handle_positions(wave_y, waveform_height, slope, rate)
-              drawing.draw_slope_handle(draw_list, px1, y_left, hover_state)
-              drawing.draw_slope_handle(draw_list, px2, y_right, hover_state)
+              local rate_left = rate * (1 - slope)   -- local rate at left endpoint
+              local rate_right = rate * (1 + slope)  -- local rate at right endpoint
+              drawing.draw_slope_handle(draw_list, px1, y_left, 1, rate_left, hover_state)
+              drawing.draw_slope_handle(draw_list, px2, y_right, -1, rate_right, hover_state)
             end
           end
 

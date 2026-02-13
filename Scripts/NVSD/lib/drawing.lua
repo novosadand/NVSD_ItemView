@@ -2271,24 +2271,40 @@ function drawing.slope_handle_positions(wave_y, wave_h, slope, rate)
   return y_left, y_right
 end
 
--- Draw a single slope handle triangle at the given (x, y) position
--- Downward-pointing orange triangle centered on the curve endpoint
-function drawing.draw_slope_handle(draw_list, x, y, hover_state)
-  local hw = 8   -- half-width
-  local h = 10   -- triangle height (points downward from y)
-
+-- Get color for slope handle based on local playback rate at that endpoint
+-- Red = compressed (rate > 1), Blue = stretched (rate < 1), Grey = neutral
+function drawing.slope_handle_color(local_rate, hover_state)
   local alpha
-  if hover_state == 2 then alpha = 0xFF       -- dragging: full
-  elseif hover_state == 1 then alpha = 0xDD   -- hovered: bright
-  else alpha = 0xAA end                       -- normal
+  if hover_state == 2 then alpha = 0xFF
+  elseif hover_state == 1 then alpha = 0xDD
+  else alpha = 0xBB end
 
-  local color = 0xE8A02000 + alpha
+  if local_rate > 1.05 then
+    return 0xD0503000 + alpha   -- red-orange (compressed/faster)
+  elseif local_rate < 0.95 then
+    return 0x3070D000 + alpha   -- blue (stretched/slower)
+  else
+    return 0x90909000 + alpha   -- grey (neutral, rate ~ 1)
+  end
+end
 
+-- Draw slope handle triangle on a warp marker vertical line
+-- dir: 1 = pointing right (left endpoint), -1 = pointing left (right endpoint)
+-- The flat edge sits flush against the marker's vertical line,
+-- the tip points inward toward the slope curve connecting two markers
+function drawing.draw_slope_handle(draw_list, x, y, dir, local_rate, hover_state)
+  local w = 9    -- width (how far the tip extends from the marker line)
+  local hh = 6   -- half-height
+
+  local color = drawing.slope_handle_color(local_rate, hover_state)
+
+  -- Flat edge on the marker line, tip pointing inward toward the slope
+  local tip_x = x + dir * w
   reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-    x - hw, y, x + hw, y, x, y + h, color)
+    x, y - hh, x, y + hh, tip_x, y, color)
   if hover_state >= 1 then
     reaper.ImGui_DrawList_AddTriangle(draw_list,
-      x - hw, y, x + hw, y, x, y + h, 0xFFFFFF60, 1.0)
+      x, y - hh, x, y + hh, tip_x, y, 0xFFFFFF60, 1.0)
   end
 end
 
