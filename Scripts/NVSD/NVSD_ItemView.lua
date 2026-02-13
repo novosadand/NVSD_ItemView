@@ -3351,6 +3351,16 @@ local function loop()
           end
 
           -- Slope curve drag: click on hovered slope curve (no modifier)
+          -- DEBUG: log slope hover state on click
+          if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_waveform and state.warp_mode then
+            reaper.ShowConsoleMsg(string.format(
+              "[SLOPE DEBUG] click: hovered=%d any_drag=%s env_vis=%s near_s=%s near_e=%s near_fi=%s near_fo=%s\n",
+              state.slope_hovered_segment,
+              tostring(state.any_drag_active()),
+              tostring(state.envelopes_visible),
+              tostring(near_start), tostring(near_end),
+              tostring(near_fade_in), tostring(near_fade_out)))
+          end
           if reaper.ImGui_IsMouseClicked(ctx, 0) and state.slope_hovered_segment > 0
               and not state.any_drag_active()
               and not (state.envelopes_visible and state.envelope_hovered_segment >= 0)
