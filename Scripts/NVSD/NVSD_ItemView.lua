@@ -1926,6 +1926,8 @@ local function loop()
               and not (state.envelopes_visible and state.env_node_hovered_idx >= 0) then
             local HIT_X = 14  -- horizontal hit range from marker line
             local HIT_Y = 14  -- vertical hit range from handle center
+            -- DEBUG: print positions on click
+            local dbg_click = reaper.ImGui_IsMouseClicked(ctx, 0)
             for i = 1, #state.warp_markers - 1 do
               local sm1 = state.warp_markers[i]
               local sm2 = state.warp_markers[i + 1]
@@ -1934,6 +1936,14 @@ local function loop()
               local slope = sm1.slope or 0
               local rate = (sm2.pos ~= sm1.pos) and (sm2.srcpos - sm1.srcpos) / (sm2.pos - sm1.pos) or 1
               local y_left, y_right = drawing.slope_handle_positions(wave_y, waveform_height, slope, rate)
+              if dbg_click then
+                reaper.ShowConsoleMsg(string.format(
+                  "[SLOPE POS] seg=%d mouse=(%.0f,%.0f) L_handle=(%.0f,%.0f) R_handle=(%.0f,%.0f) dx_L=%.0f dy_L=%.0f dx_R=%.0f dy_R=%.0f wave_y=%.0f wh=%.0f\n",
+                  i, mouse_x, mouse_y, px1, y_left, px2, y_right,
+                  math.abs(mouse_x - px1), math.abs(mouse_y - y_left),
+                  math.abs(mouse_x - px2), math.abs(mouse_y - y_right),
+                  wave_y, waveform_height))
+              end
               -- Check left handle (right-pointing triangle at left marker)
               if math.abs(mouse_x - px1) <= HIT_X and math.abs(mouse_y - y_left) <= HIT_Y then
                 state.slope_hovered_segment = i
