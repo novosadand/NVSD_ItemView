@@ -362,4 +362,256 @@ function utils.with_undo(label, flags, fn)
   if not ok then error(err, 2) end
 end
 
+-- Read all stretch markers from a take, sorted by srcpos
+function utils.get_stretch_markers(take)
+  if not take then return {} end
+  local count = reaper.GetTakeNumStretchMarkers(take)
+  if count == 0 then return {} end
+  local markers = {}
+  for i = 0, count - 1 do
+    local retval, pos, srcpos = reaper.GetTakeStretchMarker(take, i)
+    if retval >= 0 then
+      local slope = reaper.GetTakeStretchMarkerSlope(take, i)
+      markers[#markers + 1] = { idx = i, pos = pos, srcpos = srcpos, slope = slope or 0 }
+    end
+  end
+  table.sort(markers, function(a, b) return a.srcpos < b.srcpos end)
+  return markers
+end
+
+-- Build warp map: stretch markers sorted by pos (item-time order)
+function utils.build_warp_map(warp_markers)
+  if not warp_markers or #warp_markers == 0 then return {} end
+  local sorted = {}
+  for _, sm in ipairs(warp_markers) do
+    sorted[#sorted + 1] = {pos = sm.pos, srcpos = sm.srcpos}
+  end
+  table.sort(sorted, function(a, b) return a.pos < b.pos end)
+  return sorted
+end
+
+-- Map item-time (pos) to source-time (srcpos) using warp markers
+function utils.warp_pos_to_src(warp_map, pos, playrate)
+  if not warp_map or #warp_map == 0 then
+    return pos * (playrate or 1)
+  end
+  local first = warp_map[1]
+  if pos <= first.pos then
+    return first.srcpos + (pos - first.pos) * (playrate or 1)
+  end
+  local last = warp_map[#warp_map]
+  if pos >= last.pos then
+    return last.srcpos + (pos - last.pos) * (playrate or 1)
+  end
+  for i = 1, #warp_map - 1 do
+    if pos >= warp_map[i].pos and pos <= warp_map[i+1].pos then
+      local span = warp_map[i+1].pos - warp_map[i].pos
+      if span < 0.000001 then return warp_map[i].srcpos end
+      local t = (pos - warp_map[i].pos) / span
+      return warp_map[i].srcpos + t * (warp_map[i+1].srcpos - warp_map[i].srcpos)
+    end
+  end
+  return pos * (playrate or 1)
+end
+
+-- Map source-time (srcpos) to item-time (pos) using warp markers (inverse)
+function utils.warp_src_to_pos(warp_map, srcpos, playrate)
+  if not warp_map or #warp_map == 0 then
+    return srcpos / (playrate or 1)
+  end
+  local first = warp_map[1]
+  if srcpos <= first.srcpos then
+    return first.pos + (srcpos - first.srcpos) / (playrate or 1)
+  end
+  local last = warp_map[#warp_map]
+  if srcpos >= last.srcpos then
+    return last.pos + (srcpos - last.srcpos) / (playrate or 1)
+  end
+  for i = 1, #warp_map - 1 do
+    if srcpos >= warp_map[i].srcpos and srcpos <= warp_map[i+1].srcpos then
+      local span = warp_map[i+1].srcpos - warp_map[i].srcpos
+      if span < 0.000001 then return warp_map[i].pos end
+      local t = (srcpos - warp_map[i].srcpos) / span
+      return warp_map[i].pos + t * (warp_map[i+1].pos - warp_map[i].pos)
+    end
+  end
+  return srcpos / (playrate or 1)
+end
+
+-- Load peaks with warp mapping applied (pos-space view into source-space peaks)
+function utils.get_peaks_for_range_warped(source, pos_start, pos_length, num_samples, warp_map, playrate)
+  if not source or pos_length <= 0 or num_samples < 1 then return nil end
+
+  -- Compute source-time positions for each pixel boundary
+  local src_positions = {}
+  for i = 0, num_samples do
+    local pos = pos_start + i * (pos_length / num_samples)
+    src_positions[i] = utils.warp_pos_to_src(warp_map, pos, playrate)
+  end
+
+  -- Find the source-time range needed
+  local src_min = math.huge
+  local src_max = -math.huge
+  for i = 0, num_samples do
+    if src_positions[i] < src_min then src_min = src_positions[i] end
+    if src_positions[i] > src_max then src_max = src_positions[i] end
+  end
+
+  -- Clamp to source bounds
+  local source_length = reaper.GetMediaSourceLength(source)
+  src_min = math.max(0, src_min)
+  src_max = math.min(source_length, src_max)
+  local src_duration = src_max - src_min
+  if src_duration <= 0.0001 then return nil end
+
+  -- Load source peaks at resolution proportional to the stretch ratio.
+  -- When a small source region is stretched across many output pixels,
+  -- we need far more source samples to avoid a blocky/low-poly waveform.
+  local stretch_ratio = (num_samples > 0 and src_duration > 0)
+      and (pos_length / src_duration) or 1
+  local src_num_samples = math.max(math.floor(num_samples * math.max(2, stretch_ratio)), 500)
+  local src_peaks = utils.get_peaks_for_range(source, src_min, src_duration, src_num_samples)
+  if not src_peaks then return nil end
+
+  local num_ch = src_peaks.channels
+  local src_count = src_peaks.count
+  if src_count < 1 then return nil end
+
+  -- For each output pixel, map to source range and find min/max
+  local mins = {}
+  local maxs = {}
+
+  for i = 0, num_samples - 1 do
+    local src0 = math.max(src_min, math.min(src_max, src_positions[i]))
+    local src1 = math.max(src_min, math.min(src_max, src_positions[i + 1]))
+
+    -- Map to peak buffer indices (0-based)
+    local idx0 = math.floor((src0 - src_min) / src_duration * (src_count - 1) + 0.5)
+    local idx1 = math.floor((src1 - src_min) / src_duration * (src_count - 1) + 0.5)
+    idx0 = math.max(0, math.min(src_count - 1, idx0))
+    idx1 = math.max(0, math.min(src_count - 1, idx1))
+    if idx0 > idx1 then idx0, idx1 = idx1, idx0 end
+
+    for ch = 1, num_ch do
+      local ch_min = math.huge
+      local ch_max = -math.huge
+      for j = idx0, idx1 do
+        local flat_idx = j * num_ch + ch
+        local pmin = src_peaks.mins[flat_idx]
+        local pmax = src_peaks.maxs[flat_idx]
+        if pmin and pmin < ch_min then ch_min = pmin end
+        if pmax and pmax > ch_max then ch_max = pmax end
+      end
+      if ch_min == math.huge then ch_min = 0 end
+      if ch_max == -math.huge then ch_max = 0 end
+      local flat_out = i * num_ch + ch
+      mins[flat_out] = ch_min
+      maxs[flat_out] = ch_max
+    end
+  end
+
+  return { mins = mins, maxs = maxs, count = num_samples, channels = num_ch, output_mode = src_peaks.output_mode }, num_ch
+end
+
+-- Detect transients in an audio source using peak-based onset detection
+function utils.detect_transients(source, sensitivity, min_spacing)
+  sensitivity = sensitivity or 0.5
+  min_spacing = min_spacing or 0.02
+  local source_length = reaper.GetMediaSourceLength(source)
+  local num_channels = reaper.GetMediaSourceNumChannels(source)
+  if source_length <= 0 then return {} end
+
+  -- Get high-resolution peaks (cap at 500K for memory)
+  local peakrate = 10000
+  local total_peaks = math.floor(source_length * peakrate)
+  if total_peaks > 500000 then
+    peakrate = math.floor(500000 / source_length)
+    total_peaks = math.floor(source_length * peakrate)
+  end
+  if total_peaks < 2 then return {} end
+
+  local buf = reaper.new_array(total_peaks * num_channels * 2)
+  local ret = reaper.PCM_Source_GetPeaks(source, peakrate, 0, num_channels, total_peaks, 0, buf)
+  local actual = math.min(ret & 0xFFFFF, total_peaks)
+  if actual < 2 then return {} end
+
+  local min_off = actual * num_channels
+
+  -- Energy envelope (max peak across channels)
+  local energy = {}
+  for i = 1, actual do
+    if num_channels == 1 then
+      energy[i] = math.max(math.abs(buf[i] or 0), math.abs(buf[min_off + i] or 0))
+    else
+      local base = (i - 1) * num_channels + 1
+      local e = 0
+      for ch = 0, num_channels - 1 do
+        e = math.max(e, math.abs(buf[base + ch] or 0), math.abs(buf[min_off + base + ch] or 0))
+      end
+      energy[i] = e
+    end
+  end
+
+  -- Onset function (positive energy difference)
+  local onset = {[1] = 0}
+  for i = 2, actual do
+    local d = energy[i] - energy[i - 1]
+    onset[i] = d > 0 and d or 0
+  end
+
+  -- Adaptive threshold (running mean over ~50ms window)
+  local win = math.max(3, math.floor(peakrate * 0.05))
+  local factor = 2.5 - sensitivity
+  local min_onset = 0.002
+  local running = 0
+  local thresh = {}
+  for i = 1, actual do
+    running = running + onset[i]
+    if i > win then running = running - onset[i - win] end
+    local w = math.min(i, win)
+    thresh[i] = math.max(min_onset, (running / w) * factor + min_onset)
+  end
+
+  -- Peak-pick with minimum spacing
+  local min_gap = math.floor(peakrate * min_spacing)
+  local result = {}
+  local last = -min_gap
+  for i = 2, actual - 1 do
+    if onset[i] > thresh[i] and onset[i] >= onset[i-1] and onset[i] >= onset[i+1]
+        and (i - last) >= min_gap then
+      result[#result + 1] = (i - 1) / peakrate
+      last = i
+    end
+  end
+  return result
+end
+
+-- Add stretch markers at transient positions
+-- Optional range_start/range_end in SOURCE time to limit to a region
+-- Optional warp_map/playrate for correct pos computation in warped view
+function utils.add_markers_at_transients(take, transients, range_start, range_end, warp_map, playrate)
+  local count = 0
+  local sm_count = reaper.GetTakeNumStretchMarkers(take)
+  -- Build list of existing srcpos for fast lookup
+  local existing = {}
+  for i = 0, sm_count - 1 do
+    local _, _, srcpos = reaper.GetTakeStretchMarker(take, i)
+    existing[#existing + 1] = srcpos
+  end
+  for _, srcpos in ipairs(transients) do
+    if (not range_start or srcpos >= range_start) and (not range_end or srcpos <= range_end) then
+      local has = false
+      for _, e in ipairs(existing) do
+        if math.abs(e - srcpos) < 0.005 then has = true; break end
+      end
+      if not has then
+        local pos = warp_map and utils.warp_src_to_pos(warp_map, srcpos, playrate or 1) or srcpos
+        reaper.SetTakeStretchMarker(take, -1, pos, srcpos)
+        count = count + 1
+      end
+    end
+  end
+  return count
+end
+
 return utils

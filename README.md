@@ -99,6 +99,23 @@
 | Right-drag | Rectangle select nodes |
 | Delete | Remove selected nodes |
 
+### Warp Bar (Stretch Markers & Transients)
+
+Visible when WARP mode is active. A narrow strip between the ruler and waveform shows detected transients (gray ticks) and REAPER stretch markers (house-shaped markers). Stretch markers control time-stretching, letting you align audio to the beat grid. Hovering a transient shows a gray ghost preview of the marker that would be created.
+
+| Action | Description |
+|--------|-------------|
+| Click transient tick | Create stretch marker and start dragging |
+| Ctrl + click transient | Create 3 markers (clicked + nearest neighbors), drag center |
+| Double-click empty area | Create stretch marker at cursor |
+| Double-click marker | Delete stretch marker |
+| Drag marker | Move stretch marker (adjust beat alignment) |
+| Delete key (hover) | Remove hovered stretch marker |
+| Right-click | Context menu (add/delete/clear markers) |
+| Ctrl+U | Add markers at all transients |
+
+Rate factors (e.g., "1.20x") are shown between adjacent stretch markers when there is enough space.
+
 ### Fades
 
 Drag fade handles at item edges to adjust fade in/out length. Shift+Mouse4 to set fade-in end at cursor, Shift+Mouse5 to set fade-out start. Alt+drag the fade curve to adjust tension. Right-click a fade handle to pick a shape (Linear, Fast Start, Fast End, Fast Start Steep, Fast End Steep, Slow Start/End, Slow Start/End Steep).
@@ -120,6 +137,7 @@ All shortcuts below are customizable in Settings > Shortcuts.
 | W | Toggle WARP mode |
 | Num0 | Toggle mute |
 | M | Toggle WAV cue markers |
+| Ctrl+U | Add markers at all transients |
 | R | Reverse item |
 | C | Crop markers to selection |
 | Shift+C | Clear pitch/speed |

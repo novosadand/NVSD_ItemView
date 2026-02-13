@@ -36,6 +36,7 @@ settings.DEFAULT_SHORTCUTS = {
   unzoom_all = {ctrl = false, shift = false, alt = true, key = "Z"},
   toggle_cue_markers = {ctrl = false, shift = false, alt = false, key = "M"},
   show_in_explorer = {ctrl = true, shift = false, alt = false, key = "F"},
+  quantize_transients = {ctrl = true, shift = false, alt = false, key = "U"},
 }
 
 -- Map key names to ImGui key getter function names (created once at module load)

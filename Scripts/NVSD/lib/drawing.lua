@@ -2138,4 +2138,58 @@ drawing._test = {
   fade_curves = fade_curves,
 }
 
+-- Draw warp bar background strip
+function drawing.draw_warp_bar(draw_list, x, y, width, height, config)
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, config.COLOR_WARP_BAR_BG)
+  reaper.ImGui_DrawList_AddLine(draw_list, x, y + height, x + width, y + height, config.COLOR_WARP_BAR_BORDER, 1)
+end
+
+-- Draw a stretch marker ("house" shape: rectangle top + downward triangle bottom + vertical line through waveform)
+-- color_override: use this color instead of normal orange (for ghost preview), or nil for normal
+-- is_selected: when true, draw 1px teal outline
+function drawing.draw_warp_marker(draw_list, x, bar_y, bar_h, wave_y, wave_h,
+                                   is_hovered, is_dragging, is_selected, color_override, config)
+  local color = color_override or ((is_dragging or is_hovered) and config.COLOR_WARP_MARKER_HOVER or config.COLOR_WARP_MARKER)
+  local half_w = 5
+  -- Rectangle: top portion of bar
+  local rect_top = bar_y + 1
+  local rect_h = math.floor(bar_h * 0.4)
+  local rect_bot = rect_top + rect_h
+  -- Triangle: from rectangle bottom, pointing down to near bar bottom
+  local tri_bot = bar_y + bar_h - 2
+  -- Fill rectangle
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, x - half_w, rect_top, x + half_w, rect_bot, color)
+  -- Fill triangle
+  reaper.ImGui_DrawList_AddTriangleFilled(draw_list, x - half_w, rect_bot, x + half_w, rect_bot, x, tri_bot, color)
+  -- Selected outline (1px teal stroke around both rect and triangle)
+  if is_selected then
+    local sel_color = config.COLOR_WARP_MARKER_SELECTED
+    reaper.ImGui_DrawList_AddRect(draw_list, x - half_w, rect_top, x + half_w, rect_bot, sel_color, 0, 0, 1)
+    reaper.ImGui_DrawList_AddTriangle(draw_list, x - half_w, rect_bot, x + half_w, rect_bot, x, tri_bot, sel_color, 1)
+  end
+  -- Vertical line through waveform
+  local line_color = color_override
+      and config.COLOR_WARP_MARKER_LINE_GHOST
+      or (is_hovered and config.COLOR_WARP_MARKER_LINE_HOVER or config.COLOR_WARP_MARKER_LINE)
+  reaper.ImGui_DrawList_AddLine(draw_list, x, bar_y + bar_h, x, wave_y + wave_h, line_color, 1)
+end
+
+-- Draw a transient tick (small gray line from bottom of warp bar)
+function drawing.draw_transient(draw_list, x, bar_y, bar_h, is_hovered, config)
+  local color = is_hovered and config.COLOR_TRANSIENT_HOVER or config.COLOR_TRANSIENT
+  local tick_h = math.min(4, bar_h - 4)
+  local bottom = bar_y + bar_h - 1
+  reaper.ImGui_DrawList_AddLine(draw_list, x, bottom - tick_h, x, bottom, color, 1)
+end
+
+-- Draw rate text between adjacent stretch markers
+function drawing.draw_warp_rate(draw_list, x1, x2, bar_y, rate, config)
+  local gap = x2 - x1
+  if gap < 40 then return end
+  local text = string.format("%.2fx", rate)
+  local text_w = 40  -- approximate
+  local cx = (x1 + x2) / 2 - text_w / 2
+  reaper.ImGui_DrawList_AddText(draw_list, cx, bar_y + 1, 0xAAAAAAAA, text)
+end
+
 return drawing

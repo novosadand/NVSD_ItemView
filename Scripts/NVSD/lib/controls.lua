@@ -98,7 +98,13 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
         reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", pitch_from_playrate)
         reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 1)
       else
-        -- Turning WARP OFF: transfer D_PITCH into playrate, adjust length
+        -- Turning WARP OFF: remove all stretch markers, transfer D_PITCH into playrate, adjust length
+        local sm_count = reaper.GetTakeNumStretchMarkers(take)
+        if sm_count > 0 then
+          reaper.DeleteTakeStretchMarkers(take, 0, sm_count)
+        end
+        state.warp_markers = {}
+        state.warp_marker_selected_idx = -1
         local old_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
         local old_length = reaper.GetMediaItemInfo_Value(take_item, "D_LENGTH")
         local new_playrate = utils.semitones_to_playrate(current_pitch)

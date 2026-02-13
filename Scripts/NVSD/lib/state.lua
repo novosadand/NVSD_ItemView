@@ -120,6 +120,32 @@ state.warp_mode = false
 state.warp_dropdown_open = false
 state.envelope_lock = false  -- Lock envelopes in place when dragging markers
 
+-- Stretch markers (cached per-frame when needed)
+state.warp_markers = {}
+state.warp_markers_take = nil
+state.warp_marker_hovered_idx = -1
+state.warp_marker_selected_idx = -1
+
+-- Right-click saved state (mouse pos and hover lost once popup opens)
+state.warp_right_click_time = 0
+state.warp_right_click_marker_idx = -1
+
+-- Stretch marker drag
+state.dragging_warp_marker = false
+state.warp_drag_idx = -1
+state.warp_drag_start_mouse_x = 0
+state.warp_drag_start_pos = 0
+state.warp_drag_start_srcpos = 0
+state.warp_drag_activated = false
+state.warp_drag_start_view_start = 0
+state.warp_drag_start_view_length = 0
+
+-- Transient detection
+state.transients = {}
+state.transients_source = nil
+state.transients_computed = false
+state.transient_hovered_idx = -1
+
 -- Envelope overlay visibility (true = show envelope overlay on waveform)
 state.envelopes_visible = true
 
@@ -298,6 +324,8 @@ function state.reset_all_drags()
   state.env_multi_drag_activated = false
   state.env_multi_drag_start_positions = {}
   state.env_multi_drag_all_points = {}
+  state.dragging_warp_marker = false
+  state.warp_drag_activated = false
 end
 
 -- Check if any interactive drag is active (markers, fades, envelopes, panning, etc.)
@@ -311,6 +339,7 @@ function state.any_drag_active()
       or state.is_panning or state.is_ruler_dragging
       or state.fx_dragging or state.env_rect_selecting
       or state.pitch_gutter_dragging
+      or state.dragging_warp_marker
       or state.is_any_control_dragging()
 end
 
@@ -321,6 +350,8 @@ function state.invalidate_view_peaks()
   state.view_start = -1
   state.view_length = -1
   state.view_num_samples = 0
+  state.view_warp_hash = nil
+  state.view_warped = nil
 end
 
 return state
