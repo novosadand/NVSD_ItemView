@@ -1919,52 +1919,6 @@ local function loop()
 
           end
 
-          -- Slope handle hover detection (triangles at both ends of each slope curve)
-          state.slope_hovered_segment = -1
-          -- DEBUG: check why hover block might not enter
-          if reaper.ImGui_IsMouseClicked(ctx, 0) and state.warp_mode then
-            reaper.ShowConsoleMsg(string.format(
-              "[SLOPE COND] warp=%s n_markers=%d in_wf=%s drag=%s env=%s env_node=%d\n",
-              tostring(state.warp_mode), #state.warp_markers,
-              tostring(mouse_in_waveform), tostring(state.any_drag_active()),
-              tostring(state.envelopes_visible), state.env_node_hovered_idx or -99))
-          end
-          if state.warp_mode and #state.warp_markers > 1
-              and mouse_in_waveform and not state.any_drag_active()
-              and not (state.envelopes_visible and state.env_node_hovered_idx >= 0) then
-            local HIT_X = 14  -- horizontal hit range from marker line
-            local HIT_Y = 14  -- vertical hit range from handle center
-            -- DEBUG: print positions on click
-            local dbg_click = reaper.ImGui_IsMouseClicked(ctx, 0)
-            for i = 1, #state.warp_markers - 1 do
-              local sm1 = state.warp_markers[i]
-              local sm2 = state.warp_markers[i + 1]
-              local px1 = is_warped_view and time_to_px(sm1.pos) or time_to_px(sm1.srcpos)
-              local px2 = is_warped_view and time_to_px(sm2.pos) or time_to_px(sm2.srcpos)
-              local slope = sm1.slope or 0
-              local rate = (sm2.pos ~= sm1.pos) and (sm2.srcpos - sm1.srcpos) / (sm2.pos - sm1.pos) or 1
-              local y_left, y_right = drawing.slope_handle_positions(wave_y, waveform_height, slope, rate)
-              if dbg_click then
-                reaper.ShowConsoleMsg(string.format(
-                  "[SLOPE POS] seg=%d mouse=(%.0f,%.0f) L_handle=(%.0f,%.0f) R_handle=(%.0f,%.0f) dx_L=%.0f dy_L=%.0f dx_R=%.0f dy_R=%.0f wave_y=%.0f wh=%.0f\n",
-                  i, mouse_x, mouse_y, px1, y_left, px2, y_right,
-                  math.abs(mouse_x - px1), math.abs(mouse_y - y_left),
-                  math.abs(mouse_x - px2), math.abs(mouse_y - y_right),
-                  wave_y, waveform_height))
-              end
-              -- Check left handle (right-pointing triangle at left marker)
-              if math.abs(mouse_x - px1) <= HIT_X and math.abs(mouse_y - y_left) <= HIT_Y then
-                state.slope_hovered_segment = i
-                break
-              end
-              -- Check right handle (left-pointing triangle at right marker)
-              if math.abs(mouse_x - px2) <= HIT_X and math.abs(mouse_y - y_right) <= HIT_Y then
-                state.slope_hovered_segment = i
-                break
-              end
-            end
-          end
-
           -- Draw original source boundary markers in ruler
           -- (reuse wf_bounds computed earlier for draw_waveform; nil in non-warp mode → defaults to 0/source_length)
           local COLOR_SOURCE_MARKER = 0xFFAA44FF
@@ -2257,6 +2211,34 @@ local function loop()
               local fo_t = math.max(0, math.min(1, (mouse_x - fade_out_start_x) / fo_width))
               local fo_curve_y = drawing.get_fade_curve_y(fo_t, fade_out_shape, false, fade_out_dir, fade_top_y, wave_y, waveform_height)
               mouse_in_fade_out_body = math.abs(mouse_y - fo_curve_y) <= fade_curve_tolerance
+            end
+          end
+
+          -- Slope handle hover detection (triangles at both ends of each slope curve)
+          state.slope_hovered_segment = -1
+          if state.warp_mode and #state.warp_markers > 1
+              and mouse_in_waveform and not state.any_drag_active()
+              and not (state.envelopes_visible and state.env_node_hovered_idx >= 0) then
+            local HIT_X = 14  -- horizontal hit range from marker line
+            local HIT_Y = 14  -- vertical hit range from handle center
+            for i = 1, #state.warp_markers - 1 do
+              local sm1 = state.warp_markers[i]
+              local sm2 = state.warp_markers[i + 1]
+              local px1 = is_warped_view and time_to_px(sm1.pos) or time_to_px(sm1.srcpos)
+              local px2 = is_warped_view and time_to_px(sm2.pos) or time_to_px(sm2.srcpos)
+              local slope = sm1.slope or 0
+              local rate = (sm2.pos ~= sm1.pos) and (sm2.srcpos - sm1.srcpos) / (sm2.pos - sm1.pos) or 1
+              local y_left, y_right = drawing.slope_handle_positions(wave_y, waveform_height, slope, rate)
+              -- Check left handle (right-pointing triangle at left marker)
+              if math.abs(mouse_x - px1) <= HIT_X and math.abs(mouse_y - y_left) <= HIT_Y then
+                state.slope_hovered_segment = i
+                break
+              end
+              -- Check right handle (left-pointing triangle at right marker)
+              if math.abs(mouse_x - px2) <= HIT_X and math.abs(mouse_y - y_right) <= HIT_Y then
+                state.slope_hovered_segment = i
+                break
+              end
             end
           end
 
@@ -3368,17 +3350,7 @@ local function loop()
             end
           end
 
-          -- Slope curve drag: click on hovered slope curve (no modifier)
-          -- DEBUG: log slope hover state on click
-          if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_waveform and state.warp_mode then
-            reaper.ShowConsoleMsg(string.format(
-              "[SLOPE DEBUG] click: hovered=%d any_drag=%s env_vis=%s near_s=%s near_e=%s near_fi=%s near_fo=%s\n",
-              state.slope_hovered_segment,
-              tostring(state.any_drag_active()),
-              tostring(state.envelopes_visible),
-              tostring(near_start), tostring(near_end),
-              tostring(near_fade_in), tostring(near_fade_out)))
-          end
+          -- Slope curve drag: click on hovered slope handle (no modifier)
           if reaper.ImGui_IsMouseClicked(ctx, 0) and state.slope_hovered_segment > 0
               and not state.any_drag_active()
               and not (state.envelopes_visible and state.envelope_hovered_segment >= 0)
