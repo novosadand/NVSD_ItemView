@@ -3372,8 +3372,6 @@ local function loop()
                 state.slope_drag_start_mouse_y = mouse_y
                 state.slope_drag_start_slope = sm.slope or 0
                 state.slope_drag_activated = false
-                reaper.ShowConsoleMsg(string.format("[SLOPE DRAG] started seg=%d idx=%d slope=%.3f\n",
-                  state.slope_hovered_segment, sm.idx, sm.slope or 0))
               end
             end
           end
@@ -4152,23 +4150,7 @@ local function loop()
               end
             end
 
-            -- Slope curve drag: threshold + execution
-            if state.slope_dragging and reaper.ImGui_IsMouseDown(ctx, 0) then
-              if not state.slope_drag_activated then
-                if math.abs(mouse_y - state.slope_drag_start_mouse_y) >= 4 then
-                  state.slope_drag_activated = true
-                  reaper.ShowConsoleMsg("[SLOPE DRAG] activated! dragging now\n")
-                end
-              end
-              if state.slope_drag_activated then
-                local mouse_delta_y = state.slope_drag_start_mouse_y - mouse_y  -- up = positive
-                local new_slope = state.slope_drag_start_slope + mouse_delta_y / 200
-                new_slope = math.max(-1, math.min(1, new_slope))
-                reaper.SetTakeStretchMarkerSlope(take, state.slope_drag_marker_idx, new_slope)
-                reaper.UpdateArrange()
-                state.warp_markers = utils.get_stretch_markers(take)
-              end
-            end
+            -- (slope drag execution moved outside envelopes_visible block)
 
             -- Right-click in waveform: start rectangle selection
             if reaper.ImGui_IsMouseClicked(ctx, 1) and mouse_in_waveform
@@ -4333,6 +4315,23 @@ local function loop()
               end
               state.env_rect_selecting = false
               state.env_rect_sel_activated = false
+            end
+          end
+
+          -- Slope curve drag: threshold + execution (outside envelopes_visible block)
+          if state.slope_dragging and reaper.ImGui_IsMouseDown(ctx, 0) then
+            if not state.slope_drag_activated then
+              if math.abs(mouse_y - state.slope_drag_start_mouse_y) >= 4 then
+                state.slope_drag_activated = true
+              end
+            end
+            if state.slope_drag_activated then
+              local mouse_delta_y = state.slope_drag_start_mouse_y - mouse_y  -- up = positive
+              local new_slope = state.slope_drag_start_slope + mouse_delta_y / 200
+              new_slope = math.max(-1, math.min(1, new_slope))
+              reaper.SetTakeStretchMarkerSlope(take, state.slope_drag_marker_idx, new_slope)
+              reaper.UpdateArrange()
+              state.warp_markers = utils.get_stretch_markers(take)
             end
           end
 
