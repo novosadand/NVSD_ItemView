@@ -59,7 +59,18 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     current_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
     current_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH")
     local preserve_pitch = reaper.GetMediaItemTakeInfo_Value(take, "B_PPITCH")
+    -- Auto-enable warp mode when item has stretch markers
+    local sm_count = reaper.GetTakeNumStretchMarkers(take)
+    if sm_count > 0 and preserve_pitch == 0 then
+      reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 1)
+      preserve_pitch = 1
+      reaper.UpdateArrange()
+    end
     state.warp_mode = preserve_pitch == 1
+    -- Per-item saved warp markers (keyed by take GUID)
+    if not state.warp_saved_markers_map then
+      state.warp_saved_markers_map = {}
+    end
   end
 
   -- WARP button
@@ -89,18 +100,40 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_warp then
     state.warp_dropdown_open = false
     if take then
-      reaper.Undo_BeginBlock()
-      local take_item = reaper.GetMediaItemTake_Item(take)
-
       if not state.warp_mode then
-        -- Turning WARP ON: transfer pitch from playrate into D_PITCH
-        local pitch_from_playrate = utils.playrate_to_semitones(current_playrate)
-        reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", pitch_from_playrate)
-        reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 1)
+        -- Turning WARP ON
+        local take_guid = reaper.BR_GetMediaItemTakeGUID(take)
+        local saved = take_guid and state.warp_saved_markers_map[take_guid]
+        if saved and #saved > 0 then
+          -- Saved markers exist from previous unwarp: show restore modal
+          state.warp_restore_popup_open = true
+          state.warp_restore_take = take
+          state.warp_restore_guid = take_guid
+        else
+          -- Fresh warp on: transfer pitch from playrate into D_PITCH
+          reaper.Undo_BeginBlock()
+          local pitch_from_playrate = utils.playrate_to_semitones(current_playrate)
+          reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", pitch_from_playrate)
+          reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 1)
+          reaper.UpdateArrange()
+          reaper.Undo_EndBlock("NVSD_ItemView: Toggle WARP", -1)
+        end
       else
-        -- Turning WARP OFF: remove all stretch markers, transfer D_PITCH into playrate, adjust length
+        -- Turning WARP OFF: save markers, then remove them
+        reaper.Undo_BeginBlock()
+        local take_item = reaper.GetMediaItemTake_Item(take)
         local sm_count = reaper.GetTakeNumStretchMarkers(take)
         if sm_count > 0 then
+          -- Save markers for potential restore (keyed by take GUID)
+          local take_guid = reaper.BR_GetMediaItemTakeGUID(take)
+          if take_guid then
+            local saved = {}
+            for si = 0, sm_count - 1 do
+              local _, pos, srcpos = reaper.GetTakeStretchMarker(take, si)
+              saved[#saved + 1] = { pos = pos, srcpos = srcpos }
+            end
+            state.warp_saved_markers_map[take_guid] = saved
+          end
           reaper.DeleteTakeStretchMarkers(take, 0, sm_count)
         end
         state.warp_markers = {}
@@ -136,11 +169,75 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
             reaper.SetMediaItemInfo_Value(take_item, "D_FADEOUTLEN_AUTO", math.min(foa, eff_fo))
           end
         end
-      end
 
-      reaper.UpdateArrange()
-      reaper.Undo_EndBlock("NVSD_ItemView: Toggle WARP", -1)
+        -- Immediately update state so auto-add marker doesn't fire next frame
+        state.warp_mode = false
+        reaper.UpdateArrange()
+        reaper.Undo_EndBlock("NVSD_ItemView: Toggle WARP", -1)
+      end
     end
+  end
+
+  -- Warp restore modal (Ableton-style: keep timing vs restore previous markers)
+  if state.warp_restore_popup_open then
+    reaper.ImGui_OpenPopup(ctx, "Restore Warp Markers?##warp_restore")
+    state.warp_restore_popup_open = false
+  end
+  if reaper.ImGui_BeginPopupModal(ctx, "Restore Warp Markers?##warp_restore", nil, reaper.ImGui_WindowFlags_AlwaysAutoResize()) then
+    reaper.ImGui_Text(ctx, "Would you like to keep the current timing of the item?")
+    reaper.ImGui_Spacing(ctx)
+    reaper.ImGui_TextWrapped(ctx, "Choose Yes to keep the current timing or No to\nrevert to the previous set of warp markers.")
+    reaper.ImGui_Spacing(ctx)
+    local guid = state.warp_restore_guid
+    if reaper.ImGui_Button(ctx, "Yes", 80, 0) then
+      -- Keep current timing: turn warp on fresh (no restore)
+      local t = state.warp_restore_take
+      if t and reaper.ValidatePtr(t, "MediaItem_Take*") then
+        reaper.Undo_BeginBlock()
+        local pitch_from_playrate = utils.playrate_to_semitones(
+            reaper.GetMediaItemTakeInfo_Value(t, "D_PLAYRATE"))
+        reaper.SetMediaItemTakeInfo_Value(t, "D_PITCH", pitch_from_playrate)
+        reaper.SetMediaItemTakeInfo_Value(t, "B_PPITCH", 1)
+        reaper.UpdateArrange()
+        reaper.Undo_EndBlock("NVSD_ItemView: Toggle WARP", -1)
+      end
+      if guid then state.warp_saved_markers_map[guid] = nil end
+      state.warp_restore_take = nil
+      state.warp_restore_guid = nil
+      reaper.ImGui_CloseCurrentPopup(ctx)
+    end
+    reaper.ImGui_SameLine(ctx)
+    if reaper.ImGui_Button(ctx, "No", 80, 0) then
+      -- Restore previous warp markers
+      local t = state.warp_restore_take
+      local saved = guid and state.warp_saved_markers_map[guid]
+      if t and reaper.ValidatePtr(t, "MediaItem_Take*") and saved then
+        reaper.Undo_BeginBlock()
+        local pitch_from_playrate = utils.playrate_to_semitones(
+            reaper.GetMediaItemTakeInfo_Value(t, "D_PLAYRATE"))
+        reaper.SetMediaItemTakeInfo_Value(t, "D_PITCH", pitch_from_playrate)
+        reaper.SetMediaItemTakeInfo_Value(t, "B_PPITCH", 1)
+        -- Restore saved stretch markers
+        for _, sm in ipairs(saved) do
+          reaper.SetTakeStretchMarker(t, -1, sm.pos, sm.srcpos)
+        end
+        reaper.UpdateArrange()
+        reaper.UpdateItemInProject(reaper.GetMediaItemTake_Item(t))
+        reaper.Undo_EndBlock("NVSD_ItemView: Restore WARP markers", -1)
+      end
+      if guid then state.warp_saved_markers_map[guid] = nil end
+      state.warp_restore_take = nil
+      state.warp_restore_guid = nil
+      reaper.ImGui_CloseCurrentPopup(ctx)
+    end
+    reaper.ImGui_SameLine(ctx)
+    if reaper.ImGui_Button(ctx, "Cancel", 80, 0) then
+      -- Don't turn warp on
+      state.warp_restore_take = nil
+      state.warp_restore_guid = nil
+      reaper.ImGui_CloseCurrentPopup(ctx)
+    end
+    reaper.ImGui_EndPopup(ctx)
   end
 
   -- Warp mode dropdown
