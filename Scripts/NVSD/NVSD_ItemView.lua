@@ -268,6 +268,7 @@ local function loop()
   if reaper.GetExtState("NVSD_ItemView", "close_requested") == "1" then
     reaper.DeleteExtState("NVSD_ItemView", "close_requested", false)
     state.stop_preview()
+    open = false  -- signal outer loop() to stop deferring
     return
   end
 
@@ -848,7 +849,7 @@ local function loop()
               state.warp_map = utils.build_warp_map(state.warp_markers)
               local warp_hash = 0
               for _, sm in ipairs(state.warp_markers) do
-                warp_hash = warp_hash + sm.pos * 10000 + sm.srcpos
+                warp_hash = warp_hash + sm.pos * 10000 + sm.srcpos + (sm.slope or 0) * 100
               end
               state.warp_hash = warp_hash
             end
