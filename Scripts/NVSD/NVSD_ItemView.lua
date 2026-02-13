@@ -4393,18 +4393,24 @@ local function loop()
             local mouse_delta_px = mouse_x - state.drag_start_mouse_x
             local mouse_delta_time = (mouse_delta_px / waveform_width) * state.drag_start_view_length
 
-            if is_warped_view then
+            if is_warped_view and state.drag_start_warp_markers then
               -- In warp mode: slide both markers through the warped waveform.
               -- Equivalent to moving start then end by the same delta:
-              --   start drag shifts markers' pos by -delta, changes D_STARTOFFS, shrinks D_LENGTH
-              --   end drag grows D_LENGTH back → net: pos shifts, D_LENGTH unchanged
-              -- During drag: warp_map frozen, waveform stays still, markers move (drag_current).
-              -- On release: commit by shifting markers' pos.
+              --   start drag shifts markers' pos by -delta, changes D_STARTOFFS, D_LENGTH unchanged
+              -- Warp_map frozen in ItemView (waveform stays still, markers move via drag_current).
+              -- Markers shifted in REAPER each frame for real-time arrange view updates.
               state.drag_current_start = mouse_delta_time
               state.drag_current_end = state.drag_start_length + mouse_delta_time
-              -- Save pos-time delta for release (shift markers' pos by -delta)
               state._alt_drag_pos_delta = mouse_delta_time
-              -- Update D_STARTOFFS for real-time arrange view
+              -- Shift markers' pos in REAPER for real-time arrange view
+              local sm_count = reaper.GetTakeNumStretchMarkers(take)
+              for si = sm_count - 1, 0, -1 do
+                reaper.DeleteTakeStretchMarkers(take, si)
+              end
+              for _, sm in ipairs(state.drag_start_warp_markers) do
+                reaper.SetTakeStretchMarker(take, -1, sm.pos - mouse_delta_time, sm.srcpos)
+              end
+              -- Update D_STARTOFFS
               local orig_map = state.drag_start_warp_map or state.warp_map
               local new_srcpos = utils.warp_pos_to_src(orig_map, mouse_delta_time, state.drag_start_playrate)
               new_srcpos = math.max(0, new_srcpos)
