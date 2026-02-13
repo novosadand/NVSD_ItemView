@@ -2210,40 +2210,70 @@ function drawing.draw_warp_rate(draw_list, x1, x2, bar_y, rate, config)
   reaper.ImGui_DrawList_AddText(draw_list, cx, bar_y + 1, 0xAAAAAAAA, text)
 end
 
--- Draw triangular slope handle at a warp marker position
--- Draws just above the waveform top, sized to be clearly visible
-function drawing.draw_slope_handle(draw_list, x, wave_y, slope, hover_state)
-  local hw = 5   -- half-width
-  local h = 8    -- full height of triangle
-  local base_y = wave_y  -- base sits at waveform top edge
+-- Draw slope curve between two stretch markers in the waveform area
+-- rate: segment playback rate (1.0 = normal). Offsets center Y so faster = higher, slower = lower.
+function drawing.draw_slope_curve(draw_list, x1, x2, wave_y, wave_h, slope, hover_state, rate)
+  local gap = x2 - x1
+  if gap < 8 then return end
+  local DL_PathLineTo = reaper.ImGui_DrawList_PathLineTo
+  local DL_PathStroke = reaper.ImGui_DrawList_PathStroke
+  if not DL_PathLineTo then return end
+
+  -- Center Y offset by rate: rate=1 centered, >1 higher, <1 lower
+  -- Use log scale so 2x and 0.5x are symmetric offsets
+  local rate_offset = 0
+  if rate and rate > 0 then
+    rate_offset = math.log(rate) * wave_h * 0.2
+  end
+  local cy = wave_y + wave_h / 2 - rate_offset
+  -- Clamp to stay within waveform bounds
+  cy = math.max(wave_y + wave_h * 0.1, math.min(wave_y + wave_h * 0.9, cy))
+  local band = wave_h * 0.15
+
+  local alpha
+  if hover_state == 2 then alpha = 0xFF
+  elseif hover_state == 1 then alpha = 0xDD
+  elseif math.abs(slope) < 0.001 then alpha = 0x40
+  else alpha = 0x90 end
+
+  local color = 0xE8A02000 + alpha
+  local thickness = (hover_state >= 1) and 2.0 or 1.5
+
+  if math.abs(slope) < 0.001 then
+    DL_PathLineTo(draw_list, x1, cy)
+    DL_PathLineTo(draw_list, x2, cy)
+  else
+    local steps = math.min(math.floor(gap / 2), 48)
+    for si = 0, steps do
+      local t = si / steps
+      local rate_norm = (1 - slope) + t * 2 * slope
+      DL_PathLineTo(draw_list, x1 + t * gap, cy - (rate_norm - 1) * band)
+    end
+  end
+  DL_PathStroke(draw_list, color, 0, thickness)
+end
+
+-- Draw triangular slope handle at bottom of waveform (matching REAPER's native style)
+-- Small downward-pointing orange triangle at the base of each stretch marker line
+function drawing.draw_slope_handle(draw_list, x, wave_y, wave_h, slope, hover_state)
+  local hw = 4   -- half-width
+  local h = 6    -- triangle height
+  local top_y = wave_y + wave_h - h  -- flat edge at top
+  local tip_y = wave_y + wave_h      -- point at bottom
 
   local alpha
   if hover_state == 2 then alpha = 0xFF       -- dragging: full
-  elseif hover_state == 1 then alpha = 0xCC   -- hovered: bright
-  elseif math.abs(slope) < 0.001 then
-    -- Flat slope: draw a small diamond as grab hint (two triangles)
-    local dh = 3
-    local dw = 3
-    local cy = base_y - dh
-    local diamond_color = 0xE8A02044
-    reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-      x, cy - dh, x + dw, cy, x, cy + dh, diamond_color)
-    reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-      x, cy - dh, x - dw, cy, x, cy + dh, diamond_color)
-    return
-  else alpha = 0xAA end
+  elseif hover_state == 1 then alpha = 0xDD   -- hovered: bright
+  else alpha = 0xAA end                       -- always visible (even flat slope)
 
   local color = 0xE8A02000 + alpha
 
-  -- Triangle points upward from waveform top edge
-  -- Apex offset by slope: positive slope = apex higher, negative = lower
-  local apex_y = base_y - h - slope * h
-  apex_y = math.max(base_y - h * 2.5, math.min(base_y - 2, apex_y))
-
   reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-    x - hw, base_y, x + hw, base_y, x, apex_y, color)
-  reaper.ImGui_DrawList_AddTriangle(draw_list,
-    x - hw, base_y, x + hw, base_y, x, apex_y, 0xFFFFFF40, 1.0)
+    x - hw, top_y, x + hw, top_y, x, tip_y, color)
+  if hover_state >= 1 then
+    reaper.ImGui_DrawList_AddTriangle(draw_list,
+      x - hw, top_y, x + hw, top_y, x, tip_y, 0xFFFFFF60, 1.0)
+  end
 end
 
 return drawing

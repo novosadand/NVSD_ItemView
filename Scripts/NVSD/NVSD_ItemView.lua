@@ -1925,12 +1925,12 @@ local function loop()
               and mouse_in_waveform and not state.any_drag_active()
               and not (state.envelopes_visible and state.env_node_hovered_idx >= 0) then
             local HIT_HW = 7
-            local HIT_TOP = 20  -- how far above wave_y the hit zone extends
+            local HIT_H = 10  -- height of hit zone at bottom of waveform
             for i = 1, #state.warp_markers - 1 do
               local sm = state.warp_markers[i]
               local sm_px = is_warped_view and time_to_px(sm.pos) or time_to_px(sm.srcpos)
               if math.abs(mouse_x - sm_px) <= HIT_HW
-                  and mouse_y >= wave_y - HIT_TOP and mouse_y <= wave_y + 4 then
+                  and mouse_y >= wave_y + waveform_height - HIT_H and mouse_y <= wave_y + waveform_height then
                 state.slope_hovered_segment = i
                 break
               end
@@ -5216,8 +5216,25 @@ local function loop()
               or (alt_held and mouse_in_fade_out_body), fade_out_dir)
           end
 
-          -- Slope handles at warp markers (warp mode only)
+          -- Slope curves and handles at warp markers (warp mode only)
           if state.warp_mode and #state.warp_markers > 1 then
+            -- Draw slope curves between adjacent markers
+            for i = 1, #state.warp_markers - 1 do
+              local sm1 = state.warp_markers[i]
+              local sm2 = state.warp_markers[i + 1]
+              local px1 = is_warped_view and time_to_px(sm1.pos) or time_to_px(sm1.srcpos)
+              local px2 = is_warped_view and time_to_px(sm2.pos) or time_to_px(sm2.srcpos)
+              local slope = sm1.slope or 0
+              local hover_state = 0
+              if state.slope_dragging and state.slope_drag_segment == i then
+                hover_state = 2
+              elseif state.slope_hovered_segment == i then
+                hover_state = 1
+              end
+              local rate = (sm2.pos ~= sm1.pos) and (sm2.srcpos - sm1.srcpos) / (sm2.pos - sm1.pos) or 1
+              drawing.draw_slope_curve(draw_list, px1, px2, wave_y, waveform_height, slope, hover_state, rate)
+            end
+            -- Draw triangle handles at bottom of each marker line
             for i = 1, #state.warp_markers - 1 do
               local sm = state.warp_markers[i]
               local sm_px = is_warped_view and time_to_px(sm.pos) or time_to_px(sm.srcpos)
@@ -5228,7 +5245,7 @@ local function loop()
               elseif state.slope_hovered_segment == i then
                 hover_state = 1
               end
-              drawing.draw_slope_handle(draw_list, sm_px, wave_y, slope, hover_state)
+              drawing.draw_slope_handle(draw_list, sm_px, wave_y, waveform_height, slope, hover_state)
             end
           end
 
