@@ -771,10 +771,11 @@ local function loop()
 
           -- Cache stretch markers and transients (only when WARP mode is active)
           if state.warp_mode then
-            -- During start marker drag, keep original markers/map frozen.
+            -- During start marker drag or alt+drag (slide both), keep original markers/map frozen.
             -- REAPER markers are shifted each frame for arrange view,
             -- but view coordinates stay in original pos-time system.
-            state._freeze_warp = state.dragging_start and state.marker_drag_activated
+            state._freeze_warp = (state.dragging_start or state.drag_alt_latched)
+                and state.marker_drag_activated
                 and state.drag_start_warp_markers
             if not state._freeze_warp then
               -- Always refresh markers (cheap read) so external changes are picked up
@@ -1001,6 +1002,15 @@ local function loop()
               end
               ext_start = math.min(src_pos_start, ext_start)
               ext_end = math.max(src_pos_end, item_length)
+            end
+            -- Ensure ext covers at least the full source duration (in pos-time),
+            -- mirroring non-warp mode where ext = [0, source_length].
+            -- This gives zoom/pan the same freedom in both modes.
+            local source_pos_len = source_length / playrate
+            if (ext_end - ext_start) < source_pos_len then
+              local center = (ext_start + ext_end) / 2
+              ext_start = math.min(ext_start, center - source_pos_len / 2)
+              ext_end = math.max(ext_end, center + source_pos_len / 2)
             end
             ext_length = ext_end - ext_start
           elseif (state.dragging_start or state.dragging_end) then
@@ -2295,7 +2305,7 @@ local function loop()
               local t = state.transients[state.transient_hovered_idx]
               if t then
                 drawing.tooltip(ctx, "transient_" .. state.transient_hovered_idx,
-                    utils.format_source_time(t, true) .. "\nClick: add stretch marker")
+                    utils.format_source_time(t, true) .. "\nDouble-click: add stretch marker")
               end
             -- Ruler tooltip
             elseif mouse_in_ruler then
@@ -2487,7 +2497,7 @@ local function loop()
 
             -- Clamp pan to keep view within bounds
             local half_view = new_view_length / 2
-            local min_pan = -range_center + half_view
+            local min_pan = ext_start - range_center + half_view
             local max_pan = ext_end - range_center - half_view
             if min_pan > max_pan then min_pan, max_pan = max_pan, min_pan end
             state.pan_offset = math.max(min_pan, math.min(max_pan, state.pan_offset))
@@ -2528,7 +2538,55 @@ local function loop()
                 state.warp_markers = utils.get_stretch_markers(take)
                 state.warp_marker_hovered_idx = -1
               end
-            elseif state.transient_hovered_idx <= 0 then
+            elseif state.transient_hovered_idx > 0 then
+              -- Double-click on transient ghost: CREATE marker(s) and immediately start dragging
+              local ctrl = reaper.ImGui_GetKeyMods(ctx) == reaper.ImGui_Mod_Ctrl()
+              local srcpos = state.transients[state.transient_hovered_idx]
+              if srcpos then
+                reaper.Undo_BeginBlock()
+                -- Collect positions: clicked + neighbors if Ctrl held
+                local positions = {srcpos}
+                if ctrl and state.transients then
+                  local idx = state.transient_hovered_idx
+                  if idx > 1 and state.transients[idx - 1] then
+                    positions[#positions + 1] = state.transients[idx - 1]
+                  end
+                  if idx < #state.transients and state.transients[idx + 1] then
+                    positions[#positions + 1] = state.transients[idx + 1]
+                  end
+                end
+                -- Add markers, skipping duplicates
+                local sm_count = reaper.GetTakeNumStretchMarkers(take)
+                local existing_sm = {}
+                for i = 0, sm_count - 1 do
+                  local _, _, sp = reaper.GetTakeStretchMarker(take, i)
+                  existing_sm[#existing_sm + 1] = sp
+                end
+                for _, sp in ipairs(positions) do
+                  local has = false
+                  for _, e in ipairs(existing_sm) do
+                    if math.abs(e - sp) < 0.005 then has = true; break end
+                  end
+                  if not has then
+                    local p = is_warped_view and utils.warp_src_to_pos(state.warp_map, sp, playrate) or sp
+                    reaper.SetTakeStretchMarker(take, -1, p, sp)
+                    existing_sm[#existing_sm + 1] = sp
+                  end
+                end
+                reaper.UpdateArrange()
+                reaper.UpdateItemInProject(item)
+                local desc = ctrl and "NVSD_ItemView: Add stretch markers at transient group" or "NVSD_ItemView: Add stretch marker at transient"
+                reaper.Undo_EndBlock(desc, -1)
+                state.warp_markers = utils.get_stretch_markers(take)
+                -- Select the new marker
+                for _, sm in ipairs(state.warp_markers) do
+                  if math.abs(sm.srcpos - srcpos) < 0.001 then
+                    state.warp_marker_selected_idx = sm.idx
+                    break
+                  end
+                end
+              end
+            else
               -- Double-click empty area (no transient): CREATE at mouse position
               local click_time = px_to_time(mouse_x)
               local pos, srcpos
@@ -2594,65 +2652,7 @@ local function loop()
             end
           end
 
-          -- Single-click on transient ghost: CREATE marker(s) and immediately start dragging
-          if not warp_dblclick_handled
-              and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_warp_bar
-              and state.transient_hovered_idx > 0 and not state.any_drag_active() then
-            local ctrl = reaper.ImGui_GetKeyMods(ctx) == reaper.ImGui_Mod_Ctrl()
-            local srcpos = state.transients[state.transient_hovered_idx]
-            if srcpos then
-              reaper.Undo_BeginBlock()
-              -- Collect positions: clicked + neighbors if Ctrl held
-              local positions = {srcpos}
-              if ctrl and state.transients then
-                local idx = state.transient_hovered_idx
-                if idx > 1 and state.transients[idx - 1] then
-                  positions[#positions + 1] = state.transients[idx - 1]
-                end
-                if idx < #state.transients and state.transients[idx + 1] then
-                  positions[#positions + 1] = state.transients[idx + 1]
-                end
-              end
-              -- Add markers, skipping duplicates
-              local sm_count = reaper.GetTakeNumStretchMarkers(take)
-              local existing_sm = {}
-              for i = 0, sm_count - 1 do
-                local _, _, sp = reaper.GetTakeStretchMarker(take, i)
-                existing_sm[#existing_sm + 1] = sp
-              end
-              for _, sp in ipairs(positions) do
-                local has = false
-                for _, e in ipairs(existing_sm) do
-                  if math.abs(e - sp) < 0.005 then has = true; break end
-                end
-                if not has then
-                  local p = is_warped_view and utils.warp_src_to_pos(state.warp_map, sp, playrate) or sp
-                  reaper.SetTakeStretchMarker(take, -1, p, sp)
-                  existing_sm[#existing_sm + 1] = sp
-                end
-              end
-              reaper.UpdateArrange()
-              reaper.UpdateItemInProject(item)
-              local desc = ctrl and "NVSD_ItemView: Add stretch markers at transient group" or "NVSD_ItemView: Add stretch marker at transient"
-              reaper.Undo_EndBlock(desc, -1)
-              state.warp_markers = utils.get_stretch_markers(take)
-              -- Find the created marker for the clicked transient and start dragging it
-              for _, sm in ipairs(state.warp_markers) do
-                if math.abs(sm.srcpos - srcpos) < 0.001 then
-                  state.warp_marker_selected_idx = sm.idx
-                  state.dragging_warp_marker = true
-                  state.warp_drag_idx = sm.idx
-                  state.warp_drag_start_mouse_x = mouse_x
-                  state.warp_drag_start_pos = sm.pos
-                  state.warp_drag_start_srcpos = sm.srcpos
-                  state.warp_drag_activated = false
-                  state.warp_drag_start_view_start = view_start
-                  state.warp_drag_start_view_length = view_length
-                  break
-                end
-              end
-            end
-          end
+          -- (Warp marker creation on transient ghosts is handled above in the double-click block)
 
           -- Warp marker drag: threshold activation
           if state.dragging_warp_marker and not state.warp_drag_activated
@@ -2758,7 +2758,7 @@ local function loop()
 
                 -- Clamp pan to valid range
                 local half_view = new_view_length / 2
-                local min_pan = -range_center + half_view
+                local min_pan = ext_start - range_center + half_view
                 local max_pan = ext_end - range_center - half_view
                 if min_pan > max_pan then min_pan, max_pan = max_pan, min_pan end
                 state.pan_offset = math.max(min_pan, math.min(max_pan, state.pan_offset))
@@ -2811,7 +2811,7 @@ local function loop()
             state.pan_offset = state.pan_start_offset + delta_time
             -- Pan limits: keep view within bounds
             local half_view = view_length / 2
-            local min_pan = -range_center + half_view
+            local min_pan = ext_start - range_center + half_view
             local max_pan = ext_end - range_center - half_view
             if min_pan > max_pan then min_pan, max_pan = max_pan, min_pan end
             state.pan_offset = math.max(min_pan, math.min(max_pan, state.pan_offset))
@@ -3037,6 +3037,16 @@ local function loop()
                 state.drag_current_end = item_length
                 state.drag_start_src_pos_start = utils.warp_src_to_pos(state.warp_map, 0, playrate)
                 state.drag_start_src_pos_end = utils.warp_src_to_pos(state.warp_map, source_length, playrate)
+                -- Save markers/map for alt+drag (slide both) in warp mode
+                if alt_held then
+                  state.drag_start_warp_markers = {}
+                  for _, sm in ipairs(state.warp_markers) do
+                    state.drag_start_warp_markers[#state.drag_start_warp_markers + 1] = {
+                      pos = sm.pos, srcpos = sm.srcpos
+                    }
+                  end
+                  state.drag_start_warp_map = state.warp_map
+                end
               else
                 state.drag_current_start = drag_offset
                 state.drag_current_end = drag_offset + source_item_length
@@ -4090,7 +4100,7 @@ local function loop()
                 end
                 state._alt_drag_pos_delta = nil
                 -- Mark item dirty for undo
-                if state.dragging_start then
+                if state.dragging_start or state.drag_alt_latched then
                   reaper.UpdateItemInProject(item)
                 end
                 -- Clean up saved warp state
@@ -4399,20 +4409,27 @@ local function loop()
               --   start drag shifts markers' pos by -delta, changes D_STARTOFFS, D_LENGTH unchanged
               -- Warp_map frozen in ItemView (waveform stays still, markers move via drag_current).
               -- Markers shifted in REAPER each frame for real-time arrange view updates.
-              state.drag_current_start = mouse_delta_time
-              state.drag_current_end = state.drag_start_length + mouse_delta_time
-              state._alt_drag_pos_delta = mouse_delta_time
+              -- Clamp to source boundaries (brackets): left marker >= left bracket, right marker <= right bracket
+              local clamped_delta = mouse_delta_time
+              if state.drag_start_src_pos_start then
+                local min_delta = state.drag_start_src_pos_start  -- left bracket (pos-time, typically <= 0)
+                local max_delta = state.drag_start_src_pos_end - state.drag_start_length  -- right bracket minus item length
+                clamped_delta = math.max(min_delta, math.min(max_delta, clamped_delta))
+              end
+              state.drag_current_start = clamped_delta
+              state.drag_current_end = state.drag_start_length + clamped_delta
+              state._alt_drag_pos_delta = clamped_delta
               -- Shift markers' pos in REAPER for real-time arrange view
               local sm_count = reaper.GetTakeNumStretchMarkers(take)
               for si = sm_count - 1, 0, -1 do
                 reaper.DeleteTakeStretchMarkers(take, si)
               end
               for _, sm in ipairs(state.drag_start_warp_markers) do
-                reaper.SetTakeStretchMarker(take, -1, sm.pos - mouse_delta_time, sm.srcpos)
+                reaper.SetTakeStretchMarker(take, -1, sm.pos - clamped_delta, sm.srcpos)
               end
               -- Update D_STARTOFFS
               local orig_map = state.drag_start_warp_map or state.warp_map
-              local new_srcpos = utils.warp_pos_to_src(orig_map, mouse_delta_time, state.drag_start_playrate)
+              local new_srcpos = utils.warp_pos_to_src(orig_map, clamped_delta, state.drag_start_playrate)
               new_srcpos = math.max(0, new_srcpos)
               local new_take_offset = new_srcpos - section_offset
               if source_length > 0 then new_take_offset = new_take_offset % source_length end
