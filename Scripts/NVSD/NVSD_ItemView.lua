@@ -1921,6 +1921,14 @@ local function loop()
 
           -- Slope handle hover detection (triangles at both ends of each slope curve)
           state.slope_hovered_segment = -1
+          -- DEBUG: check why hover block might not enter
+          if reaper.ImGui_IsMouseClicked(ctx, 0) and state.warp_mode then
+            reaper.ShowConsoleMsg(string.format(
+              "[SLOPE COND] warp=%s n_markers=%d in_wf=%s drag=%s env=%s env_node=%d\n",
+              tostring(state.warp_mode), #state.warp_markers,
+              tostring(mouse_in_waveform), tostring(state.any_drag_active()),
+              tostring(state.envelopes_visible), state.env_node_hovered_idx or -99))
+          end
           if state.warp_mode and #state.warp_markers > 1
               and mouse_in_waveform and not state.any_drag_active()
               and not (state.envelopes_visible and state.env_node_hovered_idx >= 0) then
