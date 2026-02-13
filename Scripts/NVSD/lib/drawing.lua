@@ -756,7 +756,7 @@ end
 -- peaks: per-view peaks from get_peaks_for_range (each peak maps to one pixel column)
 -- view_start/view_length: pre-computed visible time range
 -- pixel_step: 1 for full resolution, 2 for half (during REAPER interaction)
-function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offset, source_item_length, source_length, view_start, view_length, ruler_y, visual_gain, is_reversed, num_channels, config, pixel_step)
+function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offset, source_item_length, source_length, view_start, view_length, ruler_y, visual_gain, is_reversed, num_channels, config, pixel_step, bounds_start, bounds_end)
   if not peaks or peaks.count == 0 or source_length <= 0 then return 0, 0 end
 
   visual_gain = visual_gain or 1.0
@@ -996,8 +996,12 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
   local bounds_line_width = 1
   local original_line_width = 3
 
-  local orig_start_px = time_to_px(0)
-  local orig_end_px = time_to_px(source_length)
+  -- Use custom boundary positions if provided (warp mode passes warp-mapped source positions)
+  local bound_start = bounds_start or 0
+  local bound_end = bounds_end or source_length
+
+  local orig_start_px = time_to_px(bound_start)
+  local orig_end_px = time_to_px(bound_end)
 
   if orig_start_px >= x and orig_start_px <= x + width then
     drawing.draw_dashed_line(draw_list, orig_start_px, bounds_top, y + height, COLOR_BOUNDS, nil, nil, original_line_width)
@@ -1006,22 +1010,25 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
     drawing.draw_dashed_line(draw_list, orig_end_px, bounds_top, y + height, COLOR_BOUNDS, nil, nil, original_line_width)
   end
 
-  local boundary = -source_length
-  while boundary >= view_start do
-    local boundary_px = time_to_px(boundary)
-    if boundary_px >= x and boundary_px <= x + width then
-      drawing.draw_dashed_line(draw_list, boundary_px, bounds_top, y + height, COLOR_BOUNDS, nil, nil, bounds_line_width)
+  -- Loop boundaries only apply when using default bounds (non-warp mode)
+  if not bounds_start then
+    local boundary = -source_length
+    while boundary >= view_start do
+      local boundary_px = time_to_px(boundary)
+      if boundary_px >= x and boundary_px <= x + width then
+        drawing.draw_dashed_line(draw_list, boundary_px, bounds_top, y + height, COLOR_BOUNDS, nil, nil, bounds_line_width)
+      end
+      boundary = boundary - source_length
     end
-    boundary = boundary - source_length
-  end
 
-  boundary = source_length * 2
-  while boundary <= view_end do
-    local boundary_px = time_to_px(boundary)
-    if boundary_px >= x and boundary_px <= x + width then
-      drawing.draw_dashed_line(draw_list, boundary_px, bounds_top, y + height, COLOR_BOUNDS, nil, nil, bounds_line_width)
+    boundary = source_length * 2
+    while boundary <= view_end do
+      local boundary_px = time_to_px(boundary)
+      if boundary_px >= x and boundary_px <= x + width then
+        drawing.draw_dashed_line(draw_list, boundary_px, bounds_top, y + height, COLOR_BOUNDS, nil, nil, bounds_line_width)
+      end
+      boundary = boundary + source_length
     end
-    boundary = boundary + source_length
   end
 
   -- Draw border around active region (clamped to source bounds for looped items)

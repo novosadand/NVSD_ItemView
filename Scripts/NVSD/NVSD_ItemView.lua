@@ -771,16 +771,23 @@ local function loop()
 
           -- Cache stretch markers and transients (only when WARP mode is active)
           if state.warp_mode then
-            -- Always refresh markers (cheap read) so external changes are picked up
-            state.warp_markers = utils.get_stretch_markers(take)
-            state.warp_markers_take = take
-
-            -- Auto-add start marker at position 0 if no markers exist
-            -- srcpos must match start_offset so the audio mapping is preserved
-            if #state.warp_markers == 0 then
-              reaper.SetTakeStretchMarker(take, -1, 0, start_offset)
-              reaper.UpdateArrange()
+            -- During start marker drag, keep original markers/map frozen.
+            -- REAPER markers are shifted each frame for arrange view,
+            -- but view coordinates stay in original pos-time system.
+            state._freeze_warp = state.dragging_start and state.marker_drag_activated
+                and state.drag_start_warp_markers
+            if not state._freeze_warp then
+              -- Always refresh markers (cheap read) so external changes are picked up
               state.warp_markers = utils.get_stretch_markers(take)
+              state.warp_markers_take = take
+
+              -- Auto-add start marker at position 0 if no markers exist
+              -- srcpos must match start_offset so the audio mapping is preserved
+              if #state.warp_markers == 0 then
+                reaper.SetTakeStretchMarker(take, -1, 0, start_offset)
+                reaper.UpdateArrange()
+                state.warp_markers = utils.get_stretch_markers(take)
+              end
             end
 
             -- Cache transient detection (runs once per source)
@@ -790,13 +797,15 @@ local function loop()
               state.transients_computed = true
             end
 
-            -- Build warp map (sorted by pos) and compute hash for cache invalidation
-            state.warp_map = utils.build_warp_map(state.warp_markers)
-            local warp_hash = 0
-            for _, sm in ipairs(state.warp_markers) do
-              warp_hash = warp_hash + sm.pos * 10000 + sm.srcpos
+            if not state._freeze_warp then
+              -- Build warp map (sorted by pos) and compute hash for cache invalidation
+              state.warp_map = utils.build_warp_map(state.warp_markers)
+              local warp_hash = 0
+              for _, sm in ipairs(state.warp_markers) do
+                warp_hash = warp_hash + sm.pos * 10000 + sm.srcpos
+              end
+              state.warp_hash = warp_hash
             end
-            state.warp_hash = warp_hash
           else
             state.warp_map = nil
           end
@@ -970,14 +979,27 @@ local function loop()
             -- In warped view, the axis is item-time (pos-space).
             -- Map full source extent into pos-time so the user can zoom out
             -- to see the entire source audio, with start/end markers showing the crop.
-            local src_pos_start = utils.warp_src_to_pos(state.warp_map, 0, playrate)
-            local src_pos_end = utils.warp_src_to_pos(state.warp_map, source_length, playrate)
+            local src_pos_start, src_pos_end
+            if (state.dragging_start or state.dragging_end)
+                and state.drag_start_src_pos_start then
+              -- Use saved positions for stable coordinates during drag
+              src_pos_start = state.drag_start_src_pos_start
+              src_pos_end = state.drag_start_src_pos_end
+            else
+              src_pos_start = utils.warp_src_to_pos(state.warp_map, 0, playrate)
+              src_pos_end = utils.warp_src_to_pos(state.warp_map, source_length, playrate)
+            end
             -- During marker drag, include the dragged range (already in pos-time)
             if (state.dragging_start or state.dragging_end) and state.drag_current_start then
               ext_start = math.min(src_pos_start, state.drag_current_start)
               ext_end = math.max(src_pos_end, state.drag_current_end)
             else
-              ext_start = math.min(src_pos_start, 0)
+              -- Include negative-pos warp markers in ext
+              ext_start = 0
+              for _, sm in ipairs(state.warp_markers) do
+                if sm.pos < ext_start then ext_start = sm.pos end
+              end
+              ext_start = math.min(src_pos_start, ext_start)
               ext_end = math.max(src_pos_end, item_length)
             end
             ext_length = ext_end - ext_start
@@ -1367,9 +1389,23 @@ local function loop()
           -- flag active pixels as looped, and is_reversed=false since warping handles everything
           local wf_source_len = is_warped_view and ext_end or source_length
           local wf_reversed = is_warped_view and false or is_reversed
+          -- Compute warp-mapped source boundaries for dashed boundary lines
+          if is_warped_view then
+            if (state.dragging_start or state.dragging_end)
+                and state.drag_start_src_pos_start then
+              state.wf_bounds_start = state.drag_start_src_pos_start
+              state.wf_bounds_end = state.drag_start_src_pos_end
+            else
+              state.wf_bounds_start = utils.warp_src_to_pos(state.warp_map, 0, playrate)
+              state.wf_bounds_end = utils.warp_src_to_pos(state.warp_map, source_length, playrate)
+            end
+          else
+            state.wf_bounds_start = nil
+            state.wf_bounds_end = nil
+          end
           local start_px, end_px = drawing.draw_waveform(draw_list, wave_x, wave_y,
             waveform_width, waveform_height,
-            state.view_peaks, view_offset, view_item_length, wf_source_len, view_start, view_length, ruler_y, item_vol, wf_reversed, state.view_num_channels, config, pixel_step)
+            state.view_peaks, view_offset, view_item_length, wf_source_len, view_start, view_length, ruler_y, item_vol, wf_reversed, state.view_num_channels, config, pixel_step, state.wf_bounds_start, state.wf_bounds_end)
 
           -- Unified coordinate conversion (used by all subsequent code)
           local function time_to_px(t)
@@ -1803,9 +1839,10 @@ local function loop()
           end
 
           -- Draw original source boundary markers in ruler
+          -- (reuse wf_bounds computed earlier for draw_waveform; nil in non-warp mode → defaults to 0/source_length)
           local COLOR_SOURCE_MARKER = 0xFFAA44FF
 
-          local orig_start_px = time_to_px(0)
+          local orig_start_px = time_to_px(state.wf_bounds_start or 0)
           if orig_start_px >= wave_x - 2 and orig_start_px <= wave_x + waveform_width + 2 then
             reaper.ImGui_DrawList_AddLine(draw_list, orig_start_px, ruler_y, orig_start_px, ruler_y + config.RULER_HEIGHT, COLOR_SOURCE_MARKER, 2)
             local bracket_len = 4
@@ -1813,7 +1850,7 @@ local function loop()
             reaper.ImGui_DrawList_AddLine(draw_list, orig_start_px, ruler_y + config.RULER_HEIGHT - 1, orig_start_px + bracket_len, ruler_y + config.RULER_HEIGHT - 1, COLOR_SOURCE_MARKER, 2)
           end
 
-          local orig_end_px = time_to_px(source_length)
+          local orig_end_px = time_to_px(state.wf_bounds_end or source_length)
           if orig_end_px >= wave_x - 2 and orig_end_px <= wave_x + waveform_width + 2 then
             reaper.ImGui_DrawList_AddLine(draw_list, orig_end_px, ruler_y, orig_end_px, ruler_y + config.RULER_HEIGHT, COLOR_SOURCE_MARKER, 2)
             local bracket_len = 4
@@ -2659,7 +2696,7 @@ local function loop()
 
             -- Constrain: don't cross adjacent markers
             local sm_count = reaper.GetTakeNumStretchMarkers(take)
-            local prev_pos, next_pos = 0, math.huge
+            local prev_pos, next_pos = -math.huge, math.huge
             for si = 0, sm_count - 1 do
               if si ~= state.warp_drag_idx then
                 local _, spos = reaper.GetTakeStretchMarker(take, si)
@@ -2966,6 +3003,8 @@ local function loop()
                   }
                 end
                 state.drag_start_warp_map = state.warp_map
+                state.drag_start_src_pos_start = utils.warp_src_to_pos(state.warp_map, 0, playrate)
+                state.drag_start_src_pos_end = utils.warp_src_to_pos(state.warp_map, source_length, playrate)
               else
                 state.drag_current_start = drag_offset
                 state.drag_current_end = drag_offset + source_item_length
@@ -2996,6 +3035,8 @@ local function loop()
                 -- In warp mode, drag coordinates are in pos-time
                 state.drag_current_start = 0
                 state.drag_current_end = item_length
+                state.drag_start_src_pos_start = utils.warp_src_to_pos(state.warp_map, 0, playrate)
+                state.drag_start_src_pos_end = utils.warp_src_to_pos(state.warp_map, source_length, playrate)
               else
                 state.drag_current_start = drag_offset
                 state.drag_current_end = drag_offset + source_item_length
@@ -3029,6 +3070,16 @@ local function loop()
             if is_warped_view then
               state.drag_current_start = 0
               state.drag_current_end = item_length
+              state.drag_start_src_pos_start = utils.warp_src_to_pos(state.warp_map, 0, playrate)
+              state.drag_start_src_pos_end = utils.warp_src_to_pos(state.warp_map, source_length, playrate)
+              -- Save original stretch markers for srcpos shifting during slide
+              state.drag_start_warp_markers = {}
+              for _, sm in ipairs(state.warp_markers) do
+                state.drag_start_warp_markers[#state.drag_start_warp_markers + 1] = {
+                  pos = sm.pos, srcpos = sm.srcpos
+                }
+              end
+              state.drag_start_warp_map = state.warp_map
             else
               state.drag_current_start = start_offset
               state.drag_current_end = start_offset + source_item_length
@@ -4022,14 +4073,31 @@ local function loop()
               if is_warped_view then
                 state.post_drag_ext_start = nil
                 state.post_drag_ext_end = nil
-                -- Stretch markers were already shifted in real-time during drag.
-                -- Just mark item dirty for undo.
+                -- Alt+drag: commit the slide by shifting all markers' pos (not srcpos).
+                -- Same as moving start marker (pos shifts by -delta) then end marker back.
+                if state.drag_alt_latched and state._alt_drag_pos_delta
+                    and state.drag_start_warp_markers then
+                  local pos_delta = state._alt_drag_pos_delta
+                  if math.abs(pos_delta) > 0.000001 then
+                    local sm_count = reaper.GetTakeNumStretchMarkers(take)
+                    for si = sm_count - 1, 0, -1 do
+                      reaper.DeleteTakeStretchMarkers(take, si)
+                    end
+                    for _, sm in ipairs(state.drag_start_warp_markers) do
+                      reaper.SetTakeStretchMarker(take, -1, sm.pos - pos_delta, sm.srcpos)
+                    end
+                  end
+                end
+                state._alt_drag_pos_delta = nil
+                -- Mark item dirty for undo
                 if state.dragging_start then
                   reaper.UpdateItemInProject(item)
                 end
                 -- Clean up saved warp state
                 state.drag_start_warp_markers = nil
                 state.drag_start_warp_map = nil
+                state.drag_start_src_pos_start = nil
+                state.drag_start_src_pos_end = nil
               else
                 state.post_drag_ext_start = state.drag_current_start
                 state.post_drag_ext_end = state.drag_current_end
@@ -4326,25 +4394,22 @@ local function loop()
             local mouse_delta_time = (mouse_delta_px / waveform_width) * state.drag_start_view_length
 
             if is_warped_view then
-              -- In warp mode: slide in pos-time, convert to source-time for D_STARTOFFS
-              local new_start_pos = mouse_delta_time  -- pos-time offset from original start (0)
-              local new_end_pos = state.drag_start_length + mouse_delta_time
-              -- Clamp to source extent in pos-time
-              local src_pos_start = utils.warp_src_to_pos(state.warp_map, 0, playrate)
-              local src_pos_end = utils.warp_src_to_pos(state.warp_map, source_length, playrate)
-              if new_start_pos < src_pos_start then
-                new_start_pos = src_pos_start
-                new_end_pos = src_pos_start + state.drag_start_length
-              end
-              if new_end_pos > src_pos_end then
-                new_end_pos = src_pos_end
-                new_start_pos = src_pos_end - state.drag_start_length
-              end
-              -- Convert new start pos-time to source-time for D_STARTOFFS
-              local new_srcpos = utils.warp_pos_to_src(state.warp_map, new_start_pos, playrate)
+              -- In warp mode: slide both markers through the warped waveform.
+              -- Equivalent to moving start then end by the same delta:
+              --   start drag shifts markers' pos by -delta, changes D_STARTOFFS, shrinks D_LENGTH
+              --   end drag grows D_LENGTH back → net: pos shifts, D_LENGTH unchanged
+              -- During drag: warp_map frozen, waveform stays still, markers move (drag_current).
+              -- On release: commit by shifting markers' pos.
+              state.drag_current_start = mouse_delta_time
+              state.drag_current_end = state.drag_start_length + mouse_delta_time
+              -- Save pos-time delta for release (shift markers' pos by -delta)
+              state._alt_drag_pos_delta = mouse_delta_time
+              -- Update D_STARTOFFS for real-time arrange view
+              local orig_map = state.drag_start_warp_map or state.warp_map
+              local new_srcpos = utils.warp_pos_to_src(orig_map, mouse_delta_time, state.drag_start_playrate)
+              new_srcpos = math.max(0, new_srcpos)
               local new_take_offset = new_srcpos - section_offset
-              state.drag_current_start = new_start_pos
-              state.drag_current_end = new_end_pos
+              if source_length > 0 then new_take_offset = new_take_offset % source_length end
               reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
               reaper.UpdateArrange()
             else
@@ -4422,9 +4487,7 @@ local function loop()
 
             if is_warped_view and state.drag_start_warp_markers then
               -- In warp mode: shift stretch markers in real time.
-              -- Allow extending left (to source start) and trimming right.
-              local min_start = -(state.drag_start_offset / state.drag_start_playrate)
-              new_start = math.max(min_start, new_start)
+              -- Allow extending left past source start (like non-warp mode).
               new_start = math.min(new_start, state.drag_start_length - 0.01)
               -- Snap to grid in pos-time
               if state.env_snap_enabled then
@@ -4448,7 +4511,7 @@ local function loop()
                   snapped_measure = measure + 1
                 end
                 local snapped_proj_t = reaper.TimeMap2_beatsToTime(0, snapped_beat, snapped_measure)
-                new_start = math.max(min_start, snapped_proj_t - item_position)
+                new_start = snapped_proj_t - item_position
                 new_start = math.min(new_start, state.drag_start_length - 0.01)
               end
               local delta = new_start
@@ -4473,9 +4536,10 @@ local function loop()
               reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
               local new_length = math.max(0.01, state.drag_start_length - delta)
               reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_length)
-              -- Update drag_current in the NEW coordinate system (after shift)
-              state.drag_current_start = 0
-              state.drag_current_end = new_length
+              -- Update drag_current in the ORIGINAL pos-time coordinate system
+              -- (warp_map is frozen, so coordinates must be relative to original)
+              state.drag_current_start = new_start  -- negative when extending left
+              state.drag_current_end = state.drag_start_length  -- original item length (unchanged)
               reaper.UpdateArrange()
             else
               local original_source_end = state.drag_start_offset + (state.drag_start_length * state.drag_start_playrate)
