@@ -1924,7 +1924,8 @@ local function loop()
           if state.warp_mode and #state.warp_markers > 1
               and mouse_in_waveform and not state.any_drag_active()
               and not (state.envelopes_visible and state.env_node_hovered_idx >= 0) then
-            local HIT_R = 10  -- radius for proximity check
+            local HIT_R = 18  -- radius for proximity check (generous for 4K)
+            local TRI_H_HALF = 5  -- offset hit center to middle of triangle (h=10, half=5)
             local best_dist = HIT_R + 1
             for i = 1, #state.warp_markers - 1 do
               local sm1 = state.warp_markers[i]
@@ -1934,15 +1935,15 @@ local function loop()
               local slope = sm1.slope or 0
               local rate = (sm2.pos ~= sm1.pos) and (sm2.srcpos - sm1.srcpos) / (sm2.pos - sm1.pos) or 1
               local y_left, y_right = drawing.slope_handle_positions(wave_y, waveform_height, slope, rate)
-              -- Check left handle
-              local dx, dy = mouse_x - px1, mouse_y - y_left
+              -- Check left handle (hit center at middle of triangle, not top)
+              local dx, dy = mouse_x - px1, mouse_y - (y_left + TRI_H_HALF)
               local dist = math.sqrt(dx * dx + dy * dy)
               if dist < best_dist then
                 best_dist = dist
                 state.slope_hovered_segment = i
               end
               -- Check right handle
-              dx, dy = mouse_x - px2, mouse_y - y_right
+              dx, dy = mouse_x - px2, mouse_y - (y_right + TRI_H_HALF)
               dist = math.sqrt(dx * dx + dy * dy)
               if dist < best_dist then
                 best_dist = dist

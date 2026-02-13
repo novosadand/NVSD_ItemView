@@ -2272,10 +2272,10 @@ function drawing.slope_handle_positions(wave_y, wave_h, slope, rate)
 end
 
 -- Draw a single slope handle triangle at the given (x, y) position
--- Small downward-pointing orange triangle centered on the curve endpoint
+-- Downward-pointing orange triangle centered on the curve endpoint
 function drawing.draw_slope_handle(draw_list, x, y, hover_state)
-  local hw = 5   -- half-width
-  local h = 6    -- triangle height (points downward from y)
+  local hw = 8   -- half-width
+  local h = 10   -- triangle height (points downward from y)
 
   local alpha
   if hover_state == 2 then alpha = 0xFF       -- dragging: full
