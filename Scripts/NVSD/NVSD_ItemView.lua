@@ -33,6 +33,27 @@ config.settings = settings
 settings.load()
 config.refresh_colors()
 
+-- One-time check: recommend JS_ReaScriptAPI if missing
+if not reaper.JS_Mouse_SetPosition then
+  local dismissed = reaper.GetExtState("NVSD_ItemView", "js_ext_dismissed")
+  if dismissed ~= "1" then
+    local msg = "NVSD ItemView works best with the JS_ReaScriptAPI extension.\n\n"
+        .. "Without it, knob/slider dragging has limited range (cursor can hit screen edges).\n\n"
+    if reaper.ReaPack_BrowsePackages then
+      msg = msg .. "Click OK to open ReaPack and install it, or Cancel to skip."
+      local ret = reaper.ShowMessageBox(msg, "NVSD ItemView - Optional Extension", 1)
+      if ret == 1 then
+        reaper.ReaPack_BrowsePackages("js_ReaScriptAPI")
+      end
+    else
+      msg = msg .. "Install via ReaPack: Extensions > ReaPack > Browse Packages > search \"js_ReaScriptAPI\"\n"
+          .. "Or download from: github.com/juliansader/ReaExtensions"
+      reaper.ShowMessageBox(msg, "NVSD ItemView - Optional Extension", 0)
+    end
+    reaper.SetExtState("NVSD_ItemView", "js_ext_dismissed", "1", true)
+  end
+end
+
 -- Auto-reload: Detect file changes and restart script
 local function get_file_size(path)
   if not path then return 0 end
