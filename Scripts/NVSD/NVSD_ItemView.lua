@@ -33,6 +33,14 @@ config.settings = settings
 settings.load()
 config.refresh_colors()
 
+-- Convert REAPER native color (0x00BBGGRR on Windows) to ImGui (0xRRGGBBAA)
+local function reaper_color_to_imgui(native_color)
+  local r = native_color % 256
+  local g = math.floor(native_color / 256) % 256
+  local b = math.floor(native_color / 65536) % 256
+  return r * 0x1000000 + g * 0x10000 + b * 0x100 + 0xFF
+end
+
 -- One-time check: recommend JS_ReaScriptAPI if missing
 if not reaper.JS_Mouse_SetPosition then
   local dismissed = reaper.GetExtState("NVSD_ItemView", "js_ext_dismissed")
@@ -955,8 +963,21 @@ local function loop()
           state.info_bar_height = #state.toolbar_buttons > 0
               and config.INFO_BAR_HEIGHT_TOOLBAR
               or config.INFO_BAR_HEIGHT_BASE
-          local waveform_height = math.max(50, avail_h - (config.WAVEFORM_MARGIN_V * 2) - state.info_bar_height - config.RULER_HEIGHT - warp_bar_height - config.TIME_RULER_HEIGHT - envelope_bar_height)
-          local panel_height = state.info_bar_height + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height
+          -- Get item/track color for strip (stored in state to avoid local variable pressure)
+          state.strip_color = nil
+          state.strip_h = 0
+          if item then
+            state.strip_color = reaper.GetDisplayedMediaItemColor(item)
+            if state.strip_color ~= 0 then
+              state.strip_color = reaper_color_to_imgui(state.strip_color)
+              state.strip_h = config.COLOR_STRIP_HEIGHT
+            else
+              state.strip_color = nil
+            end
+          end
+
+          local waveform_height = math.max(50, avail_h - (config.WAVEFORM_MARGIN_V * 2) - state.info_bar_height - config.RULER_HEIGHT - warp_bar_height - config.TIME_RULER_HEIGHT - envelope_bar_height - state.strip_h)
+          local panel_height = state.strip_h + state.info_bar_height + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height
 
           local two_col_panel = panel_height < 270
           local effective_panel_width = two_col_panel
@@ -968,12 +989,19 @@ local function loop()
           local waveform_width = math.max(100, avail_w - (config.WAVEFORM_MARGIN_H * 2) - total_left_width - pitch_gutter)
 
           local cursor_x, cursor_y = reaper.ImGui_GetCursorScreenPos(ctx)
+
+          -- Draw color strip at top of window
+          if state.strip_color then
+            reaper.ImGui_DrawList_AddRectFilled(reaper.ImGui_GetWindowDrawList(ctx),
+              cursor_x, cursor_y, cursor_x + avail_w, cursor_y + state.strip_h, state.strip_color)
+          end
+
           local left_col_x = cursor_x + config.WINDOW_PADDING
-          local left_col_y = cursor_y + config.WAVEFORM_MARGIN_V
+          local left_col_y = cursor_y + state.strip_h + config.WAVEFORM_MARGIN_V
           local panel_x = left_col_x + config.LEFT_COLUMN_WIDTH
-          local panel_y = cursor_y + config.WAVEFORM_MARGIN_V
+          local panel_y = cursor_y + state.strip_h + config.WAVEFORM_MARGIN_V
           local wave_x = cursor_x + total_left_width + config.WAVEFORM_MARGIN_H + pitch_gutter
-          local info_bar_y = cursor_y + config.WAVEFORM_MARGIN_V
+          local info_bar_y = cursor_y + state.strip_h + config.WAVEFORM_MARGIN_V
           local ruler_y = info_bar_y + state.info_bar_height
           local warp_bar_y = ruler_y + config.RULER_HEIGHT
           local wave_y = warp_bar_y + warp_bar_height
@@ -981,7 +1009,7 @@ local function loop()
           local envelope_bar_y = time_ruler_y + config.TIME_RULER_HEIGHT
 
           -- Reserve the full area
-          local total_height = config.WAVEFORM_MARGIN_V + state.info_bar_height + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height + config.WAVEFORM_MARGIN_V
+          local total_height = state.strip_h + config.WAVEFORM_MARGIN_V + state.info_bar_height + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height + config.WAVEFORM_MARGIN_V
           reaper.ImGui_InvisibleButton(ctx, "waveform_area", avail_w, math.max(avail_h, total_height))
 
           local mouse_x, mouse_y = reaper.ImGui_GetMousePos(ctx)

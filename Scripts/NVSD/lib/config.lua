@@ -11,6 +11,7 @@ config.MARKER_WIDTH = 12
 config.WINDOW_PADDING = 2
 config.WAVEFORM_MARGIN_H = 12
 config.WAVEFORM_MARGIN_V = 2
+config.COLOR_STRIP_HEIGHT = 4
 config.INFO_BAR_HEIGHT = 18
 config.INFO_BAR_HEIGHT_BASE = 18      -- no toolbar buttons
 config.INFO_BAR_HEIGHT_TOOLBAR = 36   -- with toolbar buttons (fits 30px REAPER icons)
