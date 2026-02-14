@@ -272,7 +272,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
   local dropdown_bg, text_color, arrow_color
   if dropdown_enabled then
-    dropdown_bg = mouse_in_dropdown and COLOR_BTN_HOVER or config.COLOR_GRID_BAR
+    dropdown_bg = mouse_in_dropdown and 0x4A4A4AFF or config.COLOR_GRID_BAR
     text_color = mouse_in_dropdown and 0xFFFFFFFF or config.COLOR_INFO_BAR_TEXT
     arrow_color = mouse_in_dropdown and 0xFFFFFFFF or config.COLOR_RULER_TEXT
   else
@@ -283,6 +283,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   end
 
   reaper.ImGui_DrawList_AddRectFilled(draw_list, dropdown_x, dropdown_y, dropdown_x + dropdown_width, dropdown_y + dropdown_btn_height, dropdown_bg, 2)
+  reaper.ImGui_DrawList_AddRect(draw_list, dropdown_x, dropdown_y, dropdown_x + dropdown_width, dropdown_y + dropdown_btn_height, mouse_in_dropdown and 0x666666FF or 0x00000000, 2)
   reaper.ImGui_DrawList_AddText(draw_list, dropdown_x + 3, dropdown_y + 1, text_color, current_mode_name)
   reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
     dropdown_x + dropdown_width - 10, dropdown_y + 4,
