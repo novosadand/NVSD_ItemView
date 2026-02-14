@@ -1066,9 +1066,8 @@ local function draw_icon_picker_content(ctx, icons, child_id)
   return picked
 end
 
-function drawing.draw_toolbar_popups(ctx, state, settings, config, ui_font_large)
+function drawing.draw_toolbar_popups(ctx, state, settings, config)
   if not state then return end
-  local has_large_font = ui_font_large and reaper.ImGui_PushFont
 
   -- Trigger context menu popup
   if state.tb_ctx_open then
@@ -1163,7 +1162,6 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config, ui_font_large
   local edit_flags = reaper.ImGui_WindowFlags_NoTitleBar()
                    + reaper.ImGui_WindowFlags_AlwaysAutoResize()
   if reaper.ImGui_BeginPopupModal(ctx, "Edit Toolbar Button##tb_edit", nil, edit_flags) then
-    if has_large_font then reaper.ImGui_PushFont(ctx, ui_font_large) end
     -- Capture keyboard so REAPER doesn't intercept Ctrl+V etc.
     reaper.ImGui_SetNextFrameWantCaptureKeyboard(ctx, true)
 
@@ -1324,7 +1322,6 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config, ui_font_large
     reaper.ImGui_PopStyleColor(ctx, 2)
     reaper.ImGui_PopStyleVar(ctx, 2)
 
-    if has_large_font then reaper.ImGui_PopFont(ctx) end
     reaper.ImGui_EndPopup(ctx)
   end
   reaper.ImGui_PopStyleColor(ctx, 2)
@@ -1350,7 +1347,6 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config, ui_font_large
   local direct_icon_flags = reaper.ImGui_WindowFlags_NoTitleBar()
                           + reaper.ImGui_WindowFlags_NoScrollbar()
   if reaper.ImGui_BeginPopupModal(ctx, "Choose Icon Direct##tb_icon_direct", nil, direct_icon_flags) then
-    if has_large_font then reaper.ImGui_PushFont(ctx, ui_font_large) end
     local icons = state.tb_icon_list or {}
 
     local picked = draw_icon_picker_content(ctx, icons, "tb_icon_grid_d")
@@ -1372,7 +1368,6 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config, ui_font_large
       reaper.ImGui_CloseCurrentPopup(ctx)
     end
 
-    if has_large_font then reaper.ImGui_PopFont(ctx) end
     reaper.ImGui_EndPopup(ctx)
   end
   reaper.ImGui_PopStyleColor(ctx, 2)
