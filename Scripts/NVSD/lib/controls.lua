@@ -273,8 +273,8 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   local dropdown_bg, text_color, arrow_color
   if dropdown_enabled then
     dropdown_bg = mouse_in_dropdown and COLOR_BTN_HOVER or config.COLOR_GRID_BAR
-    text_color = config.COLOR_INFO_BAR_TEXT
-    arrow_color = config.COLOR_RULER_TEXT
+    text_color = mouse_in_dropdown and 0xFFFFFFFF or config.COLOR_INFO_BAR_TEXT
+    arrow_color = mouse_in_dropdown and 0xFFFFFFFF or config.COLOR_RULER_TEXT
   else
     dropdown_bg = config.COLOR_RULER_BG
     text_color = config.COLOR_RULER_TICK
@@ -291,11 +291,34 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     arrow_color)
 
   if mouse_in_dropdown and dropdown_enabled and not state.warp_dropdown_open then
-    drawing.tooltip(ctx, "pitch_mode", "Pitch shift algorithm")
+    drawing.tooltip(ctx, "pitch_mode", "Pitch shift algorithm (scroll to cycle)")
   end
 
   if dropdown_enabled and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_dropdown then
     state.warp_dropdown_open = not state.warp_dropdown_open
+  end
+
+  -- Mouse wheel on dropdown: cycle through algorithms
+  if dropdown_enabled and mouse_in_dropdown and take then
+    local wheel = reaper.ImGui_GetMouseWheel(ctx)
+    if wheel ~= 0 then
+      local current_idx = 1
+      for i, mode in ipairs(config.PITCH_MODES) do
+        if mode.value == current_mode or
+            (current_mode >= 0 and mode.value >= 0 and (mode.value >> 16) == (current_mode >> 16)) then
+          current_idx = i
+          break
+        end
+      end
+      local new_idx = current_idx + (wheel > 0 and -1 or 1)
+      new_idx = math.max(1, math.min(#config.PITCH_MODES, new_idx))
+      if new_idx ~= current_idx then
+        reaper.Undo_BeginBlock()
+        reaper.SetMediaItemTakeInfo_Value(take, "I_PITCHMODE", config.PITCH_MODES[new_idx].value)
+        reaper.UpdateArrange()
+        reaper.Undo_EndBlock("NVSD_ItemView: Set pitch mode", -1)
+      end
+    end
   end
 
   if state.warp_dropdown_open then
