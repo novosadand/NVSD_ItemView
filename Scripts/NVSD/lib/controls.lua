@@ -409,9 +409,94 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     end
   end
 
-  -- Second row: Reverse and Edit
-  local row2_y = warp_btn_y + btn_height + btn_margin + dropdown_height + clear_btn_height + 4
+  -- Stretch x2 / /2 buttons (Ableton-style double/half speed)
   local gap = 6
+  local stretch_row_y = clear_btn_y + clear_btn_height + 4
+  local stretch_btn_width = math.floor((warp_btn_width - gap) / 2)
+  local x2_btn_x = left_col_x + btn_padding
+  local half_btn_x = x2_btn_x + stretch_btn_width + gap
+  local stretch_btn_height = 20
+
+  local mouse_in_x2 = mouse_x >= x2_btn_x and mouse_x <= x2_btn_x + stretch_btn_width
+                       and mouse_y >= stretch_row_y and mouse_y <= stretch_row_y + stretch_btn_height
+  local mouse_in_half = mouse_x >= half_btn_x and mouse_x <= half_btn_x + stretch_btn_width
+                        and mouse_y >= stretch_row_y and mouse_y <= stretch_row_y + stretch_btn_height
+
+  local x2_bg = mouse_in_x2 and COLOR_BTN_HOVER or COLOR_BTN_OFF
+  local half_bg = mouse_in_half and COLOR_BTN_HOVER or COLOR_BTN_OFF
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, x2_btn_x, stretch_row_y, x2_btn_x + stretch_btn_width, stretch_row_y + stretch_btn_height, x2_bg, 3)
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, half_btn_x, stretch_row_y, half_btn_x + stretch_btn_width, stretch_row_y + stretch_btn_height, half_bg, 3)
+
+  local x2_text_w = reaper.ImGui_CalcTextSize(ctx, "x2")
+  reaper.ImGui_DrawList_AddText(draw_list, x2_btn_x + (stretch_btn_width - x2_text_w) / 2, stretch_row_y + (stretch_btn_height - text_height) / 2, COLOR_BTN_TEXT, "x2")
+  local half_text_w = reaper.ImGui_CalcTextSize(ctx, "/2")
+  reaper.ImGui_DrawList_AddText(draw_list, half_btn_x + (stretch_btn_width - half_text_w) / 2, stretch_row_y + (stretch_btn_height - text_height) / 2, COLOR_BTN_TEXT, "/2")
+
+  if mouse_in_x2 then
+    drawing.tooltip(ctx, "x2_btn", "Double speed (halve length)")
+  end
+  if mouse_in_half then
+    drawing.tooltip(ctx, "half_btn", "Half speed (double length)")
+  end
+
+  -- x2 click: double speed
+  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_x2 then
+    if take and item then
+      reaper.Undo_BeginBlock()
+      local sm_count = reaper.GetTakeNumStretchMarkers(take)
+      if sm_count > 0 then
+        -- With stretch markers: scale all pos by 0.5, halve item length
+        for i = 0, sm_count - 1 do
+          local _, pos, srcpos = reaper.GetTakeStretchMarker(take, i)
+          reaper.SetTakeStretchMarker(take, i, pos * 0.5, srcpos)
+        end
+        local cur_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+        reaper.SetMediaItemInfo_Value(item, "D_LENGTH", cur_length * 0.5)
+      else
+        -- Without stretch markers: double playrate, halve length
+        local cur_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
+        local cur_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+        reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", cur_playrate * 2)
+        reaper.SetMediaItemInfo_Value(item, "D_LENGTH", cur_length * 0.5)
+      end
+      reaper.UpdateItemInProject(item)
+      reaper.UpdateArrange()
+      state.warp_markers = utils.get_stretch_markers(take)
+      state.pending_cache_invalidation = 3
+      reaper.Undo_EndBlock("NVSD_ItemView: Stretch x2", -1)
+    end
+  end
+
+  -- /2 click: half speed
+  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_half then
+    if take and item then
+      reaper.Undo_BeginBlock()
+      local sm_count = reaper.GetTakeNumStretchMarkers(take)
+      if sm_count > 0 then
+        -- With stretch markers: scale all pos by 2, double item length
+        for i = 0, sm_count - 1 do
+          local _, pos, srcpos = reaper.GetTakeStretchMarker(take, i)
+          reaper.SetTakeStretchMarker(take, i, pos * 2, srcpos)
+        end
+        local cur_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+        reaper.SetMediaItemInfo_Value(item, "D_LENGTH", cur_length * 2)
+      else
+        -- Without stretch markers: halve playrate, double length
+        local cur_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
+        local cur_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+        reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", cur_playrate * 0.5)
+        reaper.SetMediaItemInfo_Value(item, "D_LENGTH", cur_length * 2)
+      end
+      reaper.UpdateItemInProject(item)
+      reaper.UpdateArrange()
+      state.warp_markers = utils.get_stretch_markers(take)
+      state.pending_cache_invalidation = 3
+      reaper.Undo_EndBlock("NVSD_ItemView: Stretch /2", -1)
+    end
+  end
+
+  -- Second row: Reverse and Edit
+  local row2_y = stretch_row_y + stretch_btn_height + 4
   local rev_btn_width = 60
   local edit_btn_width = config.LEFT_COLUMN_WIDTH - (btn_padding * 2) - rev_btn_width - gap
 
