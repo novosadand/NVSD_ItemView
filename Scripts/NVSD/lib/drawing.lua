@@ -722,6 +722,7 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
         state.tb_ctx_open = true
         state.tb_ctx_x = mouse_x
         state.tb_ctx_y = mouse_y
+        state.tb_bar_y = y
       end
 
       -- Track left edge for text clipping
@@ -951,6 +952,7 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
       state.tb_ctx_open = true
       state.tb_ctx_x = mouse_x
       state.tb_ctx_y = mouse_y
+      state.tb_bar_y = y
     end
   end
 
@@ -1043,34 +1045,67 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
     state.tb_edit_open = false
   end
 
-  -- Render edit modal (above the button, not overlapping it)
+  -- Render edit modal (above the info bar with consistent styling)
   local popup_x = state.tb_ctx_x or 0
-  local popup_y = (state.tb_ctx_y or 0) - 10
+  local popup_y = (state.tb_bar_y or state.tb_ctx_y or 0) - 4
   reaper.ImGui_SetNextWindowPos(ctx, popup_x, popup_y, reaper.ImGui_Cond_Appearing(), 0.5, 1.0)
   reaper.ImGui_SetNextWindowSize(ctx, 340, 0, reaper.ImGui_Cond_Appearing())
-  if reaper.ImGui_BeginPopupModal(ctx, "Edit Toolbar Button##tb_edit", nil, reaper.ImGui_WindowFlags_AlwaysAutoResize()) then
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowPadding(), 20, 16)
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowRounding(), 8)
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_FrameRounding(), 4)
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_ItemSpacing(), 8, 8)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_PopupBg(), 0x2A2A2AFF)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Border(), 0x555555FF)
+  local edit_flags = reaper.ImGui_WindowFlags_NoTitleBar()
+                   + reaper.ImGui_WindowFlags_AlwaysAutoResize()
+  if reaper.ImGui_BeginPopupModal(ctx, "Edit Toolbar Button##tb_edit", nil, edit_flags) then
     -- Capture keyboard so REAPER doesn't intercept Ctrl+V etc.
     reaper.ImGui_SetNextFrameWantCaptureKeyboard(ctx, true)
-    reaper.ImGui_Text(ctx, "Label:")
+
+    -- Centered title
+    local edit_title = state.tb_edit_idx and "Edit Toolbar Button" or "Add Toolbar Button"
+    local title_w = reaper.ImGui_CalcTextSize(ctx, edit_title)
+    local content_w = reaper.ImGui_GetContentRegionAvail(ctx)
+    reaper.ImGui_SetCursorPosX(ctx, reaper.ImGui_GetCursorPosX(ctx) + (content_w - title_w) / 2)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xFFFFFFFF)
+    reaper.ImGui_Text(ctx, edit_title)
+    reaper.ImGui_PopStyleColor(ctx)
+
+    reaper.ImGui_Spacing(ctx)
+    local edl = reaper.ImGui_GetWindowDrawList(ctx)
+    local esx, esy = reaper.ImGui_GetCursorScreenPos(ctx)
+    reaper.ImGui_DrawList_AddLine(edl, esx, esy, esx + content_w, esy, 0x444444FF, 1)
+    reaper.ImGui_Dummy(ctx, 0, 4)
+
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xBBBBBBFF)
+    reaper.ImGui_Text(ctx, "Label")
+    reaper.ImGui_PopStyleColor(ctx)
     reaper.ImGui_SetNextItemWidth(ctx, -1)
     local _, new_label = reaper.ImGui_InputText(ctx, "##tb_ed_label", state.tb_edit_label or "")
     state.tb_edit_label = new_label
 
     reaper.ImGui_Spacing(ctx)
-    reaper.ImGui_Text(ctx, "Action Command ID:")
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xBBBBBBFF)
+    reaper.ImGui_Text(ctx, "Action Command ID")
+    reaper.ImGui_PopStyleColor(ctx)
     reaper.ImGui_SetNextItemWidth(ctx, -1)
     local _, new_cmd = reaper.ImGui_InputText(ctx, "##tb_ed_cmd", state.tb_edit_cmd or "")
     state.tb_edit_cmd = new_cmd
 
-    reaper.ImGui_Spacing(ctx)
-    reaper.ImGui_TextColored(ctx, 0x888888FF, "Find in REAPER: Actions > Show action list > Copy command ID")
+    reaper.ImGui_Dummy(ctx, 0, 2)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0x888888FF)
+    reaper.ImGui_TextWrapped(ctx, "Find in REAPER: Actions > Show action list > Copy command ID")
+    reaper.ImGui_PopStyleColor(ctx)
 
-    reaper.ImGui_Spacing(ctx)
-    reaper.ImGui_Separator(ctx)
-    reaper.ImGui_Spacing(ctx)
+    reaper.ImGui_Dummy(ctx, 0, 4)
+    local esx2, esy2 = reaper.ImGui_GetCursorScreenPos(ctx)
+    reaper.ImGui_DrawList_AddLine(edl, esx2, esy2, esx2 + content_w, esy2, 0x444444FF, 1)
+    reaper.ImGui_Dummy(ctx, 0, 4)
 
     -- Icon preview
-    reaper.ImGui_Text(ctx, "Icon:")
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xBBBBBBFF)
+    reaper.ImGui_Text(ctx, "Icon")
+    reaper.ImGui_PopStyleColor(ctx)
     reaper.ImGui_SameLine(ctx)
     if state.tb_edit_icon and state.tb_edit_icon ~= "" then
       local icon_img, icon_uv = get_toolbar_icon(ctx, state.tb_edit_icon)
@@ -1081,51 +1116,68 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
         pcall(reaper.ImGui_DrawList_AddImage, dl, icon_img, cx, cy, cx + 20, cy + 20, 0, 0, icon_uv or 1/3, 1, 0xFFFFFFFF)
         reaper.ImGui_SameLine(ctx)
       end
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x404040FF)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x505050FF)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x606060FF)
       if reaper.ImGui_SmallButton(ctx, "Clear##tb_ed_icon_clear") then
         state.tb_edit_icon = nil
       end
+      reaper.ImGui_PopStyleColor(ctx, 3)
       reaper.ImGui_SameLine(ctx)
     else
-      reaper.ImGui_TextColored(ctx, 0x888888FF, "(none)")
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0x888888FF)
+      reaper.ImGui_Text(ctx, "(none)")
+      reaper.ImGui_PopStyleColor(ctx)
       reaper.ImGui_SameLine(ctx)
     end
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x404040FF)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x505050FF)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x606060FF)
     if reaper.ImGui_SmallButton(ctx, "Browse...##tb_ed_icon") then
       state.tb_icon_idx = state.tb_edit_idx  -- will update on pick
       state.tb_icon_open = true
       state.tb_icon_from_edit = true  -- flag: update edit state, not settings directly
       state.tb_icon_list = nil
     end
+    reaper.ImGui_PopStyleColor(ctx, 3)
 
-    reaper.ImGui_Spacing(ctx)
-    reaper.ImGui_Separator(ctx)
-    reaper.ImGui_Spacing(ctx)
+    reaper.ImGui_Dummy(ctx, 0, 4)
+    local esx3, esy3 = reaper.ImGui_GetCursorScreenPos(ctx)
+    reaper.ImGui_DrawList_AddLine(edl, esx3, esy3, esx3 + content_w, esy3, 0x444444FF, 1)
+    reaper.ImGui_Dummy(ctx, 0, 4)
 
-    -- Save / Cancel
+    -- Save / Cancel buttons
+    local btn_w = (content_w - 8) / 2
     local can_save = state.tb_edit_label ~= "" and state.tb_edit_cmd ~= ""
-    if not can_save then
-      reaper.ImGui_BeginDisabled(ctx)
+
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x404040FF)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x505050FF)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x606060FF)
+    if reaper.ImGui_Button(ctx, "Cancel", btn_w, 30) then
+      reaper.ImGui_CloseCurrentPopup(ctx)
     end
-    if reaper.ImGui_Button(ctx, "Save", 80, 0) then
+    reaper.ImGui_PopStyleColor(ctx, 3)
+
+    reaper.ImGui_SameLine(ctx)
+
+    if not can_save then reaper.ImGui_BeginDisabled(ctx) end
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x4A90D9FF)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x5AA0E9FF)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x3A80C9FF)
+    if reaper.ImGui_Button(ctx, "Save", btn_w, 30) then
       local btns2 = settings.current.toolbar_buttons
       if state.tb_edit_idx and state.tb_edit_idx >= 1 and state.tb_edit_idx <= #btns2 then
-        -- Update existing
         btns2[state.tb_edit_idx].label = state.tb_edit_label
         btns2[state.tb_edit_idx].cmd = state.tb_edit_cmd
         btns2[state.tb_edit_idx].icon = state.tb_edit_icon
         settings.save_toolbar()
       else
-        -- Add new
         settings.add_toolbar_button(state.tb_edit_label, state.tb_edit_cmd, state.tb_edit_icon)
       end
       reaper.ImGui_CloseCurrentPopup(ctx)
     end
-    if not can_save then
-      reaper.ImGui_EndDisabled(ctx)
-    end
-    reaper.ImGui_SameLine(ctx)
-    if reaper.ImGui_Button(ctx, "Cancel", 80, 0) then
-      reaper.ImGui_CloseCurrentPopup(ctx)
-    end
+    reaper.ImGui_PopStyleColor(ctx, 3)
+    if not can_save then reaper.ImGui_EndDisabled(ctx) end
 
     -- Icon picker popup (nested INSIDE edit modal so it doesn't close the modal)
     if state.tb_icon_open and state.tb_icon_from_edit then
@@ -1200,6 +1252,8 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
 
     reaper.ImGui_EndPopup(ctx)
   end
+  reaper.ImGui_PopStyleColor(ctx, 2)
+  reaper.ImGui_PopStyleVar(ctx, 4)
 
   -- Icon picker for direct context menu "Change Icon..." (NOT from edit popup)
   if state.tb_icon_open and not state.tb_icon_from_edit then
