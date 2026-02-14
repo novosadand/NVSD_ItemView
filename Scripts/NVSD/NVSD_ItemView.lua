@@ -326,6 +326,9 @@ local function loop()
                            or reaper.ImGui_IsPopupOpen(ctx, "Choose Icon Direct##tb_icon_direct")
                            or settings_ui.is_open()
 
+    -- When a popup modal is open, suppress waveform mouse interaction so popup gets full input
+    if text_input_active then reaper_is_active = false end
+
     -- Auto-focus window when hovered with Ctrl held (enables scroll-to-zoom without clicking first)
     -- Skip when a popup modal is open (SetWindowFocus would steal focus from the popup)
     local is_hovered = reaper.ImGui_IsWindowHovered(ctx, reaper.ImGui_HoveredFlags_ChildWindows())

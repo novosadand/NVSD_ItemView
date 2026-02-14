@@ -639,7 +639,7 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   local toolbar_right_edge = (has_cues and cue_btn_x or gear_btn_x) - 6
 
   if toolbar_buttons and #toolbar_buttons > 0 then
-    local tb_btn_h = 18
+    local tb_btn_h = 30
     local tb_btn_y = y + math.floor((height - tb_btn_h) / 2)
     local gap = config.TOOLBAR_BTN_GAP
 
@@ -978,10 +978,10 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
     state.tb_edit_open = false
   end
 
-  -- Render edit modal (below the info bar, not overlapping the button)
+  -- Render edit modal (above the button, not overlapping it)
   local popup_x = state.tb_ctx_x or 0
-  local popup_y = (state.tb_ctx_y or 0) + 20
-  reaper.ImGui_SetNextWindowPos(ctx, popup_x, popup_y, reaper.ImGui_Cond_Appearing(), 0.5, 0.0)
+  local popup_y = (state.tb_ctx_y or 0) - 10
+  reaper.ImGui_SetNextWindowPos(ctx, popup_x, popup_y, reaper.ImGui_Cond_Appearing(), 0.5, 1.0)
   reaper.ImGui_SetNextWindowSize(ctx, 340, 0, reaper.ImGui_Cond_Appearing())
   if reaper.ImGui_BeginPopupModal(ctx, "Edit Toolbar Button##tb_edit", nil, reaper.ImGui_WindowFlags_AlwaysAutoResize()) then
     -- Capture keyboard so REAPER doesn't intercept Ctrl+V etc.
