@@ -1665,17 +1665,6 @@ local function loop()
               end
             end
 
-            -- Draw rate text between adjacent stretch markers
-            for i = 1, #state.warp_markers - 1 do
-              local sm1 = state.warp_markers[i]
-              local sm2 = state.warp_markers[i + 1]
-              if sm2.pos ~= sm1.pos then
-                local rate = (sm2.srcpos - sm1.srcpos) / (sm2.pos - sm1.pos)
-                local px1 = is_warped_view and time_to_px(sm1.pos) or time_to_px(sm1.srcpos)
-                local px2 = is_warped_view and time_to_px(sm2.pos) or time_to_px(sm2.srcpos)
-                drawing.draw_warp_rate(draw_list, px1, px2, warp_bar_y, rate, config)
-              end
-            end
           end
 
           -- Draw overlays on inactive regions (warped mode: dim outside item bounds)
