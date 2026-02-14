@@ -547,8 +547,10 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   reaper.ImGui_DrawList_AddLine(draw_list, x, y + height, x + width, y + height, config.COLOR_CENTERLINE, 1)
 
   -- Settings button (gear icon) on the right
-  local gear_btn_h = 14
-  local gear_btn_w = gear_btn_h + 4
+  -- Scale up to match toolbar buttons when they exist
+  local has_toolbar = toolbar_buttons and #toolbar_buttons > 0
+  local gear_btn_h = has_toolbar and 30 or 14
+  local gear_btn_w = has_toolbar and 30 or (gear_btn_h + 4)
   local gear_btn_x = x + width - gear_btn_w - 3
   local gear_btn_y = y + math.floor((height - gear_btn_h) / 2)
   local gear_cx = gear_btn_x + gear_btn_w / 2
@@ -562,9 +564,9 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   reaper.ImGui_DrawList_AddRectFilled(draw_list, gear_btn_x, gear_btn_y,
       gear_btn_x + gear_btn_w, gear_btn_y + gear_btn_h, gear_btn_bg, 3)
 
-  -- Draw gear icon
+  -- Draw gear icon (scale radius with button size)
   local gear_color = mouse_in_gear and config.COLOR_BTN_TEXT or config.COLOR_INFO_BAR_TEXT
-  local outer_r = 5
+  local outer_r = has_toolbar and 10 or 5
   local teeth = 6
 
   reaper.ImGui_DrawList_AddCircleFilled(draw_list, gear_cx, gear_cy, outer_r * 0.72, gear_color, 16)
@@ -574,7 +576,8 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
     local tooth_y = gear_cy + math.sin(angle) * outer_r * 0.92
     reaper.ImGui_DrawList_AddCircleFilled(draw_list, tooth_x, tooth_y, outer_r * 0.28, gear_color, 8)
   end
-  reaper.ImGui_DrawList_AddCircleFilled(draw_list, gear_cx, gear_cy, 1.8, config.COLOR_INFO_BAR_BG, 10)
+  local inner_r = has_toolbar and 3.6 or 1.8
+  reaper.ImGui_DrawList_AddCircleFilled(draw_list, gear_cx, gear_cy, inner_r, config.COLOR_INFO_BAR_BG, 10)
 
   if mouse_in_gear then
     local gear_tip = "Settings"
@@ -594,8 +597,8 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   local cue_btn_x, cue_btn_w
   if has_cues then
     local cue_label = "CUE"
-    cue_btn_w = reaper.ImGui_CalcTextSize(ctx, cue_label) + 8
-    local cue_btn_h = 14
+    local cue_btn_h = has_toolbar and 30 or 14
+    cue_btn_w = reaper.ImGui_CalcTextSize(ctx, cue_label) + (has_toolbar and 16 or 8)
     cue_btn_x = gear_btn_x - cue_btn_w - 4
     local cue_btn_y = y + math.floor((height - cue_btn_h) / 2)
 
@@ -1089,6 +1092,7 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
         state.tb_edit_label = btn.label
         state.tb_edit_cmd = btn.cmd
         state.tb_edit_icon = btn.icon
+        state.tb_edit_auto_label = nil
         state.tb_edit_open = true
       end
 
@@ -1136,6 +1140,7 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
       state.tb_edit_label = ""
       state.tb_edit_cmd = ""
       state.tb_edit_icon = nil
+      state.tb_edit_auto_label = nil
       state.tb_edit_open = true
     end
 
@@ -1193,11 +1198,30 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
     reaper.ImGui_PopStyleColor(ctx)
     reaper.ImGui_SetNextItemWidth(ctx, -1)
     local _, new_cmd = reaper.ImGui_InputText(ctx, "##tb_ed_cmd", state.tb_edit_cmd or "")
+    -- Auto-fill label when command ID changes and label is empty or was auto-filled
+    if new_cmd ~= (state.tb_edit_cmd or "") and new_cmd ~= "" then
+      local cmd_id = tonumber(new_cmd) or reaper.NamedCommandLookup(new_cmd)
+      if cmd_id and cmd_id > 0 then
+        local name
+        if reaper.kbd_getTextFromCmd then
+          name = reaper.kbd_getTextFromCmd(cmd_id, 0)  -- 0 = Main section
+        elseif reaper.CF_GetCommandText then
+          name = reaper.CF_GetCommandText(0, cmd_id)  -- SWS fallback
+        end
+        if name and name ~= "" then
+          -- Auto-fill if label is empty or was previously auto-filled
+          if state.tb_edit_label == "" or state.tb_edit_label == (state.tb_edit_auto_label or "") then
+            state.tb_edit_label = name
+            state.tb_edit_auto_label = name
+          end
+        end
+      end
+    end
     state.tb_edit_cmd = new_cmd
 
     reaper.ImGui_Dummy(ctx, 0, 2)
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0x888888FF)
-    reaper.ImGui_TextWrapped(ctx, "Find in REAPER: Actions > Show action list > Copy command ID")
+    reaper.ImGui_TextWrapped(ctx, "Paste a REAPER action Command ID. Label auto-fills from action name.")
     reaper.ImGui_PopStyleColor(ctx)
 
     reaper.ImGui_Dummy(ctx, 0, 4)
