@@ -5340,11 +5340,12 @@ local function loop()
               local lbl_l = string.format("%.2fx", rate_left)
               local lbl_r = string.format("%.2fx", rate_right)
               local lbl_col = 0xFFFFFF70
+              local lbl_cy = wave_y + waveform_height / 2 - 6
               -- Left handle label: offset right of the triangle
-              reaper.ImGui_DrawList_AddText(draw_list, px1 + 10, y_left - 6, lbl_col, lbl_l)
+              reaper.ImGui_DrawList_AddText(draw_list, px1 + 10, lbl_cy, lbl_col, lbl_l)
               -- Right handle label: offset left of the triangle
               local rw = reaper.ImGui_CalcTextSize(ctx, lbl_r)
-              reaper.ImGui_DrawList_AddText(draw_list, px2 - 10 - rw, y_right - 6, lbl_col, lbl_r)
+              reaper.ImGui_DrawList_AddText(draw_list, px2 - 10 - rw, lbl_cy, lbl_col, lbl_r)
             end
             reaper.ImGui_DrawList_PopClipRect(draw_list)
           end
