@@ -237,6 +237,7 @@ local function loop()
       state.undo_block_open = nil
       state.was_mouse_down = false
       state.invalidate_view_peaks()
+      drawing.clear_icon_cache()
       -- Stop audio preview on dialog recovery
       state.stop_preview()
       state.preview_start_requested = false
@@ -5646,6 +5647,7 @@ local function loop()
       local font = reaper.ImGui_CreateFont('sans-serif', 13)
       reaper.ImGui_Attach(ctx, font)
     end
+    drawing.clear_icon_cache()
     -- Reset all interaction state to prevent stuck drags after error
     state.dragging_start = false
     state.dragging_end = false

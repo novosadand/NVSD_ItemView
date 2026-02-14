@@ -32,6 +32,13 @@ end
 local toolbar_icon_cache = {}
 local toolbar_icons_dir = nil  -- resolved lazily
 
+-- Action search state (transient UI state for the edit modal)
+local action_cache = nil
+local action_search_text = ""
+local action_search_results = {}
+local action_search_sel_idx = 0
+local action_search_confirmed = ""  -- name of last confirmed selection (shown in field)
+
 -- Get toolbar icon + UV u1 for first state of horizontal sprite sheet
 -- REAPER toolbar icons are HORIZONTAL strips: width=N*height (typically 90x30 = 3 states)
 -- States left-to-right: Normal | Hover | Active
@@ -63,6 +70,36 @@ local function get_toolbar_icon(ctx, filename)
   end
   toolbar_icon_cache[filename] = false
   return nil, nil
+end
+
+-- Build/return cached list of all REAPER actions (Main section)
+local function get_action_cache()
+  if action_cache then return action_cache end
+  action_cache = {}
+  local has_shortcuts = reaper.GetActionShortcutDesc ~= nil
+  local idx = 0
+  while true do
+    local retval, name = reaper.kbd_enumerateActions(0, idx)  -- 0 = Main section
+    if retval == 0 then break end
+    local cmd_str
+    local named = reaper.ReverseNamedCommandLookup and reaper.ReverseNamedCommandLookup(retval) or ""
+    if named and named ~= "" then
+      cmd_str = "_" .. named
+    else
+      cmd_str = tostring(retval)
+    end
+    if name and name ~= "" then
+      local shortcut = ""
+      if has_shortcuts then
+        local ok, rv, desc = pcall(reaper.GetActionShortcutDesc, 0, retval, 0, "")
+        if ok and rv and desc and desc ~= "" then shortcut = desc end
+      end
+      action_cache[#action_cache + 1] = {name = name, cmd = cmd_str, shortcut = shortcut}
+    end
+    idx = idx + 1
+  end
+  table.sort(action_cache, function(a, b) return a.name:lower() < b.name:lower() end)
+  return action_cache
 end
 
 -- Linear passthrough (matches REAPER's native waveform display - no compression)
@@ -222,6 +259,12 @@ local info_cache = { source = false }
 -- Invalidate waveform computation cache (call when item changes, peaks reload, etc.)
 function drawing.invalidate_wf_cache()
   wf_cache.valid = false
+end
+
+-- Clear toolbar icon cache (call when ImGui context is recreated)
+function drawing.clear_icon_cache()
+  toolbar_icon_cache = {}
+  toolbar_icons_dir = nil
 end
 
 -- Color helpers (module-level to avoid per-call closure creation)
@@ -708,7 +751,7 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
             tb_btn_y + (tb_btn_h - 12) / 2, text_color, btn.label)
       end
 
-      if mouse_in and not state.tb_drag_active then
+      if mouse_in and not state.tb_drag_active and not reaper.ImGui_IsPopupOpen(ctx, "", reaper.ImGui_PopupFlags_AnyPopup()) then
         drawing.tooltip(ctx, "tb_" .. i, btn.label)
       end
 
@@ -1050,7 +1093,8 @@ local function draw_icon_picker_content(ctx, icons, child_id)
       reaper.ImGui_DrawList_AddRectFilled(grid_dl, gx, gy, gx + cell_size, gy + cell_size, bg, 4)
       if img then
         local pad = 4
-        pcall(reaper.ImGui_DrawList_AddImage, grid_dl, img, gx + pad, gy + pad, gx + cell_size - pad, gy + cell_size - pad, 0, 0, uv_u1 or 1/3, 1, 0xFFFFFFFF)
+        local img_ok = pcall(reaper.ImGui_DrawList_AddImage, grid_dl, img, gx + pad, gy + pad, gx + cell_size - pad, gy + cell_size - pad, 0, 0, uv_u1 or 1/3, 1, 0xFFFFFFFF)
+        if not img_ok then toolbar_icon_cache[filename] = false end
       end
 
       if hovered then
@@ -1094,38 +1138,24 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
         state.tb_edit_icon = btn.icon
         state.tb_edit_auto_label = nil
         state.tb_edit_open = true
-      end
-
-      if reaper.ImGui_MenuItem(ctx, "Change Icon...") then
-        state.tb_icon_idx = idx
-        state.tb_icon_open = true
-        state.tb_icon_from_edit = false  -- direct path, not from edit modal
-        state.tb_icon_list = nil  -- force rescan
-      end
-
-      if btn.icon and btn.icon ~= "" then
-        if reaper.ImGui_MenuItem(ctx, "Clear Icon") then
-          btn.icon = nil
-          settings.save_toolbar()
+        -- Look up real action name from command ID
+        local action_name = ""
+        if btn.cmd and btn.cmd ~= "" then
+          local cache = get_action_cache()
+          for _, entry in ipairs(cache) do
+            if entry.cmd == btn.cmd then
+              action_name = entry.name
+              break
+            end
+          end
         end
+        action_search_text = action_name
+        action_search_results = {}
+        action_search_sel_idx = 0
+        action_search_confirmed = action_name
       end
 
       reaper.ImGui_Separator(ctx)
-
-      if idx > 1 then
-        if reaper.ImGui_MenuItem(ctx, "Move Left") then
-          settings.move_toolbar_button(idx, idx - 1)
-        end
-      end
-      if idx < #btns then
-        if reaper.ImGui_MenuItem(ctx, "Move Right") then
-          settings.move_toolbar_button(idx, idx + 1)
-        end
-      end
-
-      if idx > 1 or idx < #btns then
-        reaper.ImGui_Separator(ctx)
-      end
 
       if reaper.ImGui_MenuItem(ctx, "Remove") then
         settings.remove_toolbar_button(idx)
@@ -1142,6 +1172,10 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
       state.tb_edit_icon = nil
       state.tb_edit_auto_label = nil
       state.tb_edit_open = true
+      action_search_text = ""
+      action_search_results = {}
+      action_search_sel_idx = 0
+      action_search_confirmed = ""
     end
 
     reaper.ImGui_EndPopup(ctx)
@@ -1153,11 +1187,10 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
     state.tb_edit_open = false
   end
 
-  -- Render edit modal (above the info bar with consistent styling)
-  local popup_x = state.tb_ctx_x or 0
-  local popup_y = (state.tb_bar_y or state.tb_ctx_y or 0) - 4
-  reaper.ImGui_SetNextWindowPos(ctx, popup_x, popup_y, reaper.ImGui_Cond_Appearing(), 0.5, 1.0)
-  reaper.ImGui_SetNextWindowSize(ctx, 380, 0, reaper.ImGui_Cond_Appearing())
+  -- Render edit modal (centered on screen)
+  local vp_w, vp_h = reaper.ImGui_Viewport_GetSize(reaper.ImGui_GetMainViewport(ctx))
+  reaper.ImGui_SetNextWindowPos(ctx, vp_w / 2, vp_h / 2, reaper.ImGui_Cond_Appearing(), 0.5, 0.5)
+  reaper.ImGui_SetNextWindowSize(ctx, 800, 0, reaper.ImGui_Cond_Appearing())
   reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowPadding(), 20, 16)
   reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowRounding(), 8)
   reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_FrameRounding(), 4)
@@ -1192,6 +1225,145 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
     local _, new_label = reaper.ImGui_InputText(ctx, "##tb_ed_label", state.tb_edit_label or "")
     state.tb_edit_label = new_label
 
+    -- Action search autocomplete
+    reaper.ImGui_Spacing(ctx)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xBBBBBBFF)
+    reaper.ImGui_Text(ctx, "Search Actions")
+    reaper.ImGui_PopStyleColor(ctx)
+    reaper.ImGui_SetNextItemWidth(ctx, -1)
+    -- Lock keyboard focus to the search input while dropdown is showing
+    -- (must be BEFORE InputText so ImGui never moves focus away on arrow keys)
+    if #action_search_results > 0 and action_search_confirmed == "" then
+      reaper.ImGui_SetKeyboardFocusHere(ctx, 0)
+    end
+    -- AutoSelectAll: clicking into field selects all text, so typing replaces it
+    local search_flags = reaper.ImGui_InputTextFlags_AutoSelectAll()
+    local _, new_search = reaper.ImGui_InputText(ctx, "##tb_ed_search", action_search_text, search_flags)
+    local search_focused = reaper.ImGui_IsItemActive(ctx)
+    -- Detect Enter on the search field: InputText deactivates on Enter, so check both
+    local search_deactivated = reaper.ImGui_IsItemDeactivated(ctx)
+    local enter_pressed = reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Enter())
+        or reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_KeypadEnter())
+    local search_enter = search_deactivated and enter_pressed
+
+    -- Filter results on text change
+    if new_search ~= action_search_text then
+      action_search_text = new_search
+      action_search_sel_idx = 0
+      action_search_results = {}
+      -- User changed text from confirmed selection, clear confirmed state
+      if action_search_confirmed ~= "" and new_search ~= action_search_confirmed then
+        action_search_confirmed = ""
+      end
+      if new_search ~= "" then
+        -- Split query into words for multi-word matching (like REAPER's filter)
+        local words = {}
+        for w in new_search:lower():gmatch("%S+") do
+          words[#words + 1] = w
+        end
+        local cache = get_action_cache()
+        local count = 0
+        for _, entry in ipairs(cache) do
+          local lower_name = entry.name:lower()
+          local match = true
+          for _, w in ipairs(words) do
+            if not lower_name:find(w, 1, true) then
+              match = false
+              break
+            end
+          end
+          if match then
+            count = count + 1
+            action_search_results[count] = entry
+            if count >= 50 then break end
+          end
+        end
+      end
+    end
+
+    -- Keyboard navigation (Up/Down while dropdown is showing)
+    local confirmed_entry = nil
+    local kb_navigated = false
+    local dropdown_active = #action_search_results > 0 and action_search_confirmed == ""
+    if dropdown_active then
+      if reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_DownArrow()) then
+        action_search_sel_idx = math.min(action_search_sel_idx + 1, #action_search_results)
+        kb_navigated = true
+      elseif reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_UpArrow()) then
+        action_search_sel_idx = math.max(action_search_sel_idx - 1, 0)
+        kb_navigated = true
+      end
+    end
+    -- Enter confirmation (detected via InputText deactivation + Enter key)
+    if search_enter and action_search_sel_idx > 0
+        and action_search_sel_idx <= #action_search_results then
+      confirmed_entry = action_search_results[action_search_sel_idx]
+    end
+
+    -- Dropdown results table (Shortcut | Description | Command ID)
+    -- Hide dropdown when showing a confirmed selection (user hasn't started re-searching)
+    local show_dropdown = #action_search_results > 0 and action_search_text ~= ""
+        and action_search_confirmed == ""
+    if show_dropdown then
+      local dropdown_h = math.min(math.max(#action_search_results * 22 + 30, 120), 300)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ChildBg(), 0x1E1E1EFF)
+      if reaper.ImGui_BeginChild(ctx, "##action_results", -1, dropdown_h,
+          reaper.ImGui_ChildFlags_Borders()) then
+        local tbl_flags = reaper.ImGui_TableFlags_RowBg()
+                        + reaper.ImGui_TableFlags_ScrollY()
+                        + reaper.ImGui_TableFlags_BordersInnerV()
+        if reaper.ImGui_BeginTable(ctx, "##action_tbl", 3, tbl_flags) then
+          reaper.ImGui_TableSetupColumn(ctx, "Shortcut",
+            reaper.ImGui_TableColumnFlags_WidthFixed(), 130)
+          reaper.ImGui_TableSetupColumn(ctx, "Description",
+            reaper.ImGui_TableColumnFlags_WidthStretch())
+          reaper.ImGui_TableSetupColumn(ctx, "Command ID",
+            reaper.ImGui_TableColumnFlags_WidthFixed(), 160)
+          reaper.ImGui_TableSetupScrollFreeze(ctx, 0, 1)
+          reaper.ImGui_TableHeadersRow(ctx)
+          for i, entry in ipairs(action_search_results) do
+            reaper.ImGui_TableNextRow(ctx)
+            local is_sel = (i == action_search_sel_idx)
+            -- Shortcut column (selectable spans full row)
+            reaper.ImGui_TableNextColumn(ctx)
+            if reaper.ImGui_Selectable(ctx, (entry.shortcut or "") .. "##asr" .. i, is_sel,
+                reaper.ImGui_SelectableFlags_SpanAllColumns()) then
+              confirmed_entry = entry
+            end
+            -- Only auto-scroll on keyboard nav (not hover) to prevent scroll fighting
+            if is_sel and kb_navigated then
+              reaper.ImGui_SetScrollHereY(ctx, 0.5)
+            end
+            -- Description column
+            reaper.ImGui_TableNextColumn(ctx)
+            reaper.ImGui_Text(ctx, entry.name)
+            -- Command ID column
+            reaper.ImGui_TableNextColumn(ctx)
+            reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0x999999FF)
+            reaper.ImGui_Text(ctx, entry.cmd)
+            reaper.ImGui_PopStyleColor(ctx)
+          end
+          reaper.ImGui_EndTable(ctx)
+        end
+        reaper.ImGui_EndChild(ctx)
+      end
+      reaper.ImGui_PopStyleColor(ctx)
+    end
+
+    -- Apply confirmed selection
+    if confirmed_entry then
+      state.tb_edit_cmd = confirmed_entry.cmd
+      if state.tb_edit_label == "" or state.tb_edit_label == (state.tb_edit_auto_label or "") then
+        state.tb_edit_label = confirmed_entry.name
+        state.tb_edit_auto_label = confirmed_entry.name
+      end
+      -- Show selected action name in search field (click to re-search)
+      action_search_text = confirmed_entry.name
+      action_search_confirmed = confirmed_entry.name
+      action_search_results = {}
+      action_search_sel_idx = 0
+    end
+
     reaper.ImGui_Spacing(ctx)
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xBBBBBBFF)
     reaper.ImGui_Text(ctx, "Action Command ID")
@@ -1221,7 +1393,7 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
 
     reaper.ImGui_Dummy(ctx, 0, 2)
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0x888888FF)
-    reaper.ImGui_TextWrapped(ctx, "Paste a REAPER action Command ID. Label auto-fills from action name.")
+    reaper.ImGui_TextWrapped(ctx, "Paste ID directly, or use Search Actions above.")
     reaper.ImGui_PopStyleColor(ctx)
 
     reaper.ImGui_Dummy(ctx, 0, 4)
@@ -1229,44 +1401,56 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
     reaper.ImGui_DrawList_AddLine(edl, esx2, esy2, esx2 + content_w, esy2, 0x444444FF, 1)
     reaper.ImGui_Dummy(ctx, 0, 4)
 
-    -- Icon preview
+    -- Icon preview (clickable to open icon picker)
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xBBBBBBFF)
     reaper.ImGui_Text(ctx, "Icon")
     reaper.ImGui_PopStyleColor(ctx)
     reaper.ImGui_SameLine(ctx)
+    local icon_clicked = false
     if state.tb_edit_icon and state.tb_edit_icon ~= "" then
       local icon_img, icon_uv = get_toolbar_icon(ctx, state.tb_edit_icon)
       if icon_img then
+        -- Clickable icon with hover highlight
         local dl = reaper.ImGui_GetWindowDrawList(ctx)
         local cx, cy = reaper.ImGui_GetCursorScreenPos(ctx)
-        reaper.ImGui_Dummy(ctx, 30, 30)
-        pcall(reaper.ImGui_DrawList_AddImage, dl, icon_img, cx, cy, cx + 30, cy + 30, 0, 0, icon_uv or 1/3, 1, 0xFFFFFFFF)
-        reaper.ImGui_SameLine(ctx)
+        reaper.ImGui_InvisibleButton(ctx, "##tb_ed_icon_btn", 30, 30)
+        local icon_hovered = reaper.ImGui_IsItemHovered(ctx)
+        icon_clicked = reaper.ImGui_IsItemClicked(ctx, 0)
+        if icon_hovered then
+          reaper.ImGui_DrawList_AddRectFilled(dl, cx - 2, cy - 2, cx + 32, cy + 32, 0xFFFFFF25, 4)
+        end
+        local img_ok = pcall(reaper.ImGui_DrawList_AddImage, dl, icon_img, cx, cy, cx + 30, cy + 30, 0, 0, icon_uv or 1/3, 1, 0xFFFFFFFF)
+        if not img_ok then toolbar_icon_cache[state.tb_edit_icon] = false end
+        if icon_hovered then
+          reaper.ImGui_SetTooltip(ctx, "Click to change icon")
+        end
+      else
+        -- Image failed to load, show placeholder
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x404040FF)
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x505050FF)
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x606060FF)
+        if reaper.ImGui_SmallButton(ctx, "Change...##tb_ed_icon_change") then
+          icon_clicked = true
+        end
+        reaper.ImGui_PopStyleColor(ctx, 3)
       end
-      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x404040FF)
+    else
+      -- No icon: clickable "(none)" placeholder
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x33333300)
       reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x505050FF)
       reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x606060FF)
-      if reaper.ImGui_SmallButton(ctx, "Clear##tb_ed_icon_clear") then
-        state.tb_edit_icon = nil
-      end
-      reaper.ImGui_PopStyleColor(ctx, 3)
-      reaper.ImGui_SameLine(ctx)
-    else
       reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0x888888FF)
-      reaper.ImGui_Text(ctx, "(none)")
-      reaper.ImGui_PopStyleColor(ctx)
-      reaper.ImGui_SameLine(ctx)
+      if reaper.ImGui_SmallButton(ctx, "(none) - click to set##tb_ed_icon_none") then
+        icon_clicked = true
+      end
+      reaper.ImGui_PopStyleColor(ctx, 4)
     end
-    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x404040FF)
-    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x505050FF)
-    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x606060FF)
-    if reaper.ImGui_SmallButton(ctx, "Browse...##tb_ed_icon") then
-      state.tb_icon_idx = state.tb_edit_idx  -- will update on pick
+    if icon_clicked then
+      state.tb_icon_idx = state.tb_edit_idx
       state.tb_icon_open = true
-      state.tb_icon_from_edit = true  -- flag: update edit state, not settings directly
+      state.tb_icon_from_edit = true
       state.tb_icon_list = nil
     end
-    reaper.ImGui_PopStyleColor(ctx, 3)
 
     reaper.ImGui_Dummy(ctx, 0, 4)
     local esx3, esy3 = reaper.ImGui_GetCursorScreenPos(ctx)
