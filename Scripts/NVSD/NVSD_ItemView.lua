@@ -2217,6 +2217,7 @@ local function loop()
 
           -- Slope handle hover detection (triangles at both ends of each slope curve)
           state.slope_hovered_segment = -1
+          state.slope_hovered_endpoint = 0  -- 1=left handle, 2=right handle
           if state.warp_mode and #state.warp_markers > 1
               and mouse_in_waveform and not state.any_drag_active()
               and not (state.envelopes_visible and state.env_node_hovered_idx >= 0) then
@@ -2233,11 +2234,13 @@ local function loop()
               -- Check left handle (right-pointing triangle at left marker)
               if math.abs(mouse_x - px1) <= HIT_X and math.abs(mouse_y - y_left) <= HIT_Y then
                 state.slope_hovered_segment = i
+                state.slope_hovered_endpoint = 1
                 break
               end
               -- Check right handle (left-pointing triangle at right marker)
               if math.abs(mouse_x - px2) <= HIT_X and math.abs(mouse_y - y_right) <= HIT_Y then
                 state.slope_hovered_segment = i
+                state.slope_hovered_endpoint = 2
                 break
               end
             end
@@ -3351,17 +3354,21 @@ local function loop()
             end
           end
 
-          -- Slope curve drag: click on hovered slope handle (no modifier)
+          -- Slope handle drag: click on hovered slope handle (no modifier)
+          -- Dragging up/down moves the stretch marker position (shortens/lengthens segment)
           if reaper.ImGui_IsMouseClicked(ctx, 0) and state.slope_hovered_segment > 0
               and not state.any_drag_active()
               and not (state.envelopes_visible and state.envelope_hovered_segment >= 0)
               and not near_start and not near_end
               and not near_fade_in and not near_fade_out then
-            local sm = state.warp_markers[state.slope_hovered_segment]
+            local seg = state.slope_hovered_segment
+            local endpoint = state.slope_hovered_endpoint  -- 1=left, 2=right
+            -- The marker to move: left endpoint = segment's left marker, right = segment's right marker
+            local sm = (endpoint == 1) and state.warp_markers[seg] or state.warp_markers[seg + 1]
             if sm then
               if reaper.ImGui_IsMouseDoubleClicked(ctx, 0) then
                 -- Double-click: reset slope to 0
-                reaper.SetTakeStretchMarkerSlope(take, sm.idx, 0)
+                reaper.SetTakeStretchMarkerSlope(take, state.warp_markers[seg].idx, 0)
                 reaper.UpdateItemInProject(item)
                 reaper.UpdateArrange()
                 state.warp_markers = utils.get_stretch_markers(take)
@@ -3369,9 +3376,13 @@ local function loop()
               else
                 state.slope_dragging = true
                 state.slope_drag_marker_idx = sm.idx
-                state.slope_drag_segment = state.slope_hovered_segment
+                state.slope_drag_segment = seg
+                state.slope_drag_endpoint = endpoint
                 state.slope_drag_start_mouse_y = mouse_y
-                state.slope_drag_start_slope = sm.slope or 0
+                state.slope_drag_start_pos = sm.pos
+                state.slope_drag_start_srcpos = sm.srcpos
+                -- Save time-per-pixel for converting vertical mouse delta to position delta
+                state.slope_drag_time_per_px = view_length / waveform_width
                 state.slope_drag_activated = false
               end
             end
@@ -4319,7 +4330,8 @@ local function loop()
             end
           end
 
-          -- Slope curve drag: threshold + execution (outside envelopes_visible block)
+          -- Slope handle drag: threshold + execution (moves marker position)
+          -- Up = shorten segment (marker moves toward partner), Down = lengthen
           if state.slope_dragging and reaper.ImGui_IsMouseDown(ctx, 0) then
             if not state.slope_drag_activated then
               if math.abs(mouse_y - state.slope_drag_start_mouse_y) >= 4 then
@@ -4328,10 +4340,24 @@ local function loop()
             end
             if state.slope_drag_activated then
               local mouse_delta_y = state.slope_drag_start_mouse_y - mouse_y  -- up = positive
-              local new_slope = state.slope_drag_start_slope + mouse_delta_y / 200
-              new_slope = math.max(-1, math.min(1, new_slope))
-              reaper.SetTakeStretchMarkerSlope(take, state.slope_drag_marker_idx, new_slope)
-              reaper.UpdateArrange()
+              -- Convert vertical pixels to time: up moves marker inward (shortens segment)
+              local pos_delta = mouse_delta_y * state.slope_drag_time_per_px
+              -- Direction: left endpoint moves RIGHT when dragged up, right endpoint moves LEFT
+              local dir = (state.slope_drag_endpoint == 1) and 1 or -1
+              local new_pos = state.slope_drag_start_pos + pos_delta * dir
+              -- Clamp: don't cross adjacent markers
+              local sm_count = reaper.GetTakeNumStretchMarkers(take)
+              local prev_pos, next_pos = -math.huge, math.huge
+              for si = 0, sm_count - 1 do
+                if si ~= state.slope_drag_marker_idx then
+                  local _, spos = reaper.GetTakeStretchMarker(take, si)
+                  if spos < state.slope_drag_start_pos and spos > prev_pos then prev_pos = spos end
+                  if spos > state.slope_drag_start_pos and spos < next_pos then next_pos = spos end
+                end
+              end
+              new_pos = math.max(prev_pos + 0.001, math.min(next_pos - 0.001, new_pos))
+              reaper.SetTakeStretchMarker(take, state.slope_drag_marker_idx, new_pos, state.slope_drag_start_srcpos)
+              reaper.UpdateItemInProject(item)
               state.warp_markers = utils.get_stretch_markers(take)
             end
           end
@@ -4378,16 +4404,17 @@ local function loop()
               state.warp_drag_idx = -1
               state.warp_markers = utils.get_stretch_markers(take)
             end
-            -- Slope curve drag release
+            -- Slope handle drag release
             if state.slope_dragging then
               if state.slope_drag_activated then
-                reaper.UpdateItemInProject(item)
-                reaper.Undo_OnStateChangeEx("NVSD_ItemView: Adjust stretch marker slope", -1, -1)
+                reaper.UpdateArrange()
+                reaper.Undo_OnStateChangeEx("NVSD_ItemView: Move stretch marker via slope handle", -1, -1)
               end
               state.slope_dragging = false
               state.slope_drag_activated = false
               state.slope_drag_marker_idx = -1
               state.slope_drag_segment = -1
+              state.slope_drag_endpoint = 0
               state.warp_markers = utils.get_stretch_markers(take)
             end
             if (state.dragging_start or state.dragging_end) and state.marker_drag_activated then

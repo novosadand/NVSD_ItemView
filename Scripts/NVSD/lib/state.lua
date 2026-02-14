@@ -139,13 +139,17 @@ state.warp_drag_start_srcpos = 0
 state.warp_drag_activated = false
 state.warp_drag_start_view_start = 0
 state.warp_drag_start_view_length = 0
--- Slope curve hover/drag (waveform-based)
+-- Slope handle hover/drag (moves marker position via vertical drag)
 state.slope_hovered_segment = -1        -- warp_markers index of left marker of hovered segment
+state.slope_hovered_endpoint = 0        -- 1=left handle, 2=right handle
 state.slope_dragging = false
 state.slope_drag_marker_idx = -1        -- REAPER stretch marker index (sm.idx)
 state.slope_drag_segment = -1           -- warp_markers array index of left marker
+state.slope_drag_endpoint = 0           -- 1=left, 2=right (which handle is being dragged)
 state.slope_drag_start_mouse_y = 0
-state.slope_drag_start_slope = 0
+state.slope_drag_start_pos = 0          -- marker pos at drag start
+state.slope_drag_start_srcpos = 0       -- marker srcpos at drag start
+state.slope_drag_time_per_px = 0        -- time units per pixel for sensitivity
 state.slope_drag_activated = false
 
 -- Transient detection
