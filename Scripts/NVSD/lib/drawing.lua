@@ -925,6 +925,7 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
       if reaper.ImGui_MenuItem(ctx, "Change Icon...") then
         state.tb_icon_idx = idx
         state.tb_icon_open = true
+        state.tb_icon_from_edit = false  -- direct path, not from edit modal
         state.tb_icon_list = nil  -- force rescan
       end
 
@@ -978,10 +979,10 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
     state.tb_edit_open = false
   end
 
-  -- Render edit modal (above the right-click point)
+  -- Render edit modal (below the info bar, not overlapping the button)
   local popup_x = state.tb_ctx_x or 0
-  local popup_y = state.tb_ctx_y or 0
-  reaper.ImGui_SetNextWindowPos(ctx, popup_x, popup_y, reaper.ImGui_Cond_Appearing(), 0.5, 1.0)
+  local popup_y = (state.tb_ctx_y or 0) + 20
+  reaper.ImGui_SetNextWindowPos(ctx, popup_x, popup_y, reaper.ImGui_Cond_Appearing(), 0.5, 0.0)
   reaper.ImGui_SetNextWindowSize(ctx, 340, 0, reaper.ImGui_Cond_Appearing())
   if reaper.ImGui_BeginPopupModal(ctx, "Edit Toolbar Button##tb_edit", nil, reaper.ImGui_WindowFlags_AlwaysAutoResize()) then
     -- Capture keyboard so REAPER doesn't intercept Ctrl+V etc.
@@ -1072,7 +1073,10 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
       end
     end
 
-    reaper.ImGui_SetNextWindowPos(ctx, popup_x, popup_y, reaper.ImGui_Cond_Appearing(), 0.5, 1.0)
+    -- Position icon picker to the right of the edit modal, not overlapping
+    local edit_wx, edit_wy = reaper.ImGui_GetWindowPos(ctx)
+    local edit_ww, _ = reaper.ImGui_GetWindowSize(ctx)
+    reaper.ImGui_SetNextWindowPos(ctx, edit_wx + edit_ww + 6, edit_wy, reaper.ImGui_Cond_Appearing(), 0.0, 0.0)
     reaper.ImGui_SetNextWindowSize(ctx, 500, 500, reaper.ImGui_Cond_Appearing())
     if reaper.ImGui_BeginPopupModal(ctx, "Choose Icon##tb_icon_pick", nil, reaper.ImGui_WindowFlags_NoScrollbar()) then
       reaper.ImGui_SetNextFrameWantCaptureKeyboard(ctx, true)
@@ -1144,8 +1148,8 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
   end
 
   local direct_popup_x = state.tb_ctx_x or 0
-  local direct_popup_y = state.tb_ctx_y or 0
-  reaper.ImGui_SetNextWindowPos(ctx, direct_popup_x, direct_popup_y, reaper.ImGui_Cond_Appearing(), 0.5, 1.0)
+  local direct_popup_y = (state.tb_ctx_y or 0) + 20
+  reaper.ImGui_SetNextWindowPos(ctx, direct_popup_x, direct_popup_y, reaper.ImGui_Cond_Appearing(), 0.5, 0.0)
   reaper.ImGui_SetNextWindowSize(ctx, 500, 500, reaper.ImGui_Cond_Appearing())
   if reaper.ImGui_BeginPopupModal(ctx, "Choose Icon Direct##tb_icon_direct", nil, reaper.ImGui_WindowFlags_NoScrollbar()) then
     local icons = state.tb_icon_list or {}
