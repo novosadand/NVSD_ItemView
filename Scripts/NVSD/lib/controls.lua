@@ -510,21 +510,16 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_x2 then
     if take and item then
       reaper.Undo_BeginBlock()
+      local cur_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
+      local cur_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+      -- Double playrate, halve length
+      reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", cur_playrate * 2)
+      reaper.SetMediaItemInfo_Value(item, "D_LENGTH", cur_length * 0.5)
+      -- Scale stretch marker positions to maintain relative timing
       local sm_count = reaper.GetTakeNumStretchMarkers(take)
-      if sm_count > 0 then
-        -- With stretch markers: scale all pos by 0.5, halve item length
-        for i = 0, sm_count - 1 do
-          local _, pos, srcpos = reaper.GetTakeStretchMarker(take, i)
-          reaper.SetTakeStretchMarker(take, i, pos * 0.5, srcpos)
-        end
-        local cur_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
-        reaper.SetMediaItemInfo_Value(item, "D_LENGTH", cur_length * 0.5)
-      else
-        -- Without stretch markers: double playrate, halve length
-        local cur_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
-        local cur_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
-        reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", cur_playrate * 2)
-        reaper.SetMediaItemInfo_Value(item, "D_LENGTH", cur_length * 0.5)
+      for i = 0, sm_count - 1 do
+        local _, pos, srcpos = reaper.GetTakeStretchMarker(take, i)
+        reaper.SetTakeStretchMarker(take, i, pos * 0.5, srcpos)
       end
       reaper.UpdateItemInProject(item)
       reaper.UpdateArrange()
@@ -538,21 +533,16 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_half then
     if take and item then
       reaper.Undo_BeginBlock()
+      local cur_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
+      local cur_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+      -- Halve playrate, double length
+      reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", cur_playrate * 0.5)
+      reaper.SetMediaItemInfo_Value(item, "D_LENGTH", cur_length * 2)
+      -- Scale stretch marker positions to maintain relative timing
       local sm_count = reaper.GetTakeNumStretchMarkers(take)
-      if sm_count > 0 then
-        -- With stretch markers: scale all pos by 2, double item length
-        for i = 0, sm_count - 1 do
-          local _, pos, srcpos = reaper.GetTakeStretchMarker(take, i)
-          reaper.SetTakeStretchMarker(take, i, pos * 2, srcpos)
-        end
-        local cur_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
-        reaper.SetMediaItemInfo_Value(item, "D_LENGTH", cur_length * 2)
-      else
-        -- Without stretch markers: halve playrate, double length
-        local cur_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
-        local cur_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
-        reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", cur_playrate * 0.5)
-        reaper.SetMediaItemInfo_Value(item, "D_LENGTH", cur_length * 2)
+      for i = 0, sm_count - 1 do
+        local _, pos, srcpos = reaper.GetTakeStretchMarker(take, i)
+        reaper.SetTakeStretchMarker(take, i, pos * 2, srcpos)
       end
       reaper.UpdateItemInProject(item)
       reaper.UpdateArrange()
