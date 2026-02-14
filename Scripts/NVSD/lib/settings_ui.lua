@@ -374,7 +374,7 @@ local function draw_appearance_tab(ctx, settings)
   end
 
   local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
-  if not reaper.ImGui_BeginChild(ctx, "appearance_scroll", avail_w, avail_h - 40) then return end
+  if not reaper.ImGui_BeginChild(ctx, "appearance_scroll", avail_w, avail_h - 54) then return end
 
   local bar_w = 84
   local bar_h = 14
@@ -928,7 +928,7 @@ local function draw_help_tab(ctx, settings)
   end
 
   local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
-  if reaper.ImGui_BeginChild(ctx, "help_scroll", avail_w, avail_h - 40) then
+  if reaper.ImGui_BeginChild(ctx, "help_scroll", avail_w, avail_h - 54) then
     for i, section in ipairs(HELP_SECTIONS) do
       if i == 1 then
         -- Title section: white, prominent
