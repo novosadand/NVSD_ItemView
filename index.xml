@@ -961,6 +961,19 @@ Built-in gain, pitch, WARP, reverse, customizable shortcuts, and 8 color themes.
         <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/06c1cb6563ecc74411df0cbcbb0fc1b27285a4ad/Scripts/NVSD/lib/settings.lua</source>
         <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/06c1cb6563ecc74411df0cbcbb0fc1b27285a4ad/Scripts/NVSD/lib/settings_ui.lua</source>
       </version>
+      <version name="1.0.74" author="NVSD" time="2026-02-14T00:00:00Z">
+        <changelog><![CDATA[Edit toolbar modal opens above info bar so buttons stay visible, styled consistently with other modals (rounded corners, proper padding, colored buttons)]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/736bc5c2a660c7d85830b7ef3c507e883c97747e/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/736bc5c2a660c7d85830b7ef3c507e883c97747e/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/736bc5c2a660c7d85830b7ef3c507e883c97747e/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/736bc5c2a660c7d85830b7ef3c507e883c97747e/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/736bc5c2a660c7d85830b7ef3c507e883c97747e/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/736bc5c2a660c7d85830b7ef3c507e883c97747e/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/736bc5c2a660c7d85830b7ef3c507e883c97747e/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/736bc5c2a660c7d85830b7ef3c507e883c97747e/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/736bc5c2a660c7d85830b7ef3c507e883c97747e/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/736bc5c2a660c7d85830b7ef3c507e883c97747e/Scripts/NVSD/lib/settings_ui.lua</source>
+      </version>
     </reapack>
   </category>
 </index>
