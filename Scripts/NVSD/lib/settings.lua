@@ -660,6 +660,7 @@ settings.colors_dirty = true  -- Start dirty so initial load applies colors
 settings.current = {
   theme_id = "default",
   shortcuts = {},
+  toolbar_buttons = {},  -- {label, cmd} entries for custom info bar buttons
 }
 
 -- Save custom theme colors to ExtState
@@ -858,6 +859,9 @@ function settings.load()
     end
   end
 
+  -- Load toolbar buttons
+  settings.load_toolbar()
+
   -- Load shortcuts
   settings.current.shortcuts = {}
   for name, default in pairs(settings.DEFAULT_SHORTCUTS) do
@@ -885,6 +889,9 @@ function settings.save()
   for name, shortcut in pairs(settings.current.shortcuts) do
     reaper.SetExtState(EXT_SECTION, "shortcut_" .. name, shortcut_to_string(shortcut), true)
   end
+
+  -- Save toolbar buttons
+  settings.save_toolbar()
 end
 
 -- Apply settings (update current and save)
@@ -941,6 +948,8 @@ local MOUSE_BUTTON_MAP = { Mouse4 = 4, Mouse5 = 3 }
 -- Check if a shortcut matches current key state
 function settings.check_shortcut(ctx, name)
   if settings.listening then return false end
+  -- Don't fire shortcuts while a text input is active (e.g. toolbar edit popup)
+  if reaper.ImGui_IsAnyItemActive(ctx) then return false end
   local shortcut = settings.current.shortcuts[name]
   if not shortcut or shortcut.key == "" then return false end
 
@@ -966,6 +975,82 @@ function settings.check_shortcut(ctx, name)
   if not imgui_key then return false end
 
   return reaper.ImGui_IsKeyPressed(ctx, imgui_key)
+end
+
+-- Scan REAPER's toolbar_icons directory for available icon PNGs
+function settings.scan_toolbar_icons()
+  local dir = reaper.GetResourcePath() .. "/Data/toolbar_icons/"
+  local icons = {}
+  local i = 0
+  while true do
+    local file = reaper.EnumerateFiles(dir, i)
+    if not file then break end
+    if file:lower():match("%.png$") then
+      icons[#icons + 1] = file
+    end
+    i = i + 1
+  end
+  table.sort(icons)
+  return icons
+end
+
+-- Load toolbar buttons from ExtState
+function settings.load_toolbar()
+  local count = tonumber(reaper.GetExtState(EXT_SECTION, "toolbar_count")) or 0
+  settings.current.toolbar_buttons = {}
+  for i = 1, count do
+    local label = reaper.GetExtState(EXT_SECTION, "toolbar_" .. i .. "_label")
+    local cmd = reaper.GetExtState(EXT_SECTION, "toolbar_" .. i .. "_cmd")
+    local icon = reaper.GetExtState(EXT_SECTION, "toolbar_" .. i .. "_icon")
+    if label ~= "" and cmd ~= "" then
+      settings.current.toolbar_buttons[#settings.current.toolbar_buttons + 1] = {
+        label = label, cmd = cmd, icon = icon ~= "" and icon or nil
+      }
+    end
+  end
+end
+
+-- Save toolbar buttons to ExtState
+function settings.save_toolbar()
+  local btns = settings.current.toolbar_buttons or {}
+  reaper.SetExtState(EXT_SECTION, "toolbar_count", tostring(#btns), true)
+  for i, btn in ipairs(btns) do
+    reaper.SetExtState(EXT_SECTION, "toolbar_" .. i .. "_label", btn.label, true)
+    reaper.SetExtState(EXT_SECTION, "toolbar_" .. i .. "_cmd", btn.cmd, true)
+    reaper.SetExtState(EXT_SECTION, "toolbar_" .. i .. "_icon", btn.icon or "", true)
+  end
+  -- Clean up stale entries beyond current count
+  local j = #btns + 1
+  while true do
+    local old = reaper.GetExtState(EXT_SECTION, "toolbar_" .. j .. "_label")
+    if old == "" then break end
+    reaper.DeleteExtState(EXT_SECTION, "toolbar_" .. j .. "_label", true)
+    reaper.DeleteExtState(EXT_SECTION, "toolbar_" .. j .. "_cmd", true)
+    reaper.DeleteExtState(EXT_SECTION, "toolbar_" .. j .. "_icon", true)
+    j = j + 1
+  end
+end
+
+-- Add a toolbar button
+function settings.add_toolbar_button(label, cmd, icon)
+  local btns = settings.current.toolbar_buttons
+  btns[#btns + 1] = {label = label, cmd = cmd, icon = icon or nil}
+  settings.save_toolbar()
+end
+
+-- Remove a toolbar button by index
+function settings.remove_toolbar_button(index)
+  table.remove(settings.current.toolbar_buttons, index)
+  settings.save_toolbar()
+end
+
+-- Move a toolbar button from one index to another
+function settings.move_toolbar_button(from, to)
+  local btns = settings.current.toolbar_buttons
+  if from < 1 or from > #btns or to < 1 or to > #btns then return end
+  local btn = table.remove(btns, from)
+  table.insert(btns, to, btn)
+  settings.save_toolbar()
 end
 
 return settings

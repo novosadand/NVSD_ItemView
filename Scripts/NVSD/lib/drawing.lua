@@ -28,6 +28,43 @@ function drawing.tooltip(ctx, id, text)
   end
 end
 
+-- Toolbar icon image cache: {filename -> {img=ImGui_Image, uv_u1=number} or false}
+local toolbar_icon_cache = {}
+local toolbar_icons_dir = nil  -- resolved lazily
+
+-- Get toolbar icon + UV u1 for first state of horizontal sprite sheet
+-- REAPER toolbar icons are HORIZONTAL strips: width=N*height (typically 90x30 = 3 states)
+-- States left-to-right: Normal | Hover | Active
+-- Returns img, uv_u1 (or nil, nil)
+local function get_toolbar_icon(ctx, filename)
+  if not filename or filename == "" then return nil, nil end
+  local cached = toolbar_icon_cache[filename]
+  if cached == false then return nil, nil end  -- previously failed
+  if cached then return cached.img, cached.uv_u1 end
+  -- Resolve icons directory once
+  if not toolbar_icons_dir then
+    toolbar_icons_dir = reaper.GetResourcePath() .. "/Data/toolbar_icons/"
+  end
+  local ok, img = pcall(reaper.ImGui_CreateImage, toolbar_icons_dir .. filename)
+  if ok and img then
+    reaper.ImGui_Attach(ctx, img)
+    -- Validate image loaded successfully by checking dimensions
+    local ok2, w, h = pcall(reaper.ImGui_Image_GetSize, img)
+    if not ok2 or not w or not h or w <= 0 or h <= 0 then
+      -- Image object exists but pixels failed to load - unusable
+      toolbar_icon_cache[filename] = false
+      return nil, nil
+    end
+    -- Calculate UV u1 from actual dimensions (horizontal sprite strip)
+    local states = math.max(1, math.floor(w / h))
+    local uv_u1 = 1 / states
+    toolbar_icon_cache[filename] = {img = img, uv_u1 = uv_u1}
+    return img, uv_u1
+  end
+  toolbar_icon_cache[filename] = false
+  return nil, nil
+end
+
 -- Linear passthrough (matches REAPER's native waveform display - no compression)
 local function power_curve(value)
   return value
@@ -504,7 +541,8 @@ end
 
 -- Draw file info bar at the top
 -- Returns: mouse_over_filename, gear_clicked, tab_clicked
-function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file_path, mouse_x, mouse_y, item, config, utils, actual_num_channels, state, settings)
+-- Toolbar click stored on state.toolbar_clicked (avoids local limit in caller)
+function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file_path, mouse_x, mouse_y, item, config, utils, actual_num_channels, state, settings, toolbar_buttons)
   reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, config.COLOR_INFO_BAR_BG)
   reaper.ImGui_DrawList_AddLine(draw_list, x, y + height, x + width, y + height, config.COLOR_CENTERLINE, 1)
 
@@ -594,8 +632,97 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
     end
   end
 
-  -- Right boundary for filename text (don't overlap buttons)
-  local text_max_x = (has_cues and cue_btn_x or gear_btn_x) - 8
+  -- Custom toolbar buttons (centered horizontally in the info bar)
+  -- Clicked index stored on state.toolbar_clicked to avoid local limit in caller
+  if state then state.toolbar_clicked = nil end
+  local toolbar_left_edge = x  -- will be updated if buttons are drawn
+  local toolbar_right_edge = (has_cues and cue_btn_x or gear_btn_x) - 6
+
+  if toolbar_buttons and #toolbar_buttons > 0 then
+    local tb_btn_h = 18
+    local tb_btn_y = y + math.floor((height - tb_btn_h) / 2)
+    local gap = config.TOOLBAR_BTN_GAP
+
+    -- First pass: measure total width of all buttons
+    local total_w = 0
+    for i = 1, #toolbar_buttons do
+      local btn = toolbar_buttons[i]
+      local has_icon = btn.icon and btn.icon ~= "" and (get_toolbar_icon(ctx, btn.icon)) or false
+      if has_icon then
+        total_w = total_w + tb_btn_h  -- square for icon buttons
+      else
+        total_w = total_w + reaper.ImGui_CalcTextSize(ctx, btn.label) + 12
+      end
+      if i < #toolbar_buttons then total_w = total_w + gap end
+    end
+
+    -- Center in the full bar width
+    local tb_x = x + math.floor((width - total_w) / 2)
+
+    -- Second pass: draw buttons left-to-right from centered position
+    for i = 1, #toolbar_buttons do
+      local btn = toolbar_buttons[i]
+      local icon_img, icon_uv_u1
+      if btn.icon and btn.icon ~= "" then
+        icon_img, icon_uv_u1 = get_toolbar_icon(ctx, btn.icon)
+      end
+      local btn_w
+      if icon_img then
+        btn_w = tb_btn_h  -- square
+      else
+        btn_w = reaper.ImGui_CalcTextSize(ctx, btn.label) + 12
+      end
+
+      local mouse_in = mouse_x >= tb_x and mouse_x <= tb_x + btn_w
+                       and mouse_y >= tb_btn_y and mouse_y <= tb_btn_y + tb_btn_h
+      local bg = mouse_in and config.COLOR_BTN_HOVER or config.COLOR_GRID_BAR
+      reaper.ImGui_DrawList_AddRectFilled(draw_list, tb_x, tb_btn_y, tb_x + btn_w, tb_btn_y + tb_btn_h, bg, 3)
+
+      if icon_img then
+        -- Draw icon centered in button (first sprite state only)
+        local icon_pad = 2
+        local icon_size = tb_btn_h - icon_pad * 2
+        local icon_x = tb_x + math.floor((btn_w - icon_size) / 2)
+        local icon_y = tb_btn_y + icon_pad
+        local draw_ok = pcall(reaper.ImGui_DrawList_AddImage, draw_list, icon_img, icon_x, icon_y, icon_x + icon_size, icon_y + icon_size, 0, 0, icon_uv_u1, 1, 0xFFFFFFFF)
+        if not draw_ok then
+          -- Image invalid, clear from cache and fall back to text
+          toolbar_icon_cache[btn.icon] = false
+          icon_img = nil
+        end
+      else
+        -- Centered text
+        local btn_text_w = reaper.ImGui_CalcTextSize(ctx, btn.label)
+        local text_color = mouse_in and config.COLOR_BTN_TEXT or config.COLOR_INFO_BAR_TEXT
+        reaper.ImGui_DrawList_AddText(draw_list, tb_x + (btn_w - btn_text_w) / 2,
+            tb_btn_y + (tb_btn_h - 12) / 2, text_color, btn.label)
+      end
+
+      if mouse_in then drawing.tooltip(ctx, "tb_" .. i, btn.label) end
+      if mouse_in and reaper.ImGui_IsMouseClicked(ctx, 0) then
+        state.toolbar_clicked = i
+      end
+      -- Right-click → context menu
+      if mouse_in and reaper.ImGui_IsMouseClicked(ctx, 1) then
+        state.tb_ctx_idx = i
+        state.tb_ctx_open = true
+        state.tb_ctx_x = mouse_x
+        state.tb_ctx_y = mouse_y
+      end
+
+      -- Track left edge for text clipping
+      if i == 1 then toolbar_left_edge = tb_x end
+
+      tb_x = tb_x + btn_w + gap
+    end
+    -- Track right edge for text clipping
+    toolbar_right_edge = tb_x - gap
+  end
+
+  -- Right boundary for filename text (don't overlap toolbar or right-side buttons)
+  local text_max_x = (toolbar_buttons and #toolbar_buttons > 0)
+    and (toolbar_left_edge - 8)
+    or (toolbar_right_edge - 2)
 
   -- Mute toggle
   local mute_size = 10
@@ -749,7 +876,342 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
     return true, false, nil
   end
 
+  -- Right-click on info bar background → "Add" context menu
+  -- (only if not already handled by a button, gear, cue, mute, or filename)
+  if state and not state.tb_ctx_open and reaper.ImGui_IsMouseClicked(ctx, 1) then
+    local in_bar = mouse_x >= x and mouse_x <= x + width
+                   and mouse_y >= y and mouse_y <= y + height
+    if in_bar and not mouse_in_gear and not mouse_over_filename and not mouse_in_mute then
+      state.tb_ctx_idx = nil  -- nil = empty area
+      state.tb_ctx_open = true
+      state.tb_ctx_x = mouse_x
+      state.tb_ctx_y = mouse_y
+    end
+  end
+
   return mouse_over_filename, gear_clicked, tab_clicked
+end
+
+-- Toolbar icon cache for context menu icon picker (reuses get_toolbar_icon above)
+
+-- Draw toolbar context menu + edit popup
+-- Call this once per frame from main script, after draw_info_bar
+function drawing.draw_toolbar_popups(ctx, state, settings, config)
+  if not state then return end
+
+  -- Trigger context menu popup
+  if state.tb_ctx_open then
+    reaper.ImGui_OpenPopup(ctx, "##tb_ctx")
+    state.tb_ctx_open = false
+  end
+
+  -- Render context menu
+  if reaper.ImGui_BeginPopup(ctx, "##tb_ctx") then
+    local idx = state.tb_ctx_idx
+    local btns = settings.current.toolbar_buttons or {}
+
+    if idx and idx >= 1 and idx <= #btns then
+      -- Right-clicked on an existing button
+      local btn = btns[idx]
+
+      if reaper.ImGui_MenuItem(ctx, "Edit...") then
+        state.tb_edit_idx = idx
+        state.tb_edit_label = btn.label
+        state.tb_edit_cmd = btn.cmd
+        state.tb_edit_icon = btn.icon
+        state.tb_edit_open = true
+      end
+
+      if reaper.ImGui_MenuItem(ctx, "Change Icon...") then
+        state.tb_icon_idx = idx
+        state.tb_icon_open = true
+        state.tb_icon_list = nil  -- force rescan
+      end
+
+      if btn.icon and btn.icon ~= "" then
+        if reaper.ImGui_MenuItem(ctx, "Clear Icon") then
+          btn.icon = nil
+          settings.save_toolbar()
+          toolbar_icon_cache = {}  -- clear drawing cache
+        end
+      end
+
+      reaper.ImGui_Separator(ctx)
+
+      if idx > 1 then
+        if reaper.ImGui_MenuItem(ctx, "Move Left") then
+          settings.move_toolbar_button(idx, idx - 1)
+        end
+      end
+      if idx < #btns then
+        if reaper.ImGui_MenuItem(ctx, "Move Right") then
+          settings.move_toolbar_button(idx, idx + 1)
+        end
+      end
+
+      if idx > 1 or idx < #btns then
+        reaper.ImGui_Separator(ctx)
+      end
+
+      if reaper.ImGui_MenuItem(ctx, "Remove") then
+        settings.remove_toolbar_button(idx)
+      end
+
+      reaper.ImGui_Separator(ctx)
+    end
+
+    -- Always show "Add" at the bottom (both for button right-click and empty area)
+    if reaper.ImGui_MenuItem(ctx, "Add Toolbar Button...") then
+      state.tb_edit_idx = nil  -- nil = new button
+      state.tb_edit_label = ""
+      state.tb_edit_cmd = ""
+      state.tb_edit_icon = nil
+      state.tb_edit_open = true
+    end
+
+    reaper.ImGui_EndPopup(ctx)
+  end
+
+  -- Trigger edit modal
+  if state.tb_edit_open then
+    reaper.ImGui_OpenPopup(ctx, "Edit Toolbar Button##tb_edit")
+    state.tb_edit_open = false
+  end
+
+  -- Render edit modal (above the right-click point)
+  local popup_x = state.tb_ctx_x or 0
+  local popup_y = state.tb_ctx_y or 0
+  reaper.ImGui_SetNextWindowPos(ctx, popup_x, popup_y, reaper.ImGui_Cond_Appearing(), 0.5, 1.0)
+  reaper.ImGui_SetNextWindowSize(ctx, 340, 0, reaper.ImGui_Cond_Appearing())
+  if reaper.ImGui_BeginPopupModal(ctx, "Edit Toolbar Button##tb_edit", nil, reaper.ImGui_WindowFlags_AlwaysAutoResize()) then
+    -- Capture keyboard so REAPER doesn't intercept Ctrl+V etc.
+    reaper.ImGui_SetNextFrameWantCaptureKeyboard(ctx, true)
+    reaper.ImGui_Text(ctx, "Label:")
+    reaper.ImGui_SetNextItemWidth(ctx, -1)
+    local _, new_label = reaper.ImGui_InputText(ctx, "##tb_ed_label", state.tb_edit_label or "")
+    state.tb_edit_label = new_label
+
+    reaper.ImGui_Spacing(ctx)
+    reaper.ImGui_Text(ctx, "Action Command ID:")
+    reaper.ImGui_SetNextItemWidth(ctx, -1)
+    local _, new_cmd = reaper.ImGui_InputText(ctx, "##tb_ed_cmd", state.tb_edit_cmd or "")
+    state.tb_edit_cmd = new_cmd
+
+    reaper.ImGui_Spacing(ctx)
+    reaper.ImGui_TextColored(ctx, 0x888888FF, "Find in REAPER: Actions > Show action list > Copy command ID")
+
+    reaper.ImGui_Spacing(ctx)
+    reaper.ImGui_Separator(ctx)
+    reaper.ImGui_Spacing(ctx)
+
+    -- Icon preview
+    reaper.ImGui_Text(ctx, "Icon:")
+    reaper.ImGui_SameLine(ctx)
+    if state.tb_edit_icon and state.tb_edit_icon ~= "" then
+      local icon_img, icon_uv = get_toolbar_icon(ctx, state.tb_edit_icon)
+      if icon_img then
+        local dl = reaper.ImGui_GetWindowDrawList(ctx)
+        local cx, cy = reaper.ImGui_GetCursorScreenPos(ctx)
+        reaper.ImGui_Dummy(ctx, 20, 20)
+        pcall(reaper.ImGui_DrawList_AddImage, dl, icon_img, cx, cy, cx + 20, cy + 20, 0, 0, icon_uv or 1/3, 1, 0xFFFFFFFF)
+        reaper.ImGui_SameLine(ctx)
+      end
+      if reaper.ImGui_SmallButton(ctx, "Clear##tb_ed_icon_clear") then
+        state.tb_edit_icon = nil
+      end
+      reaper.ImGui_SameLine(ctx)
+    else
+      reaper.ImGui_TextColored(ctx, 0x888888FF, "(none)")
+      reaper.ImGui_SameLine(ctx)
+    end
+    if reaper.ImGui_SmallButton(ctx, "Browse...##tb_ed_icon") then
+      state.tb_icon_idx = state.tb_edit_idx  -- will update on pick
+      state.tb_icon_open = true
+      state.tb_icon_from_edit = true  -- flag: update edit state, not settings directly
+      state.tb_icon_list = nil
+    end
+
+    reaper.ImGui_Spacing(ctx)
+    reaper.ImGui_Separator(ctx)
+    reaper.ImGui_Spacing(ctx)
+
+    -- Save / Cancel
+    local can_save = state.tb_edit_label ~= "" and state.tb_edit_cmd ~= ""
+    if not can_save then
+      reaper.ImGui_BeginDisabled(ctx)
+    end
+    if reaper.ImGui_Button(ctx, "Save", 80, 0) then
+      local btns2 = settings.current.toolbar_buttons
+      if state.tb_edit_idx and state.tb_edit_idx >= 1 and state.tb_edit_idx <= #btns2 then
+        -- Update existing
+        btns2[state.tb_edit_idx].label = state.tb_edit_label
+        btns2[state.tb_edit_idx].cmd = state.tb_edit_cmd
+        btns2[state.tb_edit_idx].icon = state.tb_edit_icon
+        settings.save_toolbar()
+      else
+        -- Add new
+        settings.add_toolbar_button(state.tb_edit_label, state.tb_edit_cmd, state.tb_edit_icon)
+      end
+      toolbar_icon_cache = {}  -- refresh icon cache
+      reaper.ImGui_CloseCurrentPopup(ctx)
+    end
+    if not can_save then
+      reaper.ImGui_EndDisabled(ctx)
+    end
+    reaper.ImGui_SameLine(ctx)
+    if reaper.ImGui_Button(ctx, "Cancel", 80, 0) then
+      reaper.ImGui_CloseCurrentPopup(ctx)
+    end
+
+    -- Icon picker popup (nested INSIDE edit modal so it doesn't close the modal)
+    if state.tb_icon_open and state.tb_icon_from_edit then
+      reaper.ImGui_OpenPopup(ctx, "Choose Icon##tb_icon_pick")
+      state.tb_icon_open = false
+      if not state.tb_icon_list then
+        state.tb_icon_list = settings.scan_toolbar_icons()
+      end
+    end
+
+    reaper.ImGui_SetNextWindowPos(ctx, popup_x, popup_y, reaper.ImGui_Cond_Appearing(), 0.5, 1.0)
+    reaper.ImGui_SetNextWindowSize(ctx, 500, 500, reaper.ImGui_Cond_Appearing())
+    if reaper.ImGui_BeginPopupModal(ctx, "Choose Icon##tb_icon_pick", nil, reaper.ImGui_WindowFlags_NoScrollbar()) then
+      reaper.ImGui_SetNextFrameWantCaptureKeyboard(ctx, true)
+      local icons = state.tb_icon_list or {}
+
+      if reaper.ImGui_Button(ctx, "None (text only)", -1, 0) then
+        state.tb_edit_icon = nil
+        reaper.ImGui_CloseCurrentPopup(ctx)
+      end
+
+      reaper.ImGui_Separator(ctx)
+      reaper.ImGui_Text(ctx, #icons .. " icons available")
+      reaper.ImGui_Spacing(ctx)
+
+      local avail_w = reaper.ImGui_GetContentRegionAvail(ctx)
+      local _, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
+      local cell_size = 42
+      local cell_gap = 3
+      local cols = math.max(1, math.floor((avail_w + cell_gap) / (cell_size + cell_gap)))
+
+      if reaper.ImGui_BeginChild(ctx, "tb_icon_grid", avail_w, avail_h - 4) then
+        local grid_dl = reaper.ImGui_GetWindowDrawList(ctx)
+        for i, filename in ipairs(icons) do
+          if (i - 1) % cols ~= 0 then
+            reaper.ImGui_SameLine(ctx, 0, cell_gap)
+          end
+
+          local img, uv_u1 = get_toolbar_icon(ctx, filename)
+          local gx, gy = reaper.ImGui_GetCursorScreenPos(ctx)
+          reaper.ImGui_PushID(ctx, i)
+          reaper.ImGui_InvisibleButton(ctx, "##ic", cell_size, cell_size)
+          local hovered = reaper.ImGui_IsItemHovered(ctx)
+          local clicked = reaper.ImGui_IsItemClicked(ctx, 0)
+
+          local bg = hovered and 0x555555FF or 0x333333FF
+          reaper.ImGui_DrawList_AddRectFilled(grid_dl, gx, gy, gx + cell_size, gy + cell_size, bg, 4)
+          if img then
+            local pad = 4
+            pcall(reaper.ImGui_DrawList_AddImage, grid_dl, img, gx + pad, gy + pad, gx + cell_size - pad, gy + cell_size - pad, 0, 0, uv_u1 or 1/3, 1, 0xFFFFFFFF)
+          end
+
+          if hovered then
+            reaper.ImGui_SetTooltip(ctx, filename)
+          end
+
+          if clicked then
+            state.tb_edit_icon = filename
+            reaper.ImGui_CloseCurrentPopup(ctx)
+          end
+
+          reaper.ImGui_PopID(ctx)
+        end
+        reaper.ImGui_EndChild(ctx)
+      end
+
+      reaper.ImGui_EndPopup(ctx)
+    end
+
+    reaper.ImGui_EndPopup(ctx)
+  end
+
+  -- Icon picker for direct context menu "Change Icon..." (NOT from edit popup)
+  if state.tb_icon_open and not state.tb_icon_from_edit then
+    reaper.ImGui_OpenPopup(ctx, "Choose Icon Direct##tb_icon_direct")
+    state.tb_icon_open = false
+    if not state.tb_icon_list then
+      state.tb_icon_list = settings.scan_toolbar_icons()
+    end
+  end
+
+  local direct_popup_x = state.tb_ctx_x or 0
+  local direct_popup_y = state.tb_ctx_y or 0
+  reaper.ImGui_SetNextWindowPos(ctx, direct_popup_x, direct_popup_y, reaper.ImGui_Cond_Appearing(), 0.5, 1.0)
+  reaper.ImGui_SetNextWindowSize(ctx, 500, 500, reaper.ImGui_Cond_Appearing())
+  if reaper.ImGui_BeginPopupModal(ctx, "Choose Icon Direct##tb_icon_direct", nil, reaper.ImGui_WindowFlags_NoScrollbar()) then
+    local icons = state.tb_icon_list or {}
+
+    if reaper.ImGui_Button(ctx, "None (text only)", -1, 0) then
+      local btns2 = settings.current.toolbar_buttons
+      if state.tb_icon_idx and btns2[state.tb_icon_idx] then
+        btns2[state.tb_icon_idx].icon = nil
+        settings.save_toolbar()
+        toolbar_icon_cache = {}
+      end
+      reaper.ImGui_CloseCurrentPopup(ctx)
+    end
+
+    reaper.ImGui_Separator(ctx)
+    reaper.ImGui_Text(ctx, #icons .. " icons available")
+    reaper.ImGui_Spacing(ctx)
+
+    local avail_w = reaper.ImGui_GetContentRegionAvail(ctx)
+    local _, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
+    local cell_size = 42
+    local cell_gap = 3
+    local cols = math.max(1, math.floor((avail_w + cell_gap) / (cell_size + cell_gap)))
+
+    if reaper.ImGui_BeginChild(ctx, "tb_icon_grid_d", avail_w, avail_h - 4) then
+      local grid_dl = reaper.ImGui_GetWindowDrawList(ctx)
+      for i, filename in ipairs(icons) do
+        if (i - 1) % cols ~= 0 then
+          reaper.ImGui_SameLine(ctx, 0, cell_gap)
+        end
+
+        local img, uv_u1 = get_toolbar_icon(ctx, filename)
+        local gx, gy = reaper.ImGui_GetCursorScreenPos(ctx)
+        reaper.ImGui_PushID(ctx, i)
+        reaper.ImGui_InvisibleButton(ctx, "##ic", cell_size, cell_size)
+        local hovered = reaper.ImGui_IsItemHovered(ctx)
+        local clicked = reaper.ImGui_IsItemClicked(ctx, 0)
+
+        local bg = hovered and 0x555555FF or 0x333333FF
+        reaper.ImGui_DrawList_AddRectFilled(grid_dl, gx, gy, gx + cell_size, gy + cell_size, bg, 4)
+        if img then
+          local pad = 4
+          pcall(reaper.ImGui_DrawList_AddImage, grid_dl, img, gx + pad, gy + pad, gx + cell_size - pad, gy + cell_size - pad, 0, 0, uv_u1 or 1/3, 1, 0xFFFFFFFF)
+        end
+
+        if hovered then
+          reaper.ImGui_SetTooltip(ctx, filename)
+        end
+
+        if clicked then
+          local btns2 = settings.current.toolbar_buttons
+          if state.tb_icon_idx and btns2[state.tb_icon_idx] then
+            btns2[state.tb_icon_idx].icon = filename
+            settings.save_toolbar()
+            toolbar_icon_cache = {}
+          end
+          reaper.ImGui_CloseCurrentPopup(ctx)
+        end
+
+        reaper.ImGui_PopID(ctx)
+      end
+      reaper.ImGui_EndChild(ctx)
+    end
+
+    reaper.ImGui_EndPopup(ctx)
+  end
 end
 
 -- Draw waveform with per-view peaks (1:1 peak-to-pixel mapping)

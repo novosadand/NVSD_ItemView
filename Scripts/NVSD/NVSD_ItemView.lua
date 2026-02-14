@@ -309,18 +309,27 @@ local function loop()
     local shift_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
     local alt_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
 
+    -- Skip all keyboard shortcuts when a popup modal is open (e.g. toolbar edit, icon picker, settings)
+    -- IsPopupOpen checks the popup stack from the previous frame, so it works before widgets are drawn
+    local text_input_active = reaper.ImGui_IsPopupOpen(ctx, "Edit Toolbar Button##tb_edit")
+                           or reaper.ImGui_IsPopupOpen(ctx, "Choose Icon##tb_icon_pick")
+                           or reaper.ImGui_IsPopupOpen(ctx, "Choose Icon Direct##tb_icon_direct")
+                           or settings_ui.is_open()
+
     -- Auto-focus window when hovered with Ctrl held (enables scroll-to-zoom without clicking first)
+    -- Skip when a popup modal is open (SetWindowFocus would steal focus from the popup)
     local is_hovered = reaper.ImGui_IsWindowHovered(ctx, reaper.ImGui_HoveredFlags_ChildWindows())
-    if reaper_is_active and is_hovered and ctrl_held and not reaper.ImGui_IsWindowFocused(ctx) then
+    if reaper_is_active and is_hovered and ctrl_held and not text_input_active
+        and not reaper.ImGui_IsWindowFocused(ctx) then
       reaper.ImGui_SetWindowFocus(ctx)
     end
 
     -- Audio preview (configurable shortcut, default Ctrl+Space)
-    if reaper_is_active and settings.check_shortcut(ctx, "audio_preview") and reaper.CF_CreatePreview then
+    if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "audio_preview") and reaper.CF_CreatePreview then
       state.preview_start_requested = true  -- processed in item context where source is available
     -- Forward Space to REAPER transport (so playback works without clicking back to timeline)
     -- Plain Space while preview is playing: stop preview instead of toggling transport
-    elseif reaper_is_active and not settings.listening and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Space()) then
+    elseif reaper_is_active and not text_input_active and not settings.listening and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Space()) then
       if state.preview_active then
         state.stop_preview()
       else
@@ -329,7 +338,7 @@ local function loop()
     end
 
     -- Forward undo/redo to REAPER (universal, not configurable)
-    if reaper_is_active and not settings.listening and ctrl_held then
+    if reaper_is_active and not text_input_active and not settings.listening and ctrl_held then
       if reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Z()) then
         reaper.Main_OnCommand(shift_held and 40030 or 40029, 0)  -- Shift: Redo, else Undo
       elseif reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Y()) then
@@ -338,54 +347,54 @@ local function loop()
     end
 
     -- Zoom shortcuts
-    if reaper_is_active and settings.check_shortcut(ctx, "zoom_in") then
+    if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "zoom_in") then
       state.zoom_level = math.min(500.0, state.zoom_level * 1.5)
       state.zoom_toggle_active = false
-    elseif reaper_is_active and settings.check_shortcut(ctx, "zoom_out") then
+    elseif reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "zoom_out") then
       state.zoom_level = math.max(1.0, state.zoom_level / 1.5)
       state.zoom_toggle_active = false
-    elseif reaper_is_active and settings.check_shortcut(ctx, "reset_zoom") then
+    elseif reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "reset_zoom") then
       state.zoom_level = 1.0
       state.pan_offset = 0
       state.zoom_toggle_active = false
     end
 
     -- Toggle envelope snap (configurable shortcut, default Ctrl+4)
-    if reaper_is_active and settings.check_shortcut(ctx, "toggle_snap") then
+    if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "toggle_snap") then
       state.env_snap_enabled = not state.env_snap_enabled
     end
 
     -- Envelope lock (configurable shortcut, default L)
-    if reaper_is_active and settings.check_shortcut(ctx, "envelope_lock") then
+    if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "envelope_lock") then
       state.envelope_lock = not state.envelope_lock
     end
 
     -- Show/hide envelope shortcuts
-    if reaper_is_active and settings.check_shortcut(ctx, "show_volume_env") then
+    if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "show_volume_env") then
       state.envelope_type = "Volume"; state.envelopes_visible = true
     end
-    if reaper_is_active and settings.check_shortcut(ctx, "show_pitch_env") then
+    if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "show_pitch_env") then
       state.envelope_type = "Pitch"; state.envelopes_visible = true; state.pitch_view_offset = 0
     end
-    if reaper_is_active and settings.check_shortcut(ctx, "show_pan_env") then
+    if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "show_pan_env") then
       state.envelope_type = "Pan"; state.envelopes_visible = true
     end
-    if reaper_is_active and settings.check_shortcut(ctx, "hide_envelopes") then
+    if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "hide_envelopes") then
       state.envelopes_visible = false
     end
 
     -- Toggle WAV cue markers (configurable shortcut, default T)
-    if reaper_is_active and settings.check_shortcut(ctx, "toggle_cue_markers") then
+    if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "toggle_cue_markers") then
       state.show_cue_markers = not state.show_cue_markers
     end
 
     -- Open settings (configurable shortcut, default S)
-    if reaper_is_active and settings.check_shortcut(ctx, "open_settings") then
+    if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "open_settings") then
       if not settings_ui.is_open() then settings_ui.open(settings) end
     end
 
     -- Escape: clear node selection first, then region selection, then close
-    if reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Escape()) then
+    if not text_input_active and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Escape()) then
       if #state.env_selected_nodes > 0 then
         state.env_selected_nodes = {}
       elseif state.region_selected then
@@ -396,7 +405,7 @@ local function loop()
     end
 
     -- Delete: remove selected envelope nodes
-    if reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Delete())
+    if not text_input_active and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Delete())
         and #state.env_selected_nodes > 0 and state.envelopes_visible then
       local env_n = state.env_selection_env_name
       local sel_item = state.env_selection_item
@@ -512,6 +521,15 @@ local function loop()
     end
     if reaper_is_active then
       state.last_selected_item = selected_item
+    end
+
+    -- Execute deferred toolbar action (before item resolution so pointers stay fresh)
+    if state._tb_pending_cmd then
+      state._tb_id = tonumber(state._tb_pending_cmd) or reaper.NamedCommandLookup(state._tb_pending_cmd)
+      if state._tb_id and state._tb_id > 0 then
+        reaper.Main_OnCommand(state._tb_id, 0)
+      end
+      state._tb_pending_cmd = nil
     end
 
     local item = nil
@@ -919,8 +937,12 @@ local function loop()
           local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
           local envelope_bar_height = config.ENVELOPE_BAR_HEIGHT
           local warp_bar_height = state.warp_mode and config.WARP_BAR_HEIGHT or 0
-          local waveform_height = math.max(50, avail_h - (config.WAVEFORM_MARGIN_V * 2) - config.INFO_BAR_HEIGHT - config.RULER_HEIGHT - warp_bar_height - config.TIME_RULER_HEIGHT - envelope_bar_height)
-          local panel_height = config.INFO_BAR_HEIGHT + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height
+          state.toolbar_buttons = settings.current.toolbar_buttons or {}
+          state.info_bar_height = #state.toolbar_buttons > 0
+              and config.INFO_BAR_HEIGHT_TOOLBAR
+              or config.INFO_BAR_HEIGHT_BASE
+          local waveform_height = math.max(50, avail_h - (config.WAVEFORM_MARGIN_V * 2) - state.info_bar_height - config.RULER_HEIGHT - warp_bar_height - config.TIME_RULER_HEIGHT - envelope_bar_height)
+          local panel_height = state.info_bar_height + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height
 
           local two_col_panel = panel_height < 270
           local effective_panel_width = two_col_panel
@@ -938,14 +960,14 @@ local function loop()
           local panel_y = cursor_y + config.WAVEFORM_MARGIN_V
           local wave_x = cursor_x + total_left_width + config.WAVEFORM_MARGIN_H + pitch_gutter
           local info_bar_y = cursor_y + config.WAVEFORM_MARGIN_V
-          local ruler_y = info_bar_y + config.INFO_BAR_HEIGHT
+          local ruler_y = info_bar_y + state.info_bar_height
           local warp_bar_y = ruler_y + config.RULER_HEIGHT
           local wave_y = warp_bar_y + warp_bar_height
           local time_ruler_y = wave_y + waveform_height
           local envelope_bar_y = time_ruler_y + config.TIME_RULER_HEIGHT
 
           -- Reserve the full area
-          local total_height = config.WAVEFORM_MARGIN_V + config.INFO_BAR_HEIGHT + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height + config.WAVEFORM_MARGIN_V
+          local total_height = config.WAVEFORM_MARGIN_V + state.info_bar_height + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height + config.WAVEFORM_MARGIN_V
           reaper.ImGui_InvisibleButton(ctx, "waveform_area", avail_w, math.max(avail_h, total_height))
 
           local mouse_x, mouse_y = reaper.ImGui_GetMousePos(ctx)
@@ -1523,18 +1545,31 @@ local function loop()
           end
 
           -- Draw file info bar at the top (file_path already fetched above for caching)
-          local _, gear_clicked, tab_clicked = drawing.draw_info_bar(draw_list, ctx, wave_x, info_bar_y, waveform_width, config.INFO_BAR_HEIGHT, source, file_path, mouse_x, mouse_y, item, config, utils, state.view_num_channels, state, settings)
+          -- toolbar_clicked_idx is stored on state inside draw_info_bar to avoid local limit
+          local _, gear_clicked, tab_clicked = drawing.draw_info_bar(draw_list, ctx, wave_x, info_bar_y, waveform_width, state.info_bar_height, source, file_path, mouse_x, mouse_y, item, config, utils, state.view_num_channels, state, settings, state.toolbar_buttons)
 
           -- Open settings when gear is clicked
           if gear_clicked then
             settings_ui.open(settings)
           end
 
+          -- Defer toolbar action to next frame (executing mid-draw can invalidate take)
+          if state.toolbar_clicked then
+            if state.toolbar_buttons[state.toolbar_clicked] then
+              state._tb_pending_cmd = state.toolbar_buttons[state.toolbar_clicked].cmd
+            end
+            state.toolbar_clicked = nil
+          end
+
           -- (Envelopes tab is always available, no auto-switch needed)
 
           -- Right-click menu (deferred: fade handle right-click checked after hover detection)
+          -- Exclude info bar area (handled by toolbar context menu)
           local right_clicked = reaper_is_active and reaper.ImGui_IsMouseClicked(ctx, 1)
-          local right_click_in_window = right_clicked and mouse_x >= cursor_x and mouse_x <= cursor_x + avail_w
+          local in_info_bar = right_clicked and mouse_y >= info_bar_y and mouse_y <= info_bar_y + state.info_bar_height
+                              and mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
+          local right_click_in_window = right_clicked and not in_info_bar
+                              and mouse_x >= cursor_x and mouse_x <= cursor_x + avail_w
                               and mouse_y >= cursor_y and mouse_y <= cursor_y + avail_h
 
           -- Calculate ACTUAL current marker positions
@@ -5564,6 +5599,9 @@ local function loop()
 
     -- Clear preview start flag if it wasn't consumed (no item/source available)
     state.preview_start_requested = false
+
+    -- Toolbar right-click context menu + edit popups (must be at top-level, not inside item block)
+    drawing.draw_toolbar_popups(ctx, state, settings, config)
 
     reaper.ImGui_End(ctx)
   end
