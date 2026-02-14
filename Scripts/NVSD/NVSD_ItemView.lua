@@ -2328,8 +2328,10 @@ local function loop()
               and not (state.warp_mode and state.slope_hovered_segment > 0)
 
           -- Cursor feedback (alt_held cached at top of frame)
-          -- Warp bar cursors
-          if state.dragging_warp_marker then
+          -- Skip cursor changes when a popup modal is open (so popup title bar drag works)
+          if text_input_active then
+            -- Let ImGui handle cursor naturally for popup windows
+          elseif state.dragging_warp_marker then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
           elseif mouse_in_warp_bar and state.warp_marker_hovered_idx > 0 then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
