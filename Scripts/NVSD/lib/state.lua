@@ -270,12 +270,11 @@ function state.start_drag(name, mouse_y, value, track_shift)
   if track_shift then
     ctrl.fine_held = false
   end
-  if state.has_js_extension then
-    local screen_x, screen_y = reaper.GetMousePosition()
-    state.drag_lock_screen_x, state.drag_lock_screen_y = screen_x, screen_y
-    state.drag_last_screen_y = screen_y
-    state.drag_cumulative_delta_y = 0
-  end
+  -- Always init screen-space tracking (works cross-platform without JS extension)
+  local screen_x, screen_y = reaper.GetMousePosition()
+  state.drag_lock_screen_x, state.drag_lock_screen_y = screen_x, screen_y
+  state.drag_last_screen_y = screen_y
+  state.drag_cumulative_delta_y = 0
   if not state.undo_block_open then
     state.undo_block_open = name
   end
@@ -310,13 +309,13 @@ function state.get_drag_delta(ctx, name, mouse_y, current_value, fine_sensitivit
       ctrl.start_y = mouse_y
       ctrl.start_value = current_value
       ctrl.fine_held = ctrl_now
-      if state.has_js_extension then state.drag_cumulative_delta_y = 0 end
+      state.drag_cumulative_delta_y = 0
     end
     sensitivity = ctrl.fine_held and fine_sensitivity or 1.0
   end
 
-  local delta_y = state.has_js_extension and state.drag_cumulative_delta_y or (ctrl.start_y - mouse_y)
-  return delta_y * sensitivity
+  -- Always use cumulative delta from screen coords (works on all platforms)
+  return state.drag_cumulative_delta_y * sensitivity
 end
 
 -- Reset all drag and interaction flags (used on dialog recovery / focus loss)

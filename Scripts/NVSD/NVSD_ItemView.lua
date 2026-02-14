@@ -2058,19 +2058,19 @@ local function loop()
           -- Hide and lock cursor while dragging any control
           if state.is_any_control_dragging() then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
-            if state.has_js_extension and state.drag_lock_screen_x ~= 0 and state.drag_lock_screen_y ~= 0 then
-              local cur_screen_x, cur_screen_y = reaper.GetMousePosition()
-              -- Initialize last_screen_y if not set (defensive)
-              state.drag_last_screen_y = state.drag_last_screen_y or cur_screen_y
-              -- Calculate delta from last frame's position (not lock position)
-              -- This avoids issues with cursor teleport timing
-              local delta = state.drag_last_screen_y - cur_screen_y
-              if delta ~= 0 then
-                state.drag_cumulative_delta_y = state.drag_cumulative_delta_y + delta
-              end
-              -- Update last position and teleport cursor back to lock position
+            -- Accumulate delta from screen coords (works on all platforms)
+            local cur_screen_x, cur_screen_y = reaper.GetMousePosition()
+            state.drag_last_screen_y = state.drag_last_screen_y or cur_screen_y
+            local delta = state.drag_last_screen_y - cur_screen_y
+            if delta ~= 0 then
+              state.drag_cumulative_delta_y = state.drag_cumulative_delta_y + delta
+            end
+            -- With JS extension: lock cursor in place for infinite drag range
+            if state.has_js_extension and state.drag_lock_screen_x ~= 0 then
               state.drag_last_screen_y = state.drag_lock_screen_y
               reaper.JS_Mouse_SetPosition(state.drag_lock_screen_x, state.drag_lock_screen_y)
+            else
+              state.drag_last_screen_y = cur_screen_y
             end
           end
 
@@ -2943,12 +2943,10 @@ local function loop()
             state.ruler_drag_cumulative_y = 0
             state.ruler_drag_start_pan = state.pan_offset
             state.ruler_drag_window_x = mouse_x  -- Store window-space X for zoom centering
-            if state.has_js_extension then
-              local screen_x, screen_y = reaper.GetMousePosition()
-              state.ruler_drag_screen_x = screen_x
-              state.ruler_drag_screen_y = screen_y
-              state.ruler_drag_cursor_x = screen_x  -- Tracks visible cursor X position
-            end
+            local screen_x, screen_y = reaper.GetMousePosition()
+            state.ruler_drag_screen_x = screen_x
+            state.ruler_drag_screen_y = screen_y
+            state.ruler_drag_cursor_x = screen_x  -- Tracks visible cursor X position
           end
 
           if reaper.ImGui_IsMouseReleased(ctx, 0) then
@@ -2957,62 +2955,53 @@ local function loop()
 
           if state.is_ruler_dragging and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
+            local cur_screen_x, cur_screen_y = reaper.GetMousePosition()
+            local delta_x = cur_screen_x - state.ruler_drag_screen_x
+            local delta_y = cur_screen_y - state.ruler_drag_screen_y
+
+            -- Accumulate Y for zoom
+            state.ruler_drag_cumulative_y = state.ruler_drag_cumulative_y + delta_y
+
+            -- Apply zoom centered on initial cursor position
+            local zoom_sensitivity = 0.008
+            local zoom_multiplier = 1.0 + (state.ruler_drag_cumulative_y * zoom_sensitivity)
+            local new_zoom = math.max(1.0, state.ruler_drag_start_zoom * zoom_multiplier)
+            zoom_to_cursor(new_zoom, state.ruler_drag_window_x)
+
+            -- Check if we can pan (zoomed in)
+            local can_pan = state.zoom_level > 1.0
+
+            -- Apply additional pan from X movement
+            if can_pan and delta_x ~= 0 then
+              local new_view_length = zoom_base_view_length / state.zoom_level
+              local pan_sensitivity = new_view_length / waveform_width  -- Time per pixel at current zoom
+              state.pan_offset = state.pan_offset - (delta_x * pan_sensitivity)
+
+              -- Clamp pan to valid range
+              local half_view = new_view_length / 2
+              local min_pan = ext_start - range_center + half_view
+              local max_pan = ext_end - range_center - half_view
+              if min_pan > max_pan then min_pan, max_pan = max_pan, min_pan end
+              state.pan_offset = math.max(min_pan, math.min(max_pan, state.pan_offset))
+            end
+
+            -- With JS extension: lock cursor for infinite drag range
             if state.has_js_extension then
-              local cur_screen_x, cur_screen_y = reaper.GetMousePosition()
-              local delta_x = cur_screen_x - state.ruler_drag_screen_x
-              local delta_y = cur_screen_y - state.ruler_drag_screen_y
-
-              -- Accumulate Y for zoom
-              state.ruler_drag_cumulative_y = state.ruler_drag_cumulative_y + delta_y
-
-              -- Apply zoom centered on initial cursor position
-              local zoom_sensitivity = 0.008
-              local zoom_multiplier = 1.0 + (state.ruler_drag_cumulative_y * zoom_sensitivity)
-              local new_zoom = math.max(1.0, state.ruler_drag_start_zoom * zoom_multiplier)
-              zoom_to_cursor(new_zoom, state.ruler_drag_window_x)
-
-              -- Check if we can pan (zoomed in)
-              local can_pan = state.zoom_level > 1.0
-
-              -- Apply additional pan from X movement
-              if can_pan and delta_x ~= 0 then
-                local new_view_length = zoom_base_view_length / state.zoom_level
-                local pan_sensitivity = new_view_length / waveform_width  -- Time per pixel at current zoom
-                state.pan_offset = state.pan_offset - (delta_x * pan_sensitivity)
-
-                -- Clamp pan to valid range
-                local half_view = new_view_length / 2
-                local min_pan = ext_start - range_center + half_view
-                local max_pan = ext_end - range_center - half_view
-                if min_pan > max_pan then min_pan, max_pan = max_pan, min_pan end
-                state.pan_offset = math.max(min_pan, math.min(max_pan, state.pan_offset))
-              end
-
-              -- Calculate cursor X position in screen coords
               local win_x, win_y = reaper.ImGui_GetWindowPos(ctx)
               local wave_screen_left = win_x + wave_x - cursor_x + config.WINDOW_PADDING
               local wave_screen_right = wave_screen_left + waveform_width
 
               local target_cursor_x = state.ruler_drag_cursor_x
               if can_pan then
-                -- Move cursor X with mouse, but clamp to waveform bounds
                 target_cursor_x = target_cursor_x + delta_x
                 target_cursor_x = math.max(wave_screen_left, math.min(wave_screen_right, target_cursor_x))
                 state.ruler_drag_cursor_x = target_cursor_x
               end
-              -- If can't pan, cursor X stays locked at ruler_drag_cursor_x
-
-              -- Set cursor position: X can move (within bounds), Y is locked
               reaper.JS_Mouse_SetPosition(math.floor(state.ruler_drag_cursor_x), state.ruler_drag_screen_y)
-
-              -- Update reference X for next frame's delta calculation
               state.ruler_drag_screen_x = math.floor(state.ruler_drag_cursor_x)
             else
-              local delta_y = mouse_y - state.ruler_drag_start_y
-              local zoom_sensitivity = 0.008
-              local zoom_multiplier = 1.0 + (delta_y * zoom_sensitivity)
-              local new_zoom = state.ruler_drag_start_zoom * zoom_multiplier
-              zoom_to_cursor(new_zoom, mouse_x)
+              state.ruler_drag_screen_x = cur_screen_x
+              state.ruler_drag_screen_y = cur_screen_y
             end
           end
 
@@ -3085,11 +3074,9 @@ local function loop()
               state.fade_curve_drag_start_value = fade_in_dir
               state.fade_curve_cumulative_y = 0
               state.fade_curve_was_dragged = false
-              if state.has_js_extension then
-                local sx, sy = reaper.GetMousePosition()
-                state.fade_curve_lock_x, state.fade_curve_lock_y = sx, sy
-                state.fade_curve_last_y = sy
-              end
+              local sx, sy = reaper.GetMousePosition()
+              state.fade_curve_lock_x, state.fade_curve_lock_y = sx, sy
+              state.fade_curve_last_y = sy
               if not state.undo_block_open then
                 state.undo_block_open = "fade_curve_in"
               end
@@ -3098,11 +3085,9 @@ local function loop()
               state.fade_curve_drag_start_value = fade_out_dir
               state.fade_curve_cumulative_y = 0
               state.fade_curve_was_dragged = false
-              if state.has_js_extension then
-                local sx, sy = reaper.GetMousePosition()
-                state.fade_curve_lock_x, state.fade_curve_lock_y = sx, sy
-                state.fade_curve_last_y = sy
-              end
+              local sx, sy = reaper.GetMousePosition()
+              state.fade_curve_lock_x, state.fade_curve_lock_y = sx, sy
+              state.fade_curve_last_y = sy
               if not state.undo_block_open then
                 state.undo_block_open = "fade_curve_out"
               end
@@ -5239,9 +5224,9 @@ local function loop()
           -- Fade curvature drag processing (with cursor lock)
           if (state.dragging_fade_curve_in or state.dragging_fade_curve_out)
               and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
-            -- Hide cursor and accumulate delta via JS extension
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
-            if state.has_js_extension and state.fade_curve_lock_x then
+            -- Accumulate delta from screen coords (works on all platforms)
+            if state.fade_curve_lock_x then
               local cur_x, cur_y = reaper.GetMousePosition()
               state.fade_curve_last_y = state.fade_curve_last_y or cur_y
               local delta = state.fade_curve_last_y - cur_y
@@ -5251,8 +5236,13 @@ local function loop()
                   state.fade_curve_was_dragged = true
                 end
               end
-              state.fade_curve_last_y = state.fade_curve_lock_y
-              reaper.JS_Mouse_SetPosition(state.fade_curve_lock_x, state.fade_curve_lock_y)
+              -- With JS extension: lock cursor for infinite range
+              if state.has_js_extension then
+                state.fade_curve_last_y = state.fade_curve_lock_y
+                reaper.JS_Mouse_SetPosition(state.fade_curve_lock_x, state.fade_curve_lock_y)
+              else
+                state.fade_curve_last_y = cur_y
+              end
             end
             local sensitivity = 0.005
             local new_dir
