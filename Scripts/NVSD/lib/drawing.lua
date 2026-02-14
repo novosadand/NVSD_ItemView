@@ -547,10 +547,10 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   reaper.ImGui_DrawList_AddLine(draw_list, x, y + height, x + width, y + height, config.COLOR_CENTERLINE, 1)
 
   -- Settings button (gear icon) on the right
-  local gear_btn_h = height - 4
+  local gear_btn_h = 14
   local gear_btn_w = gear_btn_h + 4
   local gear_btn_x = x + width - gear_btn_w - 3
-  local gear_btn_y = y + 2
+  local gear_btn_y = y + math.floor((height - gear_btn_h) / 2)
   local gear_cx = gear_btn_x + gear_btn_w / 2
   local gear_cy = gear_btn_y + gear_btn_h / 2
 
@@ -595,9 +595,9 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   if has_cues then
     local cue_label = "CUE"
     cue_btn_w = reaper.ImGui_CalcTextSize(ctx, cue_label) + 8
-    local cue_btn_h = height - 4
+    local cue_btn_h = 14
     cue_btn_x = gear_btn_x - cue_btn_w - 4
-    local cue_btn_y = y + 2
+    local cue_btn_y = y + math.floor((height - cue_btn_h) / 2)
 
     local mouse_in_cue = mouse_x >= cue_btn_x and mouse_x <= cue_btn_x + cue_btn_w
                           and mouse_y >= cue_btn_y and mouse_y <= cue_btn_y + cue_btn_h
@@ -828,10 +828,10 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
     end
   end
 
-  -- Waveform icon
+  -- Waveform icon (fixed size, vertically centered)
   local icon_x = mute_x + mute_size + 6
   local icon_center_y = y + height / 2
-  local icon_max_h = height * 0.6
+  local icon_max_h = 10
 
   local bar_widths = {2, 2, 2, 2, 2}
   local bar_heights = {0.3, 0.7, 1.0, 0.6, 0.4}
@@ -847,7 +847,7 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   end
 
   local text_x = current_x + 4
-  local text_y = y + 3
+  local text_y = y + math.floor((height - 12) / 2)
 
   -- Cache metadata per source (avoids REAPER API calls every frame)
   local file_name, sample_rate, num_channels, bit_depth
