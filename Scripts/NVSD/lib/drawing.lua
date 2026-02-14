@@ -675,23 +675,23 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
 
       local mouse_in = mouse_x >= tb_x and mouse_x <= tb_x + btn_w
                        and mouse_y >= tb_btn_y and mouse_y <= tb_btn_y + tb_btn_h
-      local bg = mouse_in and config.COLOR_BTN_HOVER or config.COLOR_GRID_BAR
-      reaper.ImGui_DrawList_AddRectFilled(draw_list, tb_x, tb_btn_y, tb_x + btn_w, tb_btn_y + tb_btn_h, bg, 3)
 
       if icon_img then
-        -- Draw icon centered in button (first sprite state only)
-        local icon_pad = 2
-        local icon_size = tb_btn_h - icon_pad * 2
-        local icon_x = tb_x + math.floor((btn_w - icon_size) / 2)
-        local icon_y = tb_btn_y + icon_pad
-        local draw_ok = pcall(reaper.ImGui_DrawList_AddImage, draw_list, icon_img, icon_x, icon_y, icon_x + icon_size, icon_y + icon_size, 0, 0, icon_uv_u1, 1, 0xFFFFFFFF)
+        -- Icon IS the button: no container, draw icon at full size
+        -- Subtle hover highlight behind the icon
+        if mouse_in then
+          reaper.ImGui_DrawList_AddRectFilled(draw_list, tb_x, tb_btn_y, tb_x + btn_w, tb_btn_y + tb_btn_h, 0xFFFFFF20, 3)
+        end
+        local draw_ok = pcall(reaper.ImGui_DrawList_AddImage, draw_list, icon_img, tb_x, tb_btn_y, tb_x + btn_w, tb_btn_y + tb_btn_h, 0, 0, icon_uv_u1, 1, 0xFFFFFFFF)
         if not draw_ok then
-          -- Image invalid, clear from cache and fall back to text
           toolbar_icon_cache[btn.icon] = false
           icon_img = nil
         end
-      else
-        -- Centered text
+      end
+      if not icon_img then
+        -- Text button with container
+        local bg = mouse_in and config.COLOR_BTN_HOVER or config.COLOR_GRID_BAR
+        reaper.ImGui_DrawList_AddRectFilled(draw_list, tb_x, tb_btn_y, tb_x + btn_w, tb_btn_y + tb_btn_h, bg, 3)
         local btn_text_w = reaper.ImGui_CalcTextSize(ctx, btn.label)
         local text_color = mouse_in and config.COLOR_BTN_TEXT or config.COLOR_INFO_BAR_TEXT
         reaper.ImGui_DrawList_AddText(draw_list, tb_x + (btn_w - btn_text_w) / 2,
