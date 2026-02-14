@@ -5336,15 +5336,15 @@ local function loop()
               local rate_right = rate * (1 + slope)  -- local rate at right endpoint
               drawing.draw_slope_handle(draw_list, px1, y_left, 1, rate_left, hover_state)
               drawing.draw_slope_handle(draw_list, px2, y_right, -1, rate_right, hover_state)
-              -- Rate label centered in segment (e.g. "1.24x")
-              local seg_w = px2 - px1
-              if seg_w > 40 then
-                local label = string.format("%.2fx", rate)
-                local text_w = reaper.ImGui_CalcTextSize(ctx, label)
-                local tx = px1 + (seg_w - text_w) / 2
-                local ty = wave_y + waveform_height / 2 - 6
-                reaper.ImGui_DrawList_AddText(draw_list, tx, ty, 0xFFFFFF60, label)
-              end
+              -- Rate label on each handle (e.g. "0.48x")
+              local lbl_l = string.format("%.2fx", rate_left)
+              local lbl_r = string.format("%.2fx", rate_right)
+              local lbl_col = 0xFFFFFF70
+              -- Left handle label: offset right of the triangle
+              reaper.ImGui_DrawList_AddText(draw_list, px1 + 10, y_left - 6, lbl_col, lbl_l)
+              -- Right handle label: offset left of the triangle
+              local rw = reaper.ImGui_CalcTextSize(ctx, lbl_r)
+              reaper.ImGui_DrawList_AddText(draw_list, px2 - 10 - rw, y_right - 6, lbl_col, lbl_r)
             end
             reaper.ImGui_DrawList_PopClipRect(draw_list)
           end
