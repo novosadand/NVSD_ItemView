@@ -964,15 +964,29 @@ end
 -- Draw toolbar context menu + edit popup
 -- Call this once per frame from main script, after draw_info_bar
 -- Shared icon picker content: centered header, "Text Only" button, scrollable icon grid
--- Returns: filename string if icon picked, "" if "Text Only" picked, nil if nothing picked
+-- Returns: filename string if icon picked, "" if "Text Only" picked, false if closed, nil if nothing
 local function draw_icon_picker_content(ctx, icons, child_id)
   local picked = nil
+  local content_w = reaper.ImGui_GetContentRegionAvail(ctx)
 
-  -- Centered title
+  -- X close button (top-right)
+  local close_label = "X"
+  local close_w = reaper.ImGui_CalcTextSize(ctx, close_label) + 16
+  local save_cx = reaper.ImGui_GetCursorPosX(ctx)
+  reaper.ImGui_SetCursorPosX(ctx, save_cx + content_w - close_w)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x00000000)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x555555FF)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x666666FF)
+  if reaper.ImGui_Button(ctx, close_label .. "##icon_close", close_w, 20) then
+    picked = false
+  end
+  reaper.ImGui_PopStyleColor(ctx, 3)
+
+  -- Centered title (same line as close button)
+  reaper.ImGui_SetCursorPosX(ctx, save_cx)
   local title = "Choose Icon"
   local title_w = reaper.ImGui_CalcTextSize(ctx, title)
-  local content_w = reaper.ImGui_GetContentRegionAvail(ctx)
-  reaper.ImGui_SetCursorPosX(ctx, reaper.ImGui_GetCursorPosX(ctx) + (content_w - title_w) / 2)
+  reaper.ImGui_SetCursorPosX(ctx, save_cx + (content_w - title_w) / 2)
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xFFFFFFFF)
   reaper.ImGui_Text(ctx, title)
   reaper.ImGui_PopStyleColor(ctx)
@@ -1293,7 +1307,9 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
       local icons = state.tb_icon_list or {}
 
       local picked = draw_icon_picker_content(ctx, icons, "tb_icon_grid")
-      if picked == "" then
+      if picked == false then
+        reaper.ImGui_CloseCurrentPopup(ctx)
+      elseif picked == "" then
         state.tb_edit_icon = nil
         reaper.ImGui_CloseCurrentPopup(ctx)
       elseif picked then
@@ -1334,7 +1350,9 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
     local icons = state.tb_icon_list or {}
 
     local picked = draw_icon_picker_content(ctx, icons, "tb_icon_grid_d")
-    if picked == "" then
+    if picked == false then
+      reaper.ImGui_CloseCurrentPopup(ctx)
+    elseif picked == "" then
       local btns2 = settings.current.toolbar_buttons
       if state.tb_icon_idx and btns2[state.tb_icon_idx] then
         btns2[state.tb_icon_idx].icon = nil
