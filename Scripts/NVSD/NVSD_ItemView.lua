@@ -4371,6 +4371,9 @@ local function loop()
                 local new_slope = state.slope_drag_start_slope + mouse_delta_y / band * slope_dir
                 new_slope = math.max(-1, math.min(1, new_slope))
                 reaper.SetTakeStretchMarkerSlope(take, state.slope_drag_slope_idx, new_slope)
+                -- Re-set marker position to force REAPER to invalidate waveform cache
+                local _, mpos, msrcpos = reaper.GetTakeStretchMarker(take, state.slope_drag_slope_idx)
+                reaper.SetTakeStretchMarker(take, state.slope_drag_slope_idx, mpos, msrcpos)
               else
                 -- Normal drag: move marker position, pin the other handle
                 local pos_delta = mouse_delta_y * state.slope_drag_time_per_px
