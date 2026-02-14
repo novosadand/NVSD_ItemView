@@ -643,8 +643,9 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
     local tb_btn_y = y + math.floor((height - tb_btn_h) / 2)
     local gap = config.TOOLBAR_BTN_GAP
 
-    -- First pass: measure total width of all buttons
+    -- First pass: measure total width and store per-button metrics
     local total_w = 0
+    local btn_metrics = {}  -- {x, w} per button (filled in pass 2)
     for i = 1, #toolbar_buttons do
       local btn = toolbar_buttons[i]
       local has_icon = btn.icon and btn.icon ~= "" and (get_toolbar_icon(ctx, btn.icon)) or false
@@ -672,17 +673,21 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
       else
         btn_w = reaper.ImGui_CalcTextSize(ctx, btn.label) + 12
       end
+      btn_metrics[i] = {x = tb_x, w = btn_w}
 
+      local is_dragging = state.tb_drag_active and state.tb_drag_idx == i
       local mouse_in = mouse_x >= tb_x and mouse_x <= tb_x + btn_w
                        and mouse_y >= tb_btn_y and mouse_y <= tb_btn_y + tb_btn_h
 
+      -- Draw button (dimmed if being dragged)
+      local alpha = is_dragging and 0.35 or 1.0
       if icon_img then
         -- Icon IS the button: no container, draw icon at full size
-        -- Subtle hover highlight behind the icon
-        if mouse_in then
+        if mouse_in and not state.tb_drag_active then
           reaper.ImGui_DrawList_AddRectFilled(draw_list, tb_x, tb_btn_y, tb_x + btn_w, tb_btn_y + tb_btn_h, 0xFFFFFF20, 3)
         end
-        local draw_ok = pcall(reaper.ImGui_DrawList_AddImage, draw_list, icon_img, tb_x, tb_btn_y, tb_x + btn_w, tb_btn_y + tb_btn_h, 0, 0, icon_uv_u1, 1, 0xFFFFFFFF)
+        local tint = is_dragging and 0xFFFFFF59 or 0xFFFFFFFF
+        local draw_ok = pcall(reaper.ImGui_DrawList_AddImage, draw_list, icon_img, tb_x, tb_btn_y, tb_x + btn_w, tb_btn_y + tb_btn_h, 0, 0, icon_uv_u1, 1, tint)
         if not draw_ok then
           toolbar_icon_cache[btn.icon] = false
           icon_img = nil
@@ -690,19 +695,28 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
       end
       if not icon_img then
         -- Text button with container
-        local bg = mouse_in and config.COLOR_BTN_HOVER or config.COLOR_GRID_BAR
+        local bg = (mouse_in and not state.tb_drag_active) and config.COLOR_BTN_HOVER or config.COLOR_GRID_BAR
+        if is_dragging then bg = 0x40404059 end
         reaper.ImGui_DrawList_AddRectFilled(draw_list, tb_x, tb_btn_y, tb_x + btn_w, tb_btn_y + tb_btn_h, bg, 3)
         local btn_text_w = reaper.ImGui_CalcTextSize(ctx, btn.label)
         local text_color = mouse_in and config.COLOR_BTN_TEXT or config.COLOR_INFO_BAR_TEXT
+        if is_dragging then text_color = 0xBBBBBB59 end
         reaper.ImGui_DrawList_AddText(draw_list, tb_x + (btn_w - btn_text_w) / 2,
             tb_btn_y + (tb_btn_h - 12) / 2, text_color, btn.label)
       end
 
-      if mouse_in then drawing.tooltip(ctx, "tb_" .. i, btn.label) end
-      if mouse_in and reaper.ImGui_IsMouseClicked(ctx, 0) then
-        state.toolbar_clicked = i
+      if mouse_in and not state.tb_drag_active then
+        drawing.tooltip(ctx, "tb_" .. i, btn.label)
       end
-      -- Right-click → context menu
+
+      -- Left-click: start potential drag
+      if mouse_in and reaper.ImGui_IsMouseClicked(ctx, 0) then
+        state.tb_drag_idx = i
+        state.tb_drag_start_x = mouse_x
+        state.tb_drag_active = false  -- not active until threshold met
+      end
+
+      -- Right-click: context menu
       if mouse_in and reaper.ImGui_IsMouseClicked(ctx, 1) then
         state.tb_ctx_idx = i
         state.tb_ctx_open = true
@@ -717,6 +731,57 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
     end
     -- Track right edge for text clipping
     toolbar_right_edge = tb_x - gap
+
+    -- Drag-and-drop reorder logic
+    local drag_threshold = 4
+    if state.tb_drag_idx and reaper.ImGui_IsMouseDown(ctx, 0) then
+      local dx = math.abs(mouse_x - (state.tb_drag_start_x or mouse_x))
+      if not state.tb_drag_active and dx >= drag_threshold then
+        state.tb_drag_active = true
+      end
+      if state.tb_drag_active then
+        -- Find drop target: which slot is the mouse closest to?
+        local drop_idx = nil
+        for i = 1, #btn_metrics do
+          local m = btn_metrics[i]
+          local center = m.x + m.w / 2
+          if mouse_x < center then
+            drop_idx = i
+            break
+          end
+        end
+        if not drop_idx then drop_idx = #toolbar_buttons + 1 end
+        state.tb_drop_idx = drop_idx
+
+        -- Draw insertion indicator line
+        local line_x
+        if drop_idx <= #btn_metrics then
+          line_x = btn_metrics[drop_idx].x - math.floor(gap / 2)
+        else
+          local last = btn_metrics[#btn_metrics]
+          line_x = last.x + last.w + math.floor(gap / 2)
+        end
+        reaper.ImGui_DrawList_AddLine(draw_list, line_x, tb_btn_y - 2, line_x, tb_btn_y + tb_btn_h + 2, 0xFFFFFFCC, 2)
+      end
+    elseif state.tb_drag_idx then
+      -- Mouse released
+      if state.tb_drag_active and state.tb_drop_idx then
+        local from = state.tb_drag_idx
+        local to = state.tb_drop_idx
+        -- Adjust target: if dropping after the source, account for removal shift
+        if to > from then to = to - 1 end
+        if to ~= from and to >= 1 and to <= #toolbar_buttons then
+          settings.move_toolbar_button(from, to)
+        end
+      elseif not state.tb_drag_active then
+        -- Was a click, not a drag: trigger the action
+        state.toolbar_clicked = state.tb_drag_idx
+      end
+      state.tb_drag_idx = nil
+      state.tb_drag_start_x = nil
+      state.tb_drag_active = false
+      state.tb_drop_idx = nil
+    end
   end
 
   -- Right boundary for filename text (don't overlap toolbar or right-side buttons)
