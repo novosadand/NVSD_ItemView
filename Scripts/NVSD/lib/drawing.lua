@@ -933,7 +933,6 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
         if reaper.ImGui_MenuItem(ctx, "Clear Icon") then
           btn.icon = nil
           settings.save_toolbar()
-          toolbar_icon_cache = {}  -- clear drawing cache
         end
       end
 
@@ -1053,7 +1052,6 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
         -- Add new
         settings.add_toolbar_button(state.tb_edit_label, state.tb_edit_cmd, state.tb_edit_icon)
       end
-      toolbar_icon_cache = {}  -- refresh icon cache
       reaper.ImGui_CloseCurrentPopup(ctx)
     end
     if not can_save then
@@ -1159,7 +1157,6 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
       if state.tb_icon_idx and btns2[state.tb_icon_idx] then
         btns2[state.tb_icon_idx].icon = nil
         settings.save_toolbar()
-        toolbar_icon_cache = {}
       end
       reaper.ImGui_CloseCurrentPopup(ctx)
     end
@@ -1204,7 +1201,6 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
           if state.tb_icon_idx and btns2[state.tb_icon_idx] then
             btns2[state.tb_icon_idx].icon = filename
             settings.save_toolbar()
-            toolbar_icon_cache = {}
           end
           reaper.ImGui_CloseCurrentPopup(ctx)
         end
