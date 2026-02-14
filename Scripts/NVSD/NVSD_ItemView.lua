@@ -1358,6 +1358,11 @@ local function loop()
             view_length = state.warp_drag_start_view_length
             view_start = state.warp_drag_start_view_start
             view_end = view_start + view_length
+          elseif state.slope_dragging and state.slope_drag_activated
+              and state.slope_drag_start_view_length then
+            view_length = state.slope_drag_start_view_length
+            view_start = state.slope_drag_start_view_start
+            view_end = view_start + view_length
           else
             view_length = ext_length / state.zoom_level
             local view_center = range_center + state.pan_offset
@@ -3373,19 +3378,21 @@ local function loop()
               and not near_fade_in and not near_fade_out then
             local seg = state.slope_hovered_segment
             local endpoint = state.slope_hovered_endpoint  -- 1=left, 2=right
-            -- The marker to move: left endpoint = segment's left marker, right = segment's right marker
-            local sm = (endpoint == 1) and state.warp_markers[seg] or state.warp_markers[seg + 1]
-            if sm then
+            local sm1 = state.warp_markers[seg]
+            local sm2 = state.warp_markers[seg + 1]
+            if sm1 and sm2 then
+              -- The marker to move: left endpoint = left marker, right = right marker
+              local sm = (endpoint == 1) and sm1 or sm2
               if reaper.ImGui_IsMouseDoubleClicked(ctx, 0) then
                 -- Double-click: reset slope to 0
-                reaper.SetTakeStretchMarkerSlope(take, state.warp_markers[seg].idx, 0)
+                reaper.SetTakeStretchMarkerSlope(take, sm1.idx, 0)
+                local _, mpos, msrcpos = reaper.GetTakeStretchMarker(take, sm1.idx)
+                reaper.SetTakeStretchMarker(take, sm1.idx, mpos, msrcpos)
                 reaper.UpdateItemInProject(item)
                 reaper.UpdateArrange()
                 state.warp_markers = utils.get_stretch_markers(take)
                 reaper.Undo_OnStateChangeEx("NVSD_ItemView: Reset stretch marker slope", -1, -1)
               else
-                local sm1 = state.warp_markers[seg]
-                local sm2 = state.warp_markers[seg + 1]
                 local cur_slope = sm1.slope or 0
                 local cur_rate = (sm2.pos ~= sm1.pos) and (sm2.srcpos - sm1.srcpos) / (sm2.pos - sm1.pos) or 1
                 local y_left, y_right = drawing.slope_handle_positions(wave_y, waveform_height, cur_slope, cur_rate)
@@ -3397,14 +3404,14 @@ local function loop()
                 state.slope_drag_start_pos = sm.pos
                 state.slope_drag_start_srcpos = sm.srcpos
                 state.slope_drag_time_per_px = view_length / waveform_width
-                -- Save anchor: the non-dragged handle's Y position (it must stay fixed)
                 state.slope_drag_anchor_y = (endpoint == 1) and y_right or y_left
-                -- Partner marker info (the one NOT being moved)
                 state.slope_drag_partner_pos = (endpoint == 1) and sm2.pos or sm1.pos
                 state.slope_drag_partner_srcpos = (endpoint == 1) and sm2.srcpos or sm1.srcpos
-                -- Slope marker idx (slope belongs to left marker of segment)
                 state.slope_drag_slope_idx = sm1.idx
                 state.slope_drag_start_slope = cur_slope
+                -- Save view state for freeze during drag
+                state.slope_drag_start_view_start = view_start
+                state.slope_drag_start_view_length = view_length
                 state.slope_drag_activated = false
               end
             end
@@ -4184,8 +4191,6 @@ local function loop()
               end
             end
 
-            -- (slope drag execution moved outside envelopes_visible block)
-
             -- Right-click in waveform: start rectangle selection
             if reaper.ImGui_IsMouseClicked(ctx, 1) and mouse_in_waveform
                 and state.envelopes_visible
@@ -4465,13 +4470,18 @@ local function loop()
             if state.slope_dragging then
               if state.slope_drag_activated then
                 reaper.UpdateArrange()
-                reaper.Undo_OnStateChangeEx("NVSD_ItemView: Move stretch marker via slope handle", -1, -1)
+                reaper.Undo_OnStateChangeEx("NVSD_ItemView: Adjust stretch marker slope", -1, -1)
               end
               state.slope_dragging = false
               state.slope_drag_activated = false
               state.slope_drag_marker_idx = -1
               state.slope_drag_segment = -1
               state.slope_drag_endpoint = 0
+              state.slope_drag_anchor_y = 0
+              state.slope_drag_partner_pos = 0
+              state.slope_drag_partner_srcpos = 0
+              state.slope_drag_slope_idx = -1
+              state.slope_drag_start_slope = 0
               state.warp_markers = utils.get_stretch_markers(take)
             end
             if (state.dragging_start or state.dragging_end) and state.marker_drag_activated then
@@ -5330,26 +5340,27 @@ local function loop()
                 hover_state = 1
               end
               local rate = (sm2.pos ~= sm1.pos) and (sm2.srcpos - sm1.srcpos) / (sm2.pos - sm1.pos) or 1
+              local seg_px = px2 - px1
               -- Draw slope curve between markers
               drawing.draw_slope_curve(draw_list, px1, px2, wave_y, waveform_height, slope, hover_state, rate)
-              -- Draw triangle handles at both endpoints on the marker vertical lines
-              -- Left handle: right-pointing (→), sits on left marker line
-              -- Right handle: left-pointing (←), sits on right marker line
-              local y_left, y_right = drawing.slope_handle_positions(wave_y, waveform_height, slope, rate)
-              local rate_left = rate * (1 - slope)   -- local rate at left endpoint
-              local rate_right = rate * (1 + slope)  -- local rate at right endpoint
-              drawing.draw_slope_handle(draw_list, px1, y_left, 1, rate_left, hover_state)
-              drawing.draw_slope_handle(draw_list, px2, y_right, -1, rate_right, hover_state)
-              -- Rate label on each handle (e.g. "0.48x")
-              local lbl_l = string.format("%.2fx", rate_left)
-              local lbl_r = string.format("%.2fx", rate_right)
-              local lbl_col = 0xFFFFFF70
-              local lbl_cy = wave_y + waveform_height / 2 - 6
-              -- Left handle label: offset right of the triangle
-              reaper.ImGui_DrawList_AddText(draw_list, px1 + 10, lbl_cy, lbl_col, lbl_l)
-              -- Right handle label: offset left of the triangle
-              local rw = reaper.ImGui_CalcTextSize(ctx, lbl_r)
-              reaper.ImGui_DrawList_AddText(draw_list, px2 - 10 - rw, lbl_cy, lbl_col, lbl_r)
+              -- Draw triangle handles and rate labels (skip if segment too narrow)
+              if seg_px >= 8 then
+                local y_left, y_right = drawing.slope_handle_positions(wave_y, waveform_height, slope, rate)
+                local rate_left = rate * (1 - slope)
+                local rate_right = rate * (1 + slope)
+                drawing.draw_slope_handle(draw_list, px1, y_left, 1, rate_left, hover_state)
+                drawing.draw_slope_handle(draw_list, px2, y_right, -1, rate_right, hover_state)
+                -- Rate labels (only if segment wide enough to avoid overlap)
+                if seg_px > 80 then
+                  local lbl_col = 0xFFFFFF70
+                  local lbl_cy = wave_y + waveform_height / 2 - 6
+                  local lbl_l = string.format("%.2fx", rate_left)
+                  reaper.ImGui_DrawList_AddText(draw_list, px1 + 10, lbl_cy, lbl_col, lbl_l)
+                  local lbl_r = string.format("%.2fx", rate_right)
+                  local rw = reaper.ImGui_CalcTextSize(ctx, lbl_r)
+                  reaper.ImGui_DrawList_AddText(draw_list, px2 - 10 - rw, lbl_cy, lbl_col, lbl_r)
+                end
+              end
             end
             reaper.ImGui_DrawList_PopClipRect(draw_list)
           end
