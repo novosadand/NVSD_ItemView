@@ -178,19 +178,62 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     end
   end
 
-  -- Warp restore modal (Ableton-style: keep timing vs restore previous markers)
+  -- Warp restore modal (centered, styled)
   if state.warp_restore_popup_open then
-    reaper.ImGui_OpenPopup(ctx, "Restore Warp Markers?##warp_restore")
+    reaper.ImGui_OpenPopup(ctx, "##warp_restore")
     state.warp_restore_popup_open = false
   end
-  if reaper.ImGui_BeginPopupModal(ctx, "Restore Warp Markers?##warp_restore", nil, reaper.ImGui_WindowFlags_AlwaysAutoResize()) then
-    reaper.ImGui_Text(ctx, "Would you like to keep the current timing of the item?")
+
+  -- Center modal on screen
+  local viewport = reaper.ImGui_GetMainViewport(ctx)
+  local vp_cx, vp_cy = reaper.ImGui_Viewport_GetCenter(viewport)
+  reaper.ImGui_SetNextWindowPos(ctx, vp_cx, vp_cy, reaper.ImGui_Cond_Appearing(), 0.5, 0.5)
+  reaper.ImGui_SetNextWindowSize(ctx, 340, 0, reaper.ImGui_Cond_Appearing())
+
+  -- Push modal styling
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowPadding(), 20, 16)
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowRounding(), 8)
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_FrameRounding(), 4)
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_ItemSpacing(), 8, 8)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_PopupBg(), 0x2A2A2AFF)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Border(), 0x555555FF)
+
+  local modal_flags = reaper.ImGui_WindowFlags_NoTitleBar()
+                    + reaper.ImGui_WindowFlags_AlwaysAutoResize()
+                    + reaper.ImGui_WindowFlags_NoMove()
+
+  if reaper.ImGui_BeginPopupModal(ctx, "##warp_restore", nil, modal_flags) then
+    -- Title
+    local title = "Restore Warp Markers"
+    local title_w = reaper.ImGui_CalcTextSize(ctx, title)
+    local content_w = reaper.ImGui_GetContentRegionAvail(ctx)
+    reaper.ImGui_SetCursorPosX(ctx, reaper.ImGui_GetCursorPosX(ctx) + (content_w - title_w) / 2)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xFFFFFFFF)
+    reaper.ImGui_Text(ctx, title)
+    reaper.ImGui_PopStyleColor(ctx)
+
+    -- Separator
     reaper.ImGui_Spacing(ctx)
-    reaper.ImGui_TextWrapped(ctx, "Choose Yes to keep the current timing or No to\nrevert to the previous set of warp markers.")
-    reaper.ImGui_Spacing(ctx)
+    local draw_list = reaper.ImGui_GetWindowDrawList(ctx)
+    local sx, sy = reaper.ImGui_GetCursorScreenPos(ctx)
+    reaper.ImGui_DrawList_AddLine(draw_list, sx, sy, sx + content_w, sy, 0x444444FF, 1)
+    reaper.ImGui_Dummy(ctx, 0, 4)
+
+    -- Description
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xBBBBBBFF)
+    reaper.ImGui_TextWrapped(ctx, "This item had warp markers that were saved when WARP was turned off.")
+    reaper.ImGui_PopStyleColor(ctx)
+    reaper.ImGui_Dummy(ctx, 0, 4)
+
+    -- Action buttons
     local guid = state.warp_restore_guid
-    if reaper.ImGui_Button(ctx, "Yes", 80, 0) then
-      -- Keep current timing: turn warp on fresh (no restore)
+    local btn_w = (content_w - 8) / 2
+
+    -- "Keep Current" button (subtle)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x404040FF)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x555555FF)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x666666FF)
+    if reaper.ImGui_Button(ctx, "Keep Current", btn_w, 30) then
       local t = state.warp_restore_take
       if t and reaper.ValidatePtr(t, "MediaItem_Take*") then
         reaper.Undo_BeginBlock()
@@ -206,9 +249,15 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       state.warp_restore_guid = nil
       reaper.ImGui_CloseCurrentPopup(ctx)
     end
+    reaper.ImGui_PopStyleColor(ctx, 3)
+
     reaper.ImGui_SameLine(ctx)
-    if reaper.ImGui_Button(ctx, "No", 80, 0) then
-      -- Restore previous warp markers
+
+    -- "Restore Saved" button (primary/accent)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x4A90D9FF)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x5AA0E9FF)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x3A80C9FF)
+    if reaper.ImGui_Button(ctx, "Restore Saved", btn_w, 30) then
       local t = state.warp_restore_take
       local saved = guid and state.warp_saved_markers_map[guid]
       if t and reaper.ValidatePtr(t, "MediaItem_Take*") and saved then
@@ -217,7 +266,6 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
             reaper.GetMediaItemTakeInfo_Value(t, "D_PLAYRATE"))
         reaper.SetMediaItemTakeInfo_Value(t, "D_PITCH", pitch_from_playrate)
         reaper.SetMediaItemTakeInfo_Value(t, "B_PPITCH", 1)
-        -- Restore saved stretch markers
         for _, sm in ipairs(saved) do
           reaper.SetTakeStretchMarker(t, -1, sm.pos, sm.srcpos)
         end
@@ -230,15 +278,34 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       state.warp_restore_guid = nil
       reaper.ImGui_CloseCurrentPopup(ctx)
     end
-    reaper.ImGui_SameLine(ctx)
-    if reaper.ImGui_Button(ctx, "Cancel", 80, 0) then
-      -- Don't turn warp on
+    reaper.ImGui_PopStyleColor(ctx, 3)
+
+    -- Cancel link (subtle, centered)
+    reaper.ImGui_Dummy(ctx, 0, 2)
+    local cancel_text = "Cancel"
+    local cancel_w = reaper.ImGui_CalcTextSize(ctx, cancel_text)
+    reaper.ImGui_SetCursorPosX(ctx, reaper.ImGui_GetCursorPosX(ctx) + (content_w - cancel_w) / 2)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x00000000)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x00000000)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x00000000)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0x888888FF)
+    if reaper.ImGui_SmallButton(ctx, cancel_text) then
       state.warp_restore_take = nil
       state.warp_restore_guid = nil
       reaper.ImGui_CloseCurrentPopup(ctx)
     end
+    reaper.ImGui_PopStyleColor(ctx, 4)
+    -- Underline on hover
+    if reaper.ImGui_IsItemHovered(ctx) then
+      local ix, iy = reaper.ImGui_GetItemRectMin(ctx)
+      local ix2, iy2 = reaper.ImGui_GetItemRectMax(ctx)
+      reaper.ImGui_DrawList_AddLine(draw_list, ix, iy2, ix2, iy2, 0x888888FF, 1)
+    end
+
     reaper.ImGui_EndPopup(ctx)
   end
+  reaper.ImGui_PopStyleColor(ctx, 2)
+  reaper.ImGui_PopStyleVar(ctx, 4)
 
   -- Warp mode dropdown
   local dropdown_y = warp_btn_y + btn_height + 4
