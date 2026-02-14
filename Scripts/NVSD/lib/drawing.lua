@@ -963,6 +963,95 @@ end
 
 -- Draw toolbar context menu + edit popup
 -- Call this once per frame from main script, after draw_info_bar
+-- Shared icon picker content: centered header, "Text Only" button, scrollable icon grid
+-- Returns: filename string if icon picked, "" if "Text Only" picked, nil if nothing picked
+local function draw_icon_picker_content(ctx, icons, child_id)
+  local picked = nil
+
+  -- Centered title
+  local title = "Choose Icon"
+  local title_w = reaper.ImGui_CalcTextSize(ctx, title)
+  local content_w = reaper.ImGui_GetContentRegionAvail(ctx)
+  reaper.ImGui_SetCursorPosX(ctx, reaper.ImGui_GetCursorPosX(ctx) + (content_w - title_w) / 2)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xFFFFFFFF)
+  reaper.ImGui_Text(ctx, title)
+  reaper.ImGui_PopStyleColor(ctx)
+
+  reaper.ImGui_Spacing(ctx)
+  local hdl = reaper.ImGui_GetWindowDrawList(ctx)
+  local hsx, hsy = reaper.ImGui_GetCursorScreenPos(ctx)
+  reaper.ImGui_DrawList_AddLine(hdl, hsx, hsy, hsx + content_w, hsy, 0x444444FF, 1)
+  reaper.ImGui_Dummy(ctx, 0, 4)
+
+  -- "Text Only" button (centered, normal width)
+  local text_only_label = "Text Only (no icon)"
+  local text_only_w = reaper.ImGui_CalcTextSize(ctx, text_only_label) + 24
+  reaper.ImGui_SetCursorPosX(ctx, reaper.ImGui_GetCursorPosX(ctx) + (content_w - text_only_w) / 2)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x404040FF)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x505050FF)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x606060FF)
+  if reaper.ImGui_Button(ctx, text_only_label, text_only_w, 28) then
+    picked = ""
+  end
+  reaper.ImGui_PopStyleColor(ctx, 3)
+
+  reaper.ImGui_Dummy(ctx, 0, 2)
+  local hsx2, hsy2 = reaper.ImGui_GetCursorScreenPos(ctx)
+  reaper.ImGui_DrawList_AddLine(hdl, hsx2, hsy2, hsx2 + content_w, hsy2, 0x444444FF, 1)
+  reaper.ImGui_Dummy(ctx, 0, 4)
+
+  -- Icon count
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0x888888FF)
+  reaper.ImGui_Text(ctx, #icons .. " icons available")
+  reaper.ImGui_PopStyleColor(ctx)
+  reaper.ImGui_Spacing(ctx)
+
+  -- Icon grid inside scrollable child
+  local avail_w = reaper.ImGui_GetContentRegionAvail(ctx)
+  local _, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
+  local scrollbar_w = 14  -- reserve space for scrollbar so icons don't get clipped
+  local grid_w = avail_w - scrollbar_w
+  local cell_size = 42
+  local cell_gap = 3
+  local cols = math.max(1, math.floor((grid_w + cell_gap) / (cell_size + cell_gap)))
+
+  if reaper.ImGui_BeginChild(ctx, child_id, avail_w, avail_h - 4) then
+    local grid_dl = reaper.ImGui_GetWindowDrawList(ctx)
+    for i, filename in ipairs(icons) do
+      if (i - 1) % cols ~= 0 then
+        reaper.ImGui_SameLine(ctx, 0, cell_gap)
+      end
+
+      local img, uv_u1 = get_toolbar_icon(ctx, filename)
+      local gx, gy = reaper.ImGui_GetCursorScreenPos(ctx)
+      reaper.ImGui_PushID(ctx, i)
+      reaper.ImGui_InvisibleButton(ctx, "##ic", cell_size, cell_size)
+      local hovered = reaper.ImGui_IsItemHovered(ctx)
+      local clicked = reaper.ImGui_IsItemClicked(ctx, 0)
+
+      local bg = hovered and 0x555555FF or 0x333333FF
+      reaper.ImGui_DrawList_AddRectFilled(grid_dl, gx, gy, gx + cell_size, gy + cell_size, bg, 4)
+      if img then
+        local pad = 4
+        pcall(reaper.ImGui_DrawList_AddImage, grid_dl, img, gx + pad, gy + pad, gx + cell_size - pad, gy + cell_size - pad, 0, 0, uv_u1 or 1/3, 1, 0xFFFFFFFF)
+      end
+
+      if hovered then
+        reaper.ImGui_SetTooltip(ctx, filename)
+      end
+
+      if clicked then
+        picked = filename
+      end
+
+      reaper.ImGui_PopID(ctx)
+    end
+    reaper.ImGui_EndChild(ctx)
+  end
+
+  return picked
+end
+
 function drawing.draw_toolbar_popups(ctx, state, settings, config)
   if not state then return end
 
@@ -1192,63 +1281,30 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
     local edit_wx, edit_wy = reaper.ImGui_GetWindowPos(ctx)
     local edit_ww, _ = reaper.ImGui_GetWindowSize(ctx)
     reaper.ImGui_SetNextWindowPos(ctx, edit_wx + edit_ww + 6, edit_wy, reaper.ImGui_Cond_Appearing(), 0.0, 0.0)
-    reaper.ImGui_SetNextWindowSize(ctx, 500, 500, reaper.ImGui_Cond_Appearing())
-    if reaper.ImGui_BeginPopupModal(ctx, "Choose Icon##tb_icon_pick", nil, reaper.ImGui_WindowFlags_NoScrollbar()) then
+    reaper.ImGui_SetNextWindowSize(ctx, 620, 640, reaper.ImGui_Cond_Appearing())
+    reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowPadding(), 16, 14)
+    reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowRounding(), 8)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_PopupBg(), 0x2A2A2AFF)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Border(), 0x555555FF)
+    local icon_flags = reaper.ImGui_WindowFlags_NoTitleBar()
+                     + reaper.ImGui_WindowFlags_NoScrollbar()
+    if reaper.ImGui_BeginPopupModal(ctx, "Choose Icon##tb_icon_pick", nil, icon_flags) then
       reaper.ImGui_SetNextFrameWantCaptureKeyboard(ctx, true)
       local icons = state.tb_icon_list or {}
 
-      if reaper.ImGui_Button(ctx, "None (text only)", -1, 0) then
+      local picked = draw_icon_picker_content(ctx, icons, "tb_icon_grid")
+      if picked == "" then
         state.tb_edit_icon = nil
         reaper.ImGui_CloseCurrentPopup(ctx)
-      end
-
-      reaper.ImGui_Separator(ctx)
-      reaper.ImGui_Text(ctx, #icons .. " icons available")
-      reaper.ImGui_Spacing(ctx)
-
-      local avail_w = reaper.ImGui_GetContentRegionAvail(ctx)
-      local _, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
-      local cell_size = 42
-      local cell_gap = 3
-      local cols = math.max(1, math.floor((avail_w + cell_gap) / (cell_size + cell_gap)))
-
-      if reaper.ImGui_BeginChild(ctx, "tb_icon_grid", avail_w, avail_h - 4) then
-        local grid_dl = reaper.ImGui_GetWindowDrawList(ctx)
-        for i, filename in ipairs(icons) do
-          if (i - 1) % cols ~= 0 then
-            reaper.ImGui_SameLine(ctx, 0, cell_gap)
-          end
-
-          local img, uv_u1 = get_toolbar_icon(ctx, filename)
-          local gx, gy = reaper.ImGui_GetCursorScreenPos(ctx)
-          reaper.ImGui_PushID(ctx, i)
-          reaper.ImGui_InvisibleButton(ctx, "##ic", cell_size, cell_size)
-          local hovered = reaper.ImGui_IsItemHovered(ctx)
-          local clicked = reaper.ImGui_IsItemClicked(ctx, 0)
-
-          local bg = hovered and 0x555555FF or 0x333333FF
-          reaper.ImGui_DrawList_AddRectFilled(grid_dl, gx, gy, gx + cell_size, gy + cell_size, bg, 4)
-          if img then
-            local pad = 4
-            pcall(reaper.ImGui_DrawList_AddImage, grid_dl, img, gx + pad, gy + pad, gx + cell_size - pad, gy + cell_size - pad, 0, 0, uv_u1 or 1/3, 1, 0xFFFFFFFF)
-          end
-
-          if hovered then
-            reaper.ImGui_SetTooltip(ctx, filename)
-          end
-
-          if clicked then
-            state.tb_edit_icon = filename
-            reaper.ImGui_CloseCurrentPopup(ctx)
-          end
-
-          reaper.ImGui_PopID(ctx)
-        end
-        reaper.ImGui_EndChild(ctx)
+      elseif picked then
+        state.tb_edit_icon = picked
+        reaper.ImGui_CloseCurrentPopup(ctx)
       end
 
       reaper.ImGui_EndPopup(ctx)
     end
+    reaper.ImGui_PopStyleColor(ctx, 2)
+    reaper.ImGui_PopStyleVar(ctx, 2)
 
     reaper.ImGui_EndPopup(ctx)
   end
@@ -1265,72 +1321,39 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
   end
 
   local direct_popup_x = state.tb_ctx_x or 0
-  local direct_popup_y = (state.tb_ctx_y or 0) - 10
+  local direct_popup_y = (state.tb_bar_y or state.tb_ctx_y or 0) - 4
   reaper.ImGui_SetNextWindowPos(ctx, direct_popup_x, direct_popup_y, reaper.ImGui_Cond_Appearing(), 0.5, 1.0)
-  reaper.ImGui_SetNextWindowSize(ctx, 500, 500, reaper.ImGui_Cond_Appearing())
-  if reaper.ImGui_BeginPopupModal(ctx, "Choose Icon Direct##tb_icon_direct", nil, reaper.ImGui_WindowFlags_NoScrollbar()) then
+  reaper.ImGui_SetNextWindowSize(ctx, 620, 640, reaper.ImGui_Cond_Appearing())
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowPadding(), 16, 14)
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowRounding(), 8)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_PopupBg(), 0x2A2A2AFF)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Border(), 0x555555FF)
+  local direct_icon_flags = reaper.ImGui_WindowFlags_NoTitleBar()
+                          + reaper.ImGui_WindowFlags_NoScrollbar()
+  if reaper.ImGui_BeginPopupModal(ctx, "Choose Icon Direct##tb_icon_direct", nil, direct_icon_flags) then
     local icons = state.tb_icon_list or {}
 
-    if reaper.ImGui_Button(ctx, "None (text only)", -1, 0) then
+    local picked = draw_icon_picker_content(ctx, icons, "tb_icon_grid_d")
+    if picked == "" then
       local btns2 = settings.current.toolbar_buttons
       if state.tb_icon_idx and btns2[state.tb_icon_idx] then
         btns2[state.tb_icon_idx].icon = nil
         settings.save_toolbar()
       end
       reaper.ImGui_CloseCurrentPopup(ctx)
-    end
-
-    reaper.ImGui_Separator(ctx)
-    reaper.ImGui_Text(ctx, #icons .. " icons available")
-    reaper.ImGui_Spacing(ctx)
-
-    local avail_w = reaper.ImGui_GetContentRegionAvail(ctx)
-    local _, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
-    local cell_size = 42
-    local cell_gap = 3
-    local cols = math.max(1, math.floor((avail_w + cell_gap) / (cell_size + cell_gap)))
-
-    if reaper.ImGui_BeginChild(ctx, "tb_icon_grid_d", avail_w, avail_h - 4) then
-      local grid_dl = reaper.ImGui_GetWindowDrawList(ctx)
-      for i, filename in ipairs(icons) do
-        if (i - 1) % cols ~= 0 then
-          reaper.ImGui_SameLine(ctx, 0, cell_gap)
-        end
-
-        local img, uv_u1 = get_toolbar_icon(ctx, filename)
-        local gx, gy = reaper.ImGui_GetCursorScreenPos(ctx)
-        reaper.ImGui_PushID(ctx, i)
-        reaper.ImGui_InvisibleButton(ctx, "##ic", cell_size, cell_size)
-        local hovered = reaper.ImGui_IsItemHovered(ctx)
-        local clicked = reaper.ImGui_IsItemClicked(ctx, 0)
-
-        local bg = hovered and 0x555555FF or 0x333333FF
-        reaper.ImGui_DrawList_AddRectFilled(grid_dl, gx, gy, gx + cell_size, gy + cell_size, bg, 4)
-        if img then
-          local pad = 4
-          pcall(reaper.ImGui_DrawList_AddImage, grid_dl, img, gx + pad, gy + pad, gx + cell_size - pad, gy + cell_size - pad, 0, 0, uv_u1 or 1/3, 1, 0xFFFFFFFF)
-        end
-
-        if hovered then
-          reaper.ImGui_SetTooltip(ctx, filename)
-        end
-
-        if clicked then
-          local btns2 = settings.current.toolbar_buttons
-          if state.tb_icon_idx and btns2[state.tb_icon_idx] then
-            btns2[state.tb_icon_idx].icon = filename
-            settings.save_toolbar()
-          end
-          reaper.ImGui_CloseCurrentPopup(ctx)
-        end
-
-        reaper.ImGui_PopID(ctx)
+    elseif picked then
+      local btns2 = settings.current.toolbar_buttons
+      if state.tb_icon_idx and btns2[state.tb_icon_idx] then
+        btns2[state.tb_icon_idx].icon = picked
+        settings.save_toolbar()
       end
-      reaper.ImGui_EndChild(ctx)
+      reaper.ImGui_CloseCurrentPopup(ctx)
     end
 
     reaper.ImGui_EndPopup(ctx)
   end
+  reaper.ImGui_PopStyleColor(ctx, 2)
+  reaper.ImGui_PopStyleVar(ctx, 2)
 end
 
 -- Draw waveform with per-view peaks (1:1 peak-to-pixel mapping)
