@@ -4411,6 +4411,7 @@ local function loop()
                 reaper.SetTakeStretchMarkerSlope(take, state.slope_drag_slope_idx, new_slope)
               end
               reaper.UpdateItemInProject(item)
+              reaper.UpdateArrange()
               state.warp_markers = utils.get_stretch_markers(take)
             end
           end
