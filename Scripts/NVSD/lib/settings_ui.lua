@@ -451,7 +451,7 @@ local function draw_appearance_tab(ctx, settings)
                   + reaper.ImGui_WindowFlags_AlwaysAutoResize()
                   + reaper.ImGui_WindowFlags_NoMove()
   if reaper.ImGui_BeginPopupModal(ctx, "##delete_theme_confirm", nil, del_flags) then
-    reaper.ImGui_SetWindowFontScale(ctx, 1.15)
+
     local del_theme = ui_state.delete_confirm_id and settings.get_theme(ui_state.delete_confirm_id)
     local del_name = del_theme and del_theme.name or "this theme"
 
@@ -776,7 +776,7 @@ local function draw_shortcuts_tab(ctx, settings)
                  + reaper.ImGui_WindowFlags_AlwaysAutoResize()
                  + reaper.ImGui_WindowFlags_NoMove()
   if reaper.ImGui_BeginPopupModal(ctx, "Shortcut Conflict##confirm", nil, sc_flags) then
-    reaper.ImGui_SetWindowFontScale(ctx, 1.15)
+
     local cp = ui_state.conflict_pending
     if cp then
       -- Centered title
@@ -1275,7 +1275,7 @@ local function draw_help_tab(ctx, settings)
 end
 
 -- Main draw function
-function settings_ui.draw(ctx, settings)
+function settings_ui.draw(ctx, settings, ui_font_large)
   if not ui_state.open then return end
 
   -- Periodic flush of dirty custom colors (every 0.5s) to avoid data loss on crash
@@ -1332,7 +1332,8 @@ function settings_ui.draw(ctx, settings)
     return
   end
 
-  reaper.ImGui_SetWindowFontScale(ctx, 1.15)
+  local has_large_font = ui_font_large and reaper.ImGui_PushFont
+  if has_large_font then reaper.ImGui_PushFont(ctx, ui_font_large) end
 
   if visible then
     -- Tab bar
@@ -1423,6 +1424,7 @@ function settings_ui.draw(ctx, settings)
     reaper.ImGui_PopStyleColor(ctx, 3)
   end
 
+  if has_large_font then reaper.ImGui_PopFont(ctx) end
   reaper.ImGui_End(ctx)
   reaper.ImGui_PopStyleVar(ctx, style_var_count)
   reaper.ImGui_PopStyleColor(ctx, style_color_count)

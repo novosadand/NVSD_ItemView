@@ -170,10 +170,13 @@ end)
 
 -- Create ImGui context
 local ctx = reaper.ImGui_CreateContext("NVSD_ItemView")
--- Attach a font to keep context alive across deferred frames (prevents GC on macOS)
+-- Attach fonts: default (13px) + larger for settings/popups (15px)
+local ui_font_large = nil
 if reaper.ImGui_CreateFont and reaper.ImGui_Attach then
   local font = reaper.ImGui_CreateFont('sans-serif', 13)
   reaper.ImGui_Attach(ctx, font)
+  ui_font_large = reaper.ImGui_CreateFont('sans-serif', 15)
+  reaper.ImGui_Attach(ctx, ui_font_large)
 end
 
 -- Check for file changes (call periodically)
@@ -230,6 +233,8 @@ local function loop()
       if reaper.ImGui_CreateFont and reaper.ImGui_Attach then
         local font = reaper.ImGui_CreateFont('sans-serif', 13)
         reaper.ImGui_Attach(ctx, font)
+        ui_font_large = reaper.ImGui_CreateFont('sans-serif', 15)
+        reaper.ImGui_Attach(ctx, ui_font_large)
       end
       state.sticky_item = nil
       state.sticky_item_valid = false
@@ -464,7 +469,7 @@ local function loop()
     end
 
     -- Draw settings UI if open
-    settings_ui.draw(ctx, settings)
+    settings_ui.draw(ctx, settings, ui_font_large)
 
     -- Create undo point on mouse release if we were dragging
     if reaper.ImGui_IsMouseReleased(ctx, 0) and state.undo_block_open then
@@ -5616,7 +5621,7 @@ local function loop()
     state.preview_start_requested = false
 
     -- Toolbar right-click context menu + edit popups (must be at top-level, not inside item block)
-    drawing.draw_toolbar_popups(ctx, state, settings, config)
+    drawing.draw_toolbar_popups(ctx, state, settings, config, ui_font_large)
 
     reaper.ImGui_End(ctx)
   end
@@ -5645,6 +5650,8 @@ local function loop()
     if reaper.ImGui_CreateFont and reaper.ImGui_Attach then
       local font = reaper.ImGui_CreateFont('sans-serif', 13)
       reaper.ImGui_Attach(ctx, font)
+      ui_font_large = reaper.ImGui_CreateFont('sans-serif', 15)
+      reaper.ImGui_Attach(ctx, ui_font_large)
     end
     -- Reset all interaction state to prevent stuck drags after error
     state.dragging_start = false
