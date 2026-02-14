@@ -143,10 +143,16 @@ end
 -- Toggle action support: if script is already running, signal it to close and exit
 local _, _, toggle_section_id, toggle_cmd_id = reaper.get_action_context()
 if reaper.GetExtState("NVSD_ItemView", "running") == "1" then
-  reaper.SetExtState("NVSD_ItemView", "close_requested", "1", false)
-  return
+  -- Check heartbeat: if the running instance hasn't checked in for 3+ seconds, it crashed
+  local heartbeat = tonumber(reaper.GetExtState("NVSD_ItemView", "heartbeat")) or 0
+  if reaper.time_precise() - heartbeat < 3 then
+    reaper.SetExtState("NVSD_ItemView", "close_requested", "1", false)
+    return
+  end
+  -- Stale instance detected, take over
 end
 reaper.SetExtState("NVSD_ItemView", "running", "1", false)
+reaper.SetExtState("NVSD_ItemView", "heartbeat", tostring(reaper.time_precise()), false)
 reaper.DeleteExtState("NVSD_ItemView", "close_requested", false)
 if toggle_cmd_id > 0 then
   reaper.SetToggleCommandState(toggle_section_id, toggle_cmd_id, 1)
@@ -155,6 +161,7 @@ end
 reaper.atexit(function()
   reaper.SetExtState("NVSD_ItemView", "running", "0", false)
   reaper.DeleteExtState("NVSD_ItemView", "close_requested", false)
+  reaper.DeleteExtState("NVSD_ItemView", "heartbeat", false)
   if toggle_cmd_id > 0 then
     reaper.SetToggleCommandState(toggle_section_id, toggle_cmd_id, 0)
     reaper.RefreshToolbar2(toggle_section_id, toggle_cmd_id)
@@ -243,6 +250,9 @@ local function loop()
   local needs_reload = false
 
   local ok, err = pcall(function()
+
+  -- Update heartbeat so stale-instance detection works
+  reaper.SetExtState("NVSD_ItemView", "heartbeat", tostring(reaper.time_precise()), false)
 
   -- Track mouse state early (needed to gate expensive operations)
   -- Only track when REAPER is the active application (not Firefox, etc.)
@@ -5614,6 +5624,9 @@ local function loop()
   if needs_reload then
     -- Stop audio preview before reload
     state.stop_preview()
+    -- Clear running state so the reloaded script doesn't think another instance is active
+    reaper.DeleteExtState("NVSD_ItemView", "running", false)
+    reaper.DeleteExtState("NVSD_ItemView", "heartbeat", false)
     ctx = nil
     dofile(script_path)
     return
