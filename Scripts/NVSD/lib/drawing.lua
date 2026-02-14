@@ -1148,8 +1148,8 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
   end
 
   local direct_popup_x = state.tb_ctx_x or 0
-  local direct_popup_y = (state.tb_ctx_y or 0) + 20
-  reaper.ImGui_SetNextWindowPos(ctx, direct_popup_x, direct_popup_y, reaper.ImGui_Cond_Appearing(), 0.5, 0.0)
+  local direct_popup_y = (state.tb_ctx_y or 0) - 10
+  reaper.ImGui_SetNextWindowPos(ctx, direct_popup_x, direct_popup_y, reaper.ImGui_Cond_Appearing(), 0.5, 1.0)
   reaper.ImGui_SetNextWindowSize(ctx, 500, 500, reaper.ImGui_Cond_Appearing())
   if reaper.ImGui_BeginPopupModal(ctx, "Choose Icon Direct##tb_icon_direct", nil, reaper.ImGui_WindowFlags_NoScrollbar()) then
     local icons = state.tb_icon_list or {}
