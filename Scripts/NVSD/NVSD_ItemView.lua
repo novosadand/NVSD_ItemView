@@ -2221,8 +2221,10 @@ local function loop()
           if state.warp_mode and #state.warp_markers > 1
               and mouse_in_waveform and not state.any_drag_active()
               and not (state.envelopes_visible and state.env_node_hovered_idx >= 0) then
-            local HIT_X = 14  -- horizontal hit range from marker line
-            local HIT_Y = 14  -- vertical hit range from handle center
+            local HIT_FAR = 14   -- hit range in the direction the triangle points
+            local HIT_NEAR = 4   -- small overlap past the marker line
+            local HIT_Y = 14     -- vertical hit range from handle center
+            local best_dist = math.huge
             for i = 1, #state.warp_markers - 1 do
               local sm1 = state.warp_markers[i]
               local sm2 = state.warp_markers[i + 1]
@@ -2231,17 +2233,25 @@ local function loop()
               local slope = sm1.slope or 0
               local rate = (sm2.pos ~= sm1.pos) and (sm2.srcpos - sm1.srcpos) / (sm2.pos - sm1.pos) or 1
               local y_left, y_right = drawing.slope_handle_positions(wave_y, waveform_height, slope, rate)
-              -- Check left handle (right-pointing triangle at left marker)
-              if math.abs(mouse_x - px1) <= HIT_X and math.abs(mouse_y - y_left) <= HIT_Y then
-                state.slope_hovered_segment = i
-                state.slope_hovered_endpoint = 1
-                break
+              -- Left handle (right-pointing triangle): hit zone extends RIGHT from marker
+              if mouse_x >= px1 - HIT_NEAR and mouse_x <= px1 + HIT_FAR
+                  and math.abs(mouse_y - y_left) <= HIT_Y then
+                local d = math.abs(mouse_x - px1) + math.abs(mouse_y - y_left)
+                if d < best_dist then
+                  best_dist = d
+                  state.slope_hovered_segment = i
+                  state.slope_hovered_endpoint = 1
+                end
               end
-              -- Check right handle (left-pointing triangle at right marker)
-              if math.abs(mouse_x - px2) <= HIT_X and math.abs(mouse_y - y_right) <= HIT_Y then
-                state.slope_hovered_segment = i
-                state.slope_hovered_endpoint = 2
-                break
+              -- Right handle (left-pointing triangle): hit zone extends LEFT from marker
+              if mouse_x >= px2 - HIT_FAR and mouse_x <= px2 + HIT_NEAR
+                  and math.abs(mouse_y - y_right) <= HIT_Y then
+                local d = math.abs(mouse_x - px2) + math.abs(mouse_y - y_right)
+                if d < best_dist then
+                  best_dist = d
+                  state.slope_hovered_segment = i
+                  state.slope_hovered_endpoint = 2
+                end
               end
             end
           end
