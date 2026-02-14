@@ -1152,7 +1152,7 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
   local popup_x = state.tb_ctx_x or 0
   local popup_y = (state.tb_bar_y or state.tb_ctx_y or 0) - 4
   reaper.ImGui_SetNextWindowPos(ctx, popup_x, popup_y, reaper.ImGui_Cond_Appearing(), 0.5, 1.0)
-  reaper.ImGui_SetNextWindowSize(ctx, 340, 0, reaper.ImGui_Cond_Appearing())
+  reaper.ImGui_SetNextWindowSize(ctx, 380, 0, reaper.ImGui_Cond_Appearing())
   reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowPadding(), 20, 16)
   reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowRounding(), 8)
   reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_FrameRounding(), 4)
@@ -1162,6 +1162,7 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
   local edit_flags = reaper.ImGui_WindowFlags_NoTitleBar()
                    + reaper.ImGui_WindowFlags_AlwaysAutoResize()
   if reaper.ImGui_BeginPopupModal(ctx, "Edit Toolbar Button##tb_edit", nil, edit_flags) then
+    reaper.ImGui_SetWindowFontScale(ctx, 1.15)
     -- Capture keyboard so REAPER doesn't intercept Ctrl+V etc.
     reaper.ImGui_SetNextFrameWantCaptureKeyboard(ctx, true)
 
@@ -1215,8 +1216,8 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
       if icon_img then
         local dl = reaper.ImGui_GetWindowDrawList(ctx)
         local cx, cy = reaper.ImGui_GetCursorScreenPos(ctx)
-        reaper.ImGui_Dummy(ctx, 20, 20)
-        pcall(reaper.ImGui_DrawList_AddImage, dl, icon_img, cx, cy, cx + 20, cy + 20, 0, 0, icon_uv or 1/3, 1, 0xFFFFFFFF)
+        reaper.ImGui_Dummy(ctx, 30, 30)
+        pcall(reaper.ImGui_DrawList_AddImage, dl, icon_img, cx, cy, cx + 30, cy + 30, 0, 0, icon_uv or 1/3, 1, 0xFFFFFFFF)
         reaper.ImGui_SameLine(ctx)
       end
       reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x404040FF)
@@ -1303,6 +1304,7 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
     local icon_flags = reaper.ImGui_WindowFlags_NoTitleBar()
                      + reaper.ImGui_WindowFlags_NoScrollbar()
     if reaper.ImGui_BeginPopupModal(ctx, "Choose Icon##tb_icon_pick", nil, icon_flags) then
+      reaper.ImGui_SetWindowFontScale(ctx, 1.15)
       reaper.ImGui_SetNextFrameWantCaptureKeyboard(ctx, true)
       local icons = state.tb_icon_list or {}
 
@@ -1347,6 +1349,7 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
   local direct_icon_flags = reaper.ImGui_WindowFlags_NoTitleBar()
                           + reaper.ImGui_WindowFlags_NoScrollbar()
   if reaper.ImGui_BeginPopupModal(ctx, "Choose Icon Direct##tb_icon_direct", nil, direct_icon_flags) then
+    reaper.ImGui_SetWindowFontScale(ctx, 1.15)
     local icons = state.tb_icon_list or {}
 
     local picked = draw_icon_picker_content(ctx, icons, "tb_icon_grid_d")

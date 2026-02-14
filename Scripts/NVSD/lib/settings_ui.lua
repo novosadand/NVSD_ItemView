@@ -451,6 +451,7 @@ local function draw_appearance_tab(ctx, settings)
                   + reaper.ImGui_WindowFlags_AlwaysAutoResize()
                   + reaper.ImGui_WindowFlags_NoMove()
   if reaper.ImGui_BeginPopupModal(ctx, "##delete_theme_confirm", nil, del_flags) then
+    reaper.ImGui_SetWindowFontScale(ctx, 1.15)
     local del_theme = ui_state.delete_confirm_id and settings.get_theme(ui_state.delete_confirm_id)
     local del_name = del_theme and del_theme.name or "this theme"
 
@@ -775,6 +776,7 @@ local function draw_shortcuts_tab(ctx, settings)
                  + reaper.ImGui_WindowFlags_AlwaysAutoResize()
                  + reaper.ImGui_WindowFlags_NoMove()
   if reaper.ImGui_BeginPopupModal(ctx, "Shortcut Conflict##confirm", nil, sc_flags) then
+    reaper.ImGui_SetWindowFontScale(ctx, 1.15)
     local cp = ui_state.conflict_pending
     if cp then
       -- Centered title
@@ -1044,7 +1046,7 @@ local function draw_toolbar_tab(ctx, settings)
     ui_state.icon_picker_open = false
   end
 
-  reaper.ImGui_SetNextWindowSize(ctx, 500, 500, reaper.ImGui_Cond_Appearing())
+  reaper.ImGui_SetNextWindowSize(ctx, 620, 640, reaper.ImGui_Cond_Appearing())
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_PopupBg(), 0x2A2A2AFF)
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Border(), COLORS.border)
   if reaper.ImGui_BeginPopup(ctx, "Choose Icon##icon_picker") then
@@ -1079,9 +1081,11 @@ local function draw_toolbar_tab(ctx, settings)
         reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Data/toolbar_icons/ directory.")
       else
         local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
+        local scrollbar_w = 14
+        local grid_w = avail_w - scrollbar_w
         local cell_size = 42
         local cell_gap = 3
-        local cols = math.max(1, math.floor((avail_w + cell_gap) / (cell_size + cell_gap)))
+        local cols = math.max(1, math.floor((grid_w + cell_gap) / (cell_size + cell_gap)))
 
         if reaper.ImGui_BeginChild(ctx, "icon_grid", avail_w, avail_h) then
           local grid_dl = reaper.ImGui_GetWindowDrawList(ctx)
@@ -1291,7 +1295,7 @@ function settings_ui.draw(ctx, settings)
   local viewport = reaper.ImGui_GetMainViewport(ctx)
   local vp_cx, vp_cy = reaper.ImGui_Viewport_GetCenter(viewport)
   reaper.ImGui_SetNextWindowPos(ctx, vp_cx, vp_cy, reaper.ImGui_Cond_Appearing(), 0.5, 0.5)
-  reaper.ImGui_SetNextWindowSize(ctx, 440, 620, reaper.ImGui_Cond_FirstUseEver())
+  reaper.ImGui_SetNextWindowSize(ctx, 500, 680, reaper.ImGui_Cond_FirstUseEver())
 
   -- Style: dark theme matching modal aesthetic
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_WindowBg(), COLORS.window_bg)
@@ -1314,7 +1318,8 @@ function settings_ui.draw(ctx, settings)
   reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_FrameRounding(), 4)
   reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_ItemSpacing(), 8, 8)
   reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_TabRounding(), 4)
-  local style_var_count = 5
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_FramePadding(), 8, 6)
+  local style_var_count = 6
 
   local flags = reaper.ImGui_WindowFlags_NoCollapse()
   local visible, open = reaper.ImGui_Begin(ctx, "NVSD ItemView Settings", true, flags)
@@ -1326,6 +1331,8 @@ function settings_ui.draw(ctx, settings)
     reaper.ImGui_PopStyleColor(ctx, style_color_count)
     return
   end
+
+  reaper.ImGui_SetWindowFontScale(ctx, 1.15)
 
   if visible then
     -- Tab bar
