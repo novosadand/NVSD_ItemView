@@ -2851,7 +2851,7 @@ local function loop()
                 or (state.waveform_zoom / wf_zoom_factor)
               state.waveform_zoom = math.max(0.1, math.min(20, new_wf_zoom))
             elseif ctrl_held then
-              local zoom_factor = 1.15
+              local zoom_factor = 1.3
               local new_zoom = wheel > 0 and (state.zoom_level * zoom_factor) or (state.zoom_level / zoom_factor)
               zoom_to_cursor(new_zoom, mouse_x)
             elseif state.envelope_type == "Pitch" and state.envelopes_visible and mouse_in_waveform then
@@ -4583,7 +4583,7 @@ local function loop()
             end
             if state.slope_drag_activated then
               local mouse_delta_y = state.slope_drag_start_mouse_y - mouse_y  -- up = positive
-              local band = waveform_height * 0.15
+              local band = waveform_height * 0.5
               if shift_held then
                 -- Shift+drag: pure slope change (both handles move in opposite directions)
                 local slope_dir = (state.slope_drag_endpoint == 2) and 1 or -1

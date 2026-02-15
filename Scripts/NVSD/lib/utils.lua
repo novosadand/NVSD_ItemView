@@ -643,35 +643,35 @@ function utils.detect_transients(source, sensitivity, min_spacing)
   local armed = true
   local peak_val = 0
   local peak_idx = 0
+  local trigger_idx = 0  -- index where onset first crossed threshold
 
   for i = 1, actual do
     if armed then
       if onset[i] > on_thresh and energy[i] >= abs_floor then
-        -- Entered onset region. Track the peak of the onset signal
-        -- to place the marker at the exact moment of maximum attack.
+        -- Entered onset region. Record the threshold crossing point
+        -- and start tracking the peak for Schmitt trigger rearming.
         armed = false
         peak_val = onset[i]
         peak_idx = i
+        trigger_idx = i
       end
     else
       if onset[i] > peak_val then
-        -- Still rising, update peak position
         peak_val = onset[i]
         peak_idx = i
       end
       if onset[i] < off_thresh or i == actual then
-        -- Onset signal dropped below off threshold.
-        -- Backtrack from peak to find the true onset start: walk backwards
-        -- to where energy first rose above the noise floor. This places
-        -- the marker at the leading edge of the transient, not the peak.
-        local onset_idx = peak_idx
-        local floor_log = math.log(1 + gamma * abs_floor * 2)
-        for j = peak_idx - 1, math.max(1, peak_idx - math.floor(peakrate * 0.02)), -1 do
-          if log_e[j] <= floor_log or log_e[j] >= log_e[j + 1] then
-            onset_idx = j + 1
-            break
+        -- Find the steepest energy rise between trigger and peak.
+        -- This skips any soft pre-transient and lands on the main attack.
+        local best_rise = 0
+        local onset_idx = trigger_idx
+        for j = trigger_idx, peak_idx do
+          local prev = (j > 1) and log_e[j - 1] or 0
+          local rise = log_e[j] - prev
+          if rise > best_rise then
+            best_rise = rise
+            onset_idx = j
           end
-          onset_idx = j
         end
         if (onset_idx - last) >= min_gap then
           result[#result + 1] = (onset_idx - 1) / peakrate
