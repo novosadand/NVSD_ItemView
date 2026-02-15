@@ -49,6 +49,7 @@ local icon_picker_state = {
 function drawing.reset_icon_picker_state()
   icon_picker_state.filter_text = ""
   icon_picker_state.hovered_name = ""
+  icon_picker_state.focus_filter = true
 end
 
 -- Get toolbar icon + UV u1 for first state of horizontal sprite sheet
@@ -1260,6 +1261,10 @@ function drawing.draw_icon_picker_content(ctx, icons, child_id, get_icon_fn)
 
   local input_w = content_w - label_w - btn_w - spacing
   reaper.ImGui_SetNextItemWidth(ctx, input_w)
+  if icon_picker_state.focus_filter then
+    reaper.ImGui_SetKeyboardFocusHere(ctx)
+    icon_picker_state.focus_filter = false
+  end
   local _, new_filter = reaper.ImGui_InputText(ctx, "##icon_filter_" .. child_id, icon_picker_state.filter_text)
   icon_picker_state.filter_text = new_filter
 
@@ -1496,7 +1501,7 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
 
         reaper.ImGui_Separator(ctx)
 
-        if reaper.ImGui_MenuItem(ctx, "Remove") then
+        if reaper.ImGui_MenuItem(ctx, "Remove button") then
           settings.remove_toolbar_button(idx)
         end
 

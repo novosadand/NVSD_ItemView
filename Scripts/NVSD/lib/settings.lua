@@ -1052,7 +1052,12 @@ function settings.load_toolbar()
       reaper.DeleteExtState(EXT_SECTION, "toolbar_" .. i .. "_icon", true)
       reaper.DeleteExtState(EXT_SECTION, "toolbar_" .. i .. "_type", true)
     end
+    return
   end
+  -- No saved data at all: add a default button so users discover the toolbar
+  settings.current.toolbar_buttons = {
+    {label = "Item properties", cmd = "40009"},
+  }
 end
 
 -- Save toolbar to a single ExtState key (tab-delimited, one item per line)
