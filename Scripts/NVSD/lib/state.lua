@@ -167,30 +167,24 @@ state.warp_drag_start_start_offset = 0   -- start offset at warp drag start
 state.slope_hovered_segment = -1        -- warp_markers index of left marker of hovered segment
 state.slope_hovered_endpoint = 0        -- 1=left handle, 2=right handle
 state.slope_dragging = false
-state.slope_drag_marker_idx = -1        -- REAPER stretch marker index of the marker being moved
 state.slope_drag_segment = -1           -- warp_markers array index of left marker of segment
 state.slope_drag_endpoint = 0           -- 1=left handle, 2=right handle being dragged
 state.slope_drag_start_mouse_y = 0
-state.slope_drag_start_pos = 0          -- pos of the moved marker at drag start
-state.slope_drag_start_srcpos = 0       -- srcpos of the moved marker at drag start
+state.slope_drag_start_pos = 0          -- pos of the dragged handle's marker (stays fixed)
+state.slope_drag_start_srcpos = 0       -- srcpos of the dragged handle's marker
 state.slope_drag_time_per_px = 0        -- view scale for converting vertical px to time delta
-state.slope_drag_anchor_y = 0           -- Y of the non-dragged handle (stays pinned in normal drag)
-state.slope_drag_partner_pos = 0        -- pos of the marker NOT being moved
-state.slope_drag_partner_srcpos = 0     -- srcpos of the marker NOT being moved
+state.slope_drag_anchor_local_rate = 0  -- local rate at the anchor (non-dragged) handle
+state.slope_drag_partner_idx = -1       -- REAPER index of the partner marker (the one that moves)
+state.slope_drag_partner_pos = 0        -- original pos of partner marker
+state.slope_drag_partner_srcpos = 0     -- srcpos of partner marker (unchanged during drag)
 state.slope_drag_slope_idx = -1         -- REAPER marker index that owns the slope (left marker)
 state.slope_drag_start_slope = 0        -- original slope before drag (for shift+drag mode)
 state.slope_drag_activated = false
 state.slope_drag_start_handle_y = 0     -- Y of the handle being dragged
-state.slope_drag_anchor_local_rate = false -- local rate at anchor point
 state.slope_drag_start_view_start = 0   -- view start at slope drag begin
 state.slope_drag_start_view_length = 0  -- view length at slope drag begin
 state.slope_drag_start_ext_start = nil  -- ext_start at slope drag begin
 state.slope_drag_start_ext_end = nil    -- ext_end at slope drag begin
-state.slope_drag_has_adj = false        -- whether adjacent segment exists for compensation
-state.slope_drag_adj_slope_idx = -1     -- REAPER idx of adjacent slope marker
-state.slope_drag_adj_local_rate = 0     -- local rate of adjacent segment
-state.slope_drag_adj_partner_pos = 0    -- pos of adjacent marker
-state.slope_drag_adj_partner_srcpos = 0 -- srcpos of adjacent marker
 
 -- Transient detection
 state.transients = {}
@@ -467,10 +461,9 @@ function state.reset_all_drags()
   state.warp_drag_activated = false
   state.slope_dragging = false
   state.slope_drag_activated = false
-  state.slope_drag_marker_idx = -1
   state.slope_drag_segment = -1
   state.slope_drag_endpoint = 0
-  state.slope_drag_anchor_y = 0
+  state.slope_drag_partner_idx = -1
   state.slope_drag_partner_pos = 0
   state.slope_drag_partner_srcpos = 0
   state.slope_drag_slope_idx = -1

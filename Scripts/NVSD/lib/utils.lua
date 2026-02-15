@@ -795,37 +795,6 @@ function utils.insert_warp_marker_at(take, time, is_warped, warp_map, playrate, 
   return true
 end
 
--- Compensate an adjacent segment's slope after moving a shared marker.
--- Keeps the local rate at the shared marker's handle fixed so the handle doesn't move.
--- Uses: state.slope_drag_adj_local_rate (saved at drag start)
-function utils.compensate_adjacent_slope(take, state, new_pos, wave_y, waveform_height)
-  if not state.slope_drag_has_adj then return end
-  -- Compute new average rate of adjacent segment
-  local p1, p2, s1, s2
-  if state.slope_drag_endpoint == 1 then
-    -- Adjacent is prev segment, shared marker is its RIGHT end
-    p1, p2 = state.slope_drag_adj_partner_pos, new_pos
-    s1, s2 = state.slope_drag_adj_partner_srcpos, state.slope_drag_start_srcpos
-  else
-    -- Adjacent is next segment, shared marker is its LEFT end
-    p1, p2 = new_pos, state.slope_drag_adj_partner_pos
-    s1, s2 = state.slope_drag_start_srcpos, state.slope_drag_adj_partner_srcpos
-  end
-  local avg_rate = (p2 ~= p1) and (s2 - s1) / (p2 - p1) or 1
-  if avg_rate <= 0 then return end
-  -- Compute slope that keeps the pinned local rate at the shared marker end
-  local pinned_lr = state.slope_drag_adj_local_rate
-  local slope
-  if state.slope_drag_endpoint == 1 then
-    -- Pin right handle: rate_right = avg_rate * (1 + slope) = pinned_lr
-    slope = pinned_lr / avg_rate - 1
-  else
-    -- Pin left handle: rate_left = avg_rate * (1 - slope) = pinned_lr
-    slope = 1 - pinned_lr / avg_rate
-  end
-  slope = math.max(-0.999, math.min(0.999, slope))
-  reaper.SetTakeStretchMarkerSlope(take, state.slope_drag_adj_slope_idx, slope)
-end
 
 -- Save current item selection, deselect all, select a single item, run fn(), then restore.
 function utils.with_single_item_selected(item, fn)

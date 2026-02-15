@@ -3446,7 +3446,15 @@ function drawing.draw_warp_rate(draw_list, x1, x2, bar_y, rate, config)
   local text = string.format("%.2fx", rate)
   local text_w = 40  -- approximate
   local cx = (x1 + x2) / 2 - text_w / 2
-  reaper.ImGui_DrawList_AddText(draw_list, cx, bar_y + 1, 0xAAAAAAAA, text)
+  local color
+  if rate > 1.005 then
+    color = 0x5090E0BB   -- blue (faster)
+  elseif rate < 0.995 then
+    color = 0xE07050BB   -- red-orange (slower)
+  else
+    color = 0xAAAAAABB   -- grey (1.00x)
+  end
+  reaper.ImGui_DrawList_AddText(draw_list, cx, bar_y + 1, color, text)
 end
 
 -- Draw slope line between two stretch markers in the waveform area
@@ -3498,12 +3506,12 @@ function drawing.slope_handle_color(local_rate, hover_state)
   elseif hover_state == 1 then alpha = 0xDD
   else alpha = 0xBB end
 
-  if local_rate > 1.05 then
+  if local_rate > 1.005 then
     return 0x3070D000 + alpha   -- blue (compressed/faster)
-  elseif local_rate < 0.95 then
+  elseif local_rate < 0.995 then
     return 0xD0503000 + alpha   -- red-orange (stretched/slower)
   else
-    return 0x90909000 + alpha   -- grey (neutral, rate ~ 1)
+    return 0x90909000 + alpha   -- grey (neutral, rate = 1.00x)
   end
 end
 
