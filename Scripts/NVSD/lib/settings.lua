@@ -17,7 +17,6 @@ settings.DEFAULT_SHORTCUTS = {
   toggle_warp = {ctrl = false, shift = false, alt = false, key = "W"},
   toggle_mute = {ctrl = false, shift = false, alt = false, key = "Num0"},
   reverse = {ctrl = false, shift = false, alt = false, key = "R"},
-  clear = {ctrl = false, shift = true, alt = false, key = "C"},
   crop_to_selection = {ctrl = false, shift = false, alt = false, key = "C"},
   open_editor = {ctrl = true, shift = false, alt = true, key = "E"},
   toggle_snap = {ctrl = true, shift = false, alt = false, key = "4"},

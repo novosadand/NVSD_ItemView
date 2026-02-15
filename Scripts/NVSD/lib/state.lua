@@ -125,6 +125,16 @@ state.has_js_extension = reaper.JS_Mouse_SetPosition ~= nil
 state.warp_mode = false
 state.warp_dropdown_open = false
 state.envelope_lock = false  -- Lock envelopes in place when dragging markers
+state.warp_map = nil             -- computed warp map from build_warp_map()
+state.warp_hash = nil            -- hash for cache invalidation of warp view peaks
+state.was_warped_view = false    -- previous frame's warped view state (for transition detection)
+state._freeze_warp = false       -- freeze warp markers/map during marker drag
+state._warp_view_anchor = nil    -- center anchor for preserving view during warp transition
+state._warp_keep_view = nil      -- frames countdown to preserve zoom/pan on warp transition
+state.warp_saved_markers_map = nil   -- saved markers for restore after leaving warp mode
+state.warp_restore_popup_open = false -- restore confirmation popup visible
+state.warp_restore_take = nil        -- take for marker restore
+state.warp_restore_guid = nil        -- take GUID for marker restore
 
 -- Stretch markers (cached per-frame when needed)
 state.warp_markers = {}
@@ -145,6 +155,14 @@ state.warp_drag_start_srcpos = 0
 state.warp_drag_activated = false
 state.warp_drag_start_view_start = 0
 state.warp_drag_start_view_length = 0
+state.warp_drag_shift = false            -- shift+drag: slide source under marker
+state.warp_drag_start_ext_start = nil    -- frozen ext_start during warp marker drag
+state.warp_drag_start_ext_end = nil      -- frozen ext_end during warp marker drag
+state.warp_drag_start_wf_bounds_start = nil -- frozen wf_bounds start during warp drag
+state.warp_drag_start_wf_bounds_end = nil   -- frozen wf_bounds end during warp drag
+state.warp_drag_start_item_position = 0  -- item position at warp drag start
+state.warp_drag_start_item_length = 0    -- item length at warp drag start
+state.warp_drag_start_start_offset = 0   -- start offset at warp drag start
 -- Slope handle hover/drag (moves marker position via vertical drag)
 state.slope_hovered_segment = -1        -- warp_markers index of left marker of hovered segment
 state.slope_hovered_endpoint = 0        -- 1=left handle, 2=right handle
@@ -162,6 +180,17 @@ state.slope_drag_partner_srcpos = 0     -- srcpos of the marker NOT being moved
 state.slope_drag_slope_idx = -1         -- REAPER marker index that owns the slope (left marker)
 state.slope_drag_start_slope = 0        -- original slope before drag (for shift+drag mode)
 state.slope_drag_activated = false
+state.slope_drag_start_handle_y = 0     -- Y of the handle being dragged
+state.slope_drag_anchor_local_rate = false -- local rate at anchor point
+state.slope_drag_start_view_start = 0   -- view start at slope drag begin
+state.slope_drag_start_view_length = 0  -- view length at slope drag begin
+state.slope_drag_start_ext_start = nil  -- ext_start at slope drag begin
+state.slope_drag_start_ext_end = nil    -- ext_end at slope drag begin
+state.slope_drag_has_adj = false        -- whether adjacent segment exists for compensation
+state.slope_drag_adj_slope_idx = -1     -- REAPER idx of adjacent slope marker
+state.slope_drag_adj_local_rate = 0     -- local rate of adjacent segment
+state.slope_drag_adj_partner_pos = 0    -- pos of adjacent marker
+state.slope_drag_adj_partner_srcpos = 0 -- srcpos of adjacent marker
 
 -- Transient detection
 state.transients = {}
@@ -194,6 +223,8 @@ state.env_drag_start_mouse_y = 0
 state.env_drag_start_time = 0
 state.env_drag_start_value = 0
 state.env_drag_activated = false        -- true once mouse exceeds 4px threshold
+state.env_drag_node_shape = 0           -- shape of dragged envelope point
+state.env_drag_node_tension = 0         -- tension of dragged envelope point
 state.env_node_hovered_idx = -1         -- index of hovered existing node
 state.env_freehand_drawing = false      -- ctrl+drag freehand envelope painting
 state.env_freehand_last_x = 0          -- last mouse X to detect movement
@@ -241,12 +272,17 @@ state.env_node_hovered_is_selected = false -- true when hovered node is in selec
 state.show_cue_markers = false       -- Toggle visibility of embedded WAV cue markers
 state.cached_cue_markers = nil       -- Cached cue marker data: {{time=, name=}, ...} or empty table
 state.cached_cue_source = nil        -- Source pointer for which cue markers were loaded
+state.cue_label_hovered = false      -- cue marker label is being hovered
 
 -- Audio preview state (CF_Preview API from SWS extension)
 state.preview_cursor_pos = nil       -- source time (seconds) where preview starts
 state.preview_handle = nil           -- CF_Preview handle (userdata)
 state.preview_active = false         -- currently playing preview
 state.preview_item = nil             -- item being previewed (for validation)
+state.preview_start_requested = false -- preview playback pending (processed in item context)
+state.preview_via_transport = false   -- preview using REAPER transport instead of CF_Preview
+state.preview_virtual_start = nil    -- virtual start position of preview (source time)
+state.preview_start_realtime = nil   -- real-time clock at preview start
 
 -- Region selection state (click+drag in waveform to select a portion)
 state.selecting_region = false           -- true during active selection drag
@@ -258,6 +294,86 @@ state.region_selected = false            -- true when a completed selection exis
 state.region_sel_start = 0               -- finalized selection start (source time)
 state.region_sel_end = 0                 -- finalized selection end (source time)
 state.region_sel_item = nil              -- item the selection belongs to
+
+-- Marker drag extended state (warp-mode marker dragging)
+state.drag_start_item_position = 0       -- item position at drag start
+state.drag_start_warp_markers = nil      -- snapshot of warp markers at drag start
+state.drag_start_warp_map = nil          -- snapshot of warp map at drag start
+state.drag_start_src_pos_start = nil     -- warp source pos start at drag start
+state.drag_start_src_pos_end = nil       -- warp source pos end at drag start
+state.drag_start_stretch_markers = nil   -- REAPER stretch markers snapshot for undo
+state.drag_start_fade_in = 0             -- fade-in length at drag start
+state.drag_start_fade_out = 0            -- fade-out length at drag start
+state._alt_drag_pos_delta = nil          -- position delta during alt+drag
+
+-- Transient click state (click on transient to create warp marker)
+state.transient_click_pending = false    -- transient click awaiting activation threshold
+state.transient_click_srcpos = 0         -- srcpos of clicked transient
+state.transient_click_mouse_x = 0       -- mouse X at transient click
+
+-- Zoom toggle state (Ctrl+click zoom to selection/region)
+state.zoom_toggle_active = false         -- zoom-to-selection toggle is active
+state.zoom_before_toggle = nil           -- zoom level before toggle (for restore)
+state.pan_before_toggle = nil            -- pan offset before toggle (for restore)
+state.zoom_target_start = nil            -- target region start (source time)
+state.zoom_target_end = nil              -- target region end (source time)
+
+-- Toolbar state
+state.toolbar_buttons = {}               -- toolbar button definitions from settings
+state.toolbar_clicked = nil              -- index of clicked toolbar button (pending action)
+state.info_bar_height = 0                -- computed info bar height (px)
+state._tb_pending_cmd = nil              -- pending toolbar command string (to resolve next frame)
+state._tb_id = nil                       -- resolved toolbar command ID
+
+-- Toolbar bar drag and context menu (drawing.lua)
+state.tb_drag_idx = nil                  -- index of button being dragged
+state.tb_drag_start_x = nil              -- mouse X at toolbar drag start
+state.tb_drag_active = false             -- toolbar button drag is active
+state.tb_drop_idx = nil                  -- toolbar drop target index
+state.tb_ctx_idx = nil                   -- toolbar context menu button index (nil = empty area)
+state.tb_ctx_open = false                -- toolbar context menu is open
+state.tb_ctx_x = 0                       -- toolbar context menu X position
+state.tb_ctx_y = 0                       -- toolbar context menu Y position
+state.tb_bar_y = 0                       -- toolbar bar Y position
+
+-- Toolbar button edit state (drawing.lua)
+state.tb_edit_idx = nil                  -- index of button being edited (nil = add new)
+state.tb_edit_insert_after = 0           -- insert position for new button
+state.tb_edit_label = ""                 -- edit form label text
+state.tb_edit_cmd = ""                   -- edit form command string
+state.tb_edit_icon = nil                 -- edit form icon
+state.tb_edit_auto_label = nil           -- auto-generated label from action name
+state.tb_edit_open = false               -- edit dialog is open
+state.tb_edit_focus_label = false        -- focus label input on next frame
+
+-- Toolbar icon picker (drawing.lua)
+state.tb_icon_idx = nil                  -- icon picker button index
+state.tb_icon_open = false               -- icon picker dialog is open
+state.tb_icon_from_edit = false          -- icon picker opened from edit dialog
+state.tb_icon_list = nil                 -- scanned toolbar icon list
+
+-- Color strip (item color indicator at top of window)
+state.strip_color = nil                  -- ImGui color for item color strip (nil = no strip)
+state.strip_h = 0                        -- height of the color strip in pixels
+
+-- Looped item unwrap tracking (extended)
+state.unwrap_tracked_item = nil          -- item currently tracked for start_offset unwrap
+state.post_drag_start_offset = nil       -- start_offset after drag (for undo detection)
+
+-- Popup tracking
+state._any_popup_open = false            -- any ImGui popup currently open
+
+-- Waveform display bounds (source pos boundaries for drawing)
+state.wf_bounds_start = nil              -- waveform display bounds start (pos-time)
+state.wf_bounds_end = nil                -- waveform display bounds end (pos-time)
+
+-- Panning via left click
+state.pan_via_left_click = false         -- panning initiated by left click (not middle)
+
+-- FX context menu
+state.fx_context_menu_idx = -1           -- FX index for context menu
+state.fx_context_menu_take = nil         -- take for FX context menu
+state.fx_drag_drop_target = nil          -- FX drag drop target index
 
 -- Unified drag control state
 state.drag_controls = {

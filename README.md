@@ -70,6 +70,7 @@
 - **Semitones/Cents boxes**: Fine pitch control. Click to edit, Shift+drag for fine adjustment.
 - **WARP button**: Toggle "preserve pitch when changing rate" (mirrors REAPER's item properties checkbox).
 - **Algorithm dropdown**: Select pitch algorithm (when WARP is on).
+- **x2 / /2 buttons**: Double or halve playback speed (adjusts playrate and length). Stretch markers scale proportionally.
 - **Reverse button**: Reverse the audio.
 - **Clear button**: Reset item to default state (pitch=0, rate=1.0, warp off, original length).
 - **Edit button**: Open in external editor (or Item Properties if none configured).
@@ -110,11 +111,16 @@ Visible when WARP mode is active. A narrow strip between the ruler and waveform 
 | Double-click empty area | Create stretch marker at cursor |
 | Double-click marker | Delete stretch marker |
 | Drag marker | Move stretch marker (adjust beat alignment) |
+| Drag slope handle | Adjust rate curve between markers (vertical handles at segment edges) |
 | Delete key (hover) | Remove hovered stretch marker |
 | Right-click | Context menu (add/delete/clear markers) |
-| Ctrl+U | Add markers at all transients |
+| Ctrl+I | Insert warp marker at cursor (or at selection edges) |
+| Ctrl+Shift+I | Add manual transient at cursor (or at selection edges) |
+| Ctrl+U | Add markers at all transients and quantize to grid |
 
-Rate factors (e.g., "1.20x") are shown between adjacent stretch markers when there is enough space.
+Rate factors (e.g., "1.20x") are shown between adjacent stretch markers when there is enough space. Each segment has slope handles at its edges that can be dragged vertically to create rate curves (accelerating or decelerating time-stretch within a segment).
+
+When WARP mode is toggled off, any existing stretch markers are saved. Toggling WARP back on presents a dialog to restore them or start fresh.
 
 ### Fades
 
@@ -137,7 +143,9 @@ All shortcuts below are customizable in Settings > Shortcuts.
 | W | Toggle WARP mode |
 | Num0 | Toggle mute |
 | M | Toggle WAV cue markers |
-| Ctrl+U | Add markers at all transients |
+| Ctrl+U | Add markers at all transients + quantize |
+| Ctrl+I | Insert warp marker at cursor/selection |
+| Ctrl+Shift+I | Add transient at cursor/selection |
 | R | Reverse item |
 | C | Crop markers to selection |
 | Shift+C | Clear pitch/speed |
@@ -177,9 +185,11 @@ All shortcuts below are customizable in Settings > Shortcuts.
 
 Open settings via gear icon, `S` key, right-click menu, or REAPER Actions list.
 
-**Appearance**: Choose from 18 color themes (Default, Classic, Modern, Ableton Dark, Pro Tools, High Contrast, Warm, Cool, Monochrome, Sunset, Arctic, Forest, Neon, Bitwig, Cubase, Logic Pro, Studio One, Custom). The Custom theme lets you pick your own colors per group.
+**Appearance**: Choose from 18 built-in color themes (Default, Classic, Modern, Ableton Dark, Pro Tools, High Contrast, Warm, Cool, Monochrome, Sunset, Arctic, Forest, Neon, Bitwig, Cubase, Logic Pro, Studio One, Custom). The Custom theme lets you pick your own colors per group. You can also save and name multiple user themes.
 
-**Shortcuts**: Customize all action shortcuts. Click a binding, press a new key. Supports Ctrl/Shift/Alt modifiers. Press Backspace to clear a binding.
+**Toolbar**: Add custom buttons to the info bar that trigger any REAPER action. Search actions by name, assign icons from REAPER's toolbar icon library, add separators, and reorder via drag-and-drop. Supports undo/redo for toolbar edits.
+
+**Shortcuts**: Customize all action shortcuts. Click a binding, press a new key. Supports Ctrl/Shift/Alt modifiers and mouse buttons. Press Backspace to clear a binding.
 
 **Help**: Built-in reference for all controls and features.
 

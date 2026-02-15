@@ -686,44 +686,14 @@ local function loop()
               state.warp_restore_guid = take_guid
             else
               reaper.Undo_BeginBlock()
-              local playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
-              local pitch_from_playrate = utils.playrate_to_semitones(playrate)
-              reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", pitch_from_playrate)
-              reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 1)
+              utils.enable_warp(take)
               reaper.UpdateArrange()
               reaper.Undo_EndBlock("NVSD_ItemView: Toggle WARP", -1)
             end
           else
-            -- Turning OFF: save markers, remove, transfer pitch to playrate
+            -- Turning OFF
             reaper.Undo_BeginBlock()
-            local take_item = reaper.GetMediaItemTake_Item(take)
-            local sm_count = reaper.GetTakeNumStretchMarkers(take)
-            if sm_count > 0 then
-              local take_guid = reaper.BR_GetMediaItemTakeGUID(take)
-              if take_guid then
-                local saved_markers = {}
-                for si = 0, sm_count - 1 do
-                  local _, pos, srcpos = reaper.GetTakeStretchMarker(take, si)
-                  saved_markers[#saved_markers + 1] = { pos = pos, srcpos = srcpos }
-                end
-                state.warp_saved_markers_map[take_guid] = saved_markers
-              end
-              reaper.DeleteTakeStretchMarkers(take, 0, sm_count)
-            end
-            state.warp_markers = {}
-            state.warp_marker_selected_idx = -1
-            local cur_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH")
-            local old_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
-            local old_length = reaper.GetMediaItemInfo_Value(take_item, "D_LENGTH")
-            local new_playrate = utils.semitones_to_playrate(cur_pitch)
-            reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", 0)
-            reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", new_playrate)
-            reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 0)
-            if new_playrate > 0 then
-              reaper.SetMediaItemInfo_Value(take_item, "D_LENGTH", old_length * (old_playrate / new_playrate))
-            end
-            -- Immediately update state so auto-add marker doesn't fire next frame
-            state.warp_mode = false
+            utils.disable_warp(take, state)
             reaper.UpdateArrange()
             reaper.Undo_EndBlock("NVSD_ItemView: Toggle WARP", -1)
           end
@@ -741,72 +711,12 @@ local function loop()
 
         -- Reverse
         if settings.check_shortcut(ctx, "reverse") then
-          local saved_items = {}
-          for i = 0, reaper.CountSelectedMediaItems(0) - 1 do
-            saved_items[#saved_items + 1] = reaper.GetSelectedMediaItem(0, i)
-          end
-          reaper.Undo_BeginBlock()
-          reaper.SelectAllMediaItems(0, false)
-          reaper.SetMediaItemSelected(item, true)
-          reaper.Main_OnCommand(41051, 0)
-          reaper.UpdateArrange()
-          reaper.Undo_EndBlock("NVSD_ItemView: Reverse", -1)
-          reaper.SelectAllMediaItems(0, false)
-          for _, sel_item in ipairs(saved_items) do
-            if reaper.ValidatePtr(sel_item, "MediaItem*") then
-              reaper.SetMediaItemSelected(sel_item, true)
-            end
-          end
-          state.pending_cache_invalidation = 3
-        end
-
-        -- Clear (reset pitch/speed)
-        if settings.check_shortcut(ctx, "clear") then
-          reaper.Undo_BeginBlock()
-          local current_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
-          local current_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
-          local original_length = current_length * current_playrate
-          reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", 0)
-          reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", 1.0)
-          reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 0)
-          reaper.SetMediaItemInfo_Value(item, "D_LENGTH", original_length)
-          -- Remove all stretch markers
-          local sm_count = reaper.GetTakeNumStretchMarkers(take)
-          if sm_count > 0 then
-            reaper.DeleteTakeStretchMarkers(take, 0, sm_count)
-          end
-          state.warp_markers = {}
-          state.warp_marker_selected_idx = -1
-          -- Clear saved warp markers for this take
-          local take_guid = reaper.BR_GetMediaItemTakeGUID(take)
-          if take_guid and state.warp_saved_markers_map then
-            state.warp_saved_markers_map[take_guid] = nil
-          end
-          reaper.UpdateArrange()
-          reaper.Undo_EndBlock("NVSD_ItemView: Clear pitch/speed", -1)
+          utils.reverse_item(item, state)
         end
 
         -- Open in external editor (or Item Properties if no editor configured)
         if settings.check_shortcut(ctx, "open_editor") then
-          local saved_items = {}
-          for i = 0, reaper.CountSelectedMediaItems(0) - 1 do
-            saved_items[#saved_items + 1] = reaper.GetSelectedMediaItem(0, i)
-          end
-          reaper.SelectAllMediaItems(0, false)
-          reaper.SetMediaItemSelected(item, true)
-          if controls.has_external_editor() then
-            reaper.Undo_BeginBlock()
-            reaper.Main_OnCommand(40109, 0)  -- Open items in external editor
-            reaper.Undo_EndBlock("NVSD_ItemView: Open in External Editor", -1)
-          else
-            reaper.Main_OnCommand(40009, 0)  -- Item properties dialog
-          end
-          reaper.SelectAllMediaItems(0, false)
-          for _, sel_item in ipairs(saved_items) do
-            if reaper.ValidatePtr(sel_item, "MediaItem*") then
-              reaper.SetMediaItemSelected(sel_item, true)
-            end
-          end
+          utils.open_editor(item, controls.has_external_editor)
         end
         -- Show in Media Explorer (Ctrl+F)
         if settings.check_shortcut(ctx, "show_in_explorer") then
@@ -1049,6 +959,9 @@ local function loop()
           -- Detect looped item and track start_offset wrapping
           local is_looped_item = source_item_length > source_length and source_length > 0
 
+          -- Warped view: when WARP mode is active, switch to item-time (pos) coordinates
+          local is_warped_view = state.warp_mode and state.warp_map ~= nil
+
           -- Reset unwrap tracking when item changes
           if state.unwrap_tracked_item ~= item then
             state.unwrapped_start_offset = nil
@@ -1117,9 +1030,6 @@ local function loop()
           end
 
           state.is_looped_view = is_looped_item
-
-          -- Warped view: when WARP mode is active, switch to item-time (pos) coordinates
-          local is_warped_view = state.warp_mode and state.warp_map ~= nil
 
           -- Expire keep-view flag (set by Ctrl+U to prevent reset on warp transition)
           if state._warp_keep_view then

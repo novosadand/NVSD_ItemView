@@ -15,7 +15,6 @@ local EDITABLE_SHORTCUTS = {
   {name = "toggle_warp",  label = "Toggle WARP mode"},
   {name = "toggle_mute",  label = "Toggle mute"},
   {name = "reverse",      label = "Reverse item"},
-  {name = "clear",        label = "Clear pitch/speed"},
   {name = "crop_to_selection", label = "Crop markers to selection"},
   {name = "open_editor",  label = "Open in external editor"},
   {name = "reset_zoom",   label = "Reset zoom to fit"},
@@ -1681,60 +1680,330 @@ local function draw_toolbar_tab(ctx, settings)
 end
 
 -- Help content sections (header + body pairs)
+-- Help content with lightweight markup:
+--   Lines with "KEY: description" render as shortcut entries (key highlighted)
+--   Lines starting with "## " render as sub-headers
+--   Lines starting with "- " render as bullet items
+--   Lines starting with "  - " render as indented bullet items
+--   Lines starting with "1. " (etc.) render as numbered steps
+--   Empty lines add paragraph spacing
+--   Other lines render as normal wrapped text
 local HELP_SECTIONS = {
   {
     header = "NVSD ItemView",
-    body = "Ableton-style clip view for REAPER audio items.\nSelect an audio item, run the script, and edit start/end points, gain, pitch, envelopes, and more.",
+    lines = {
+      "Ableton-style clip view for REAPER audio items.",
+      "Select an audio item, run the script, and edit start/end points,",
+      "gain, pitch, envelopes, warp markers, and more.",
+      "All changes are non-destructive and create undo points.",
+    },
   },
   {
-    header = "QUICK START",
-    body = "1. Select an audio item in REAPER\n2. Run the script (Actions > NVSD_ItemView)\n3. Drag the colored markers to adjust start/end points\n4. Use the left panel for gain, pitch, reverse, WARP, and FX\n5. Press Esc to close the script",
+    header = "Quick Start",
+    lines = {
+      "1. Select an audio item in REAPER",
+      "2. Run the script (Actions > NVSD_ItemView)",
+      "3. Drag the colored markers to adjust start/end points",
+      "4. Use the left panel for gain, pitch, reverse, WARP, and FX",
+      "5. Press S to open settings, Esc to close",
+    },
   },
   {
-    header = "WAVEFORM CONTROLS",
-    body = "Ctrl+Scroll: Zoom in/out\nMiddle-drag: Pan waveform\nRuler drag vertical: Zoom\nRuler drag horizontal: Pan\nSet start/end markers and fade positions via configurable shortcuts (see Shortcuts tab, default: Mouse 4/5)\nLeft-click+drag: Select time region\nC: Crop item to selected region (moves markers to selection bounds)\nZ: Zoom to selection or markers (press again to restore previous zoom)\nAlt+Z: Unzoom completely\nCtrl+C: Copy selected region to clipboard\nDrag markers past source boundaries to create loops.",
+    header = "Waveform & Navigation",
+    lines = {
+      "## Zoom & Pan",
+      {key = "Ctrl+Scroll", desc = "Zoom in/out horizontally"},
+      {key = "Middle-drag", desc = "Pan waveform left/right"},
+      {key = "Ruler drag", desc = "Vertical zooms, horizontal pans"},
+      {key = "F", desc = "Reset zoom to fit entire source"},
+      {key = "Z", desc = "Zoom to selection/markers (toggle)"},
+      {key = "Alt+Z", desc = "Unzoom completely"},
+      "",
+      "## Interaction",
+      {key = "Click", desc = "Place preview cursor"},
+      {key = "Left-click+drag", desc = "Select a time region"},
+      {key = "Ctrl+click", desc = "Set start marker (envelopes hidden)"},
+      {key = "Ctrl+Shift+click", desc = "Set end marker (envelopes hidden)"},
+      "",
+      "Auto-focuses when hovered with Ctrl held, so scroll-to-zoom",
+      "works without clicking the window first.",
+    },
   },
   {
-    header = "MARKERS",
-    body = "Drag the start/end markers to adjust playback region.\nAlt+drag either marker to slide both together.\nMarkers snap to grid when snap is enabled.\nDrag past source boundaries to extend into looped playback.",
+    header = "Markers & Regions",
+    lines = {
+      "## Markers",
+      "- Drag start/end markers to adjust playback region",
+      {key = "Alt+drag", desc = "Slide both markers together (preserve length)"},
+      "- Markers snap to grid when snap is on (Ctrl+4)",
+      "- Drag past source boundaries for looped playback",
+      {key = "Mouse4 / Mouse5", desc = "Jump start/end marker to cursor"},
+      {key = "Shift+Mouse4 / Shift+Mouse5", desc = "Set fade-in/fade-out at cursor"},
+      "",
+      "## Region Selection",
+      {key = "Left-click+drag", desc = "Select a time range on waveform"},
+      {key = "C", desc = "Crop item to selected region"},
+      {key = "Ctrl+C", desc = "Copy selected region as a new item"},
+      {key = "Escape", desc = "Clear current selection"},
+      "Selection can be used for zoom (Z) and warp marker insertion.",
+    },
   },
   {
-    header = "LEFT PANEL",
-    body = "Gain slider: Drag to adjust volume (+24dB to -inf). Ctrl+drag for fine control. Double-click to reset.\nPitch knob: Drag to adjust pitch (±48 semitones). Double-click to reset.\nPan knob: Drag to adjust pan. Double-click to reset.\nSemitones/Cents boxes: Click+drag to adjust. Double-click to reset.\nShift+drag any control for fine adjustment.\nWARP button: Toggle pitch preservation when stretching.\nAlgorithm dropdown: Select pitch shift algorithm (when WARP is on).\nReverse button: Reverse the audio.\nClear button: Reset pitch, rate, WARP to defaults.\nEdit button: Open in external editor (or Item Properties if none configured).\nMute checkbox: Toggle item mute.",
+    header = "Left Panel",
+    lines = {
+      "## Controls",
+      {key = "Gain slider", desc = "Volume (+24 dB to -inf). Ctrl+drag for fine control"},
+      {key = "Pitch knob", desc = "Pitch (+/-48 semitones). Shows value in semitones"},
+      {key = "Pan knob", desc = "Stereo pan (L100 to R100)"},
+      {key = "Semitones/Cents", desc = "Click+drag to fine-tune pitch"},
+      "- Double-click any knob/slider to reset to default",
+      "- Ctrl+drag on any control for fine adjustment",
+      "",
+      "## Buttons",
+      {key = "WARP", desc = "Toggle pitch-preserving stretch mode"},
+      {key = "Algorithm", desc = "Select pitch shift algorithm (scroll to cycle)"},
+      {key = "x2 / /2", desc = "Double or halve playback speed"},
+      {key = "Clear", desc = "Reset pitch, playrate, WARP, and stretch markers"},
+      {key = "Reverse", desc = "Reverse the audio"},
+      {key = "Edit", desc = "Open in external editor or REAPER Item Properties"},
+      {key = "Mute", desc = "Show/toggle item mute state"},
+    },
   },
   {
-    header = "ENVELOPES",
-    body = "Shift+V: Show Volume envelope\nShift+H: Show Pitch envelope\nShift+P: Show Pan envelope\nH: Hide envelopes\nL: Lock envelopes in place\n\nDrag nodes to move them. Alt+click to delete.\nDrag segments to move them vertically.\nAlt+drag segments to adjust curve tension.\nShift+click segment to add a node.\nCtrl+drag on empty area for freehand drawing.\nRight-drag to rectangle-select nodes.\nDelete key removes selected nodes.",
+    header = "WARP Mode",
+    lines = {
+      {key = "W", desc = "Toggle WARP mode (preserves pitch when stretching)"},
+      "When active, a bar above the waveform shows stretch markers and transients.",
+      "",
+      "## Warp Bar Elements",
+      "- Stretch markers (solid): drag horizontally to time-stretch audio",
+      "- Slope handles: drag vertically at top of marker for curve control",
+      "- Transients (dotted): auto-detected rhythmic hits",
+      "",
+      "## Shortcuts",
+      {key = "Ctrl+I", desc = "Insert warp marker at cursor (or at selection edges)"},
+      {key = "Ctrl+Shift+I", desc = "Insert manual transient at cursor"},
+      {key = "Ctrl+U", desc = "Add markers at all transients and quantize to grid"},
+      "",
+      "Right-click in the warp bar for a context menu.",
+      "Markers are saved when WARP is turned off and restored when turned back on.",
+    },
   },
   {
-    header = "FADES",
-    body = "Drag fade handles at item edges to adjust fade in/out length.\nSet fade positions via configurable shortcuts (see Shortcuts tab, default: Shift+Mouse 4/5).\nAlt+drag fade curve to adjust curve tension.\nRight-click fade handle to pick fade shape.\nFade shapes: Linear, Fast Start, Fast End, Fast Start Steep, Fast End Steep, Slow Start/End, Slow Start/End Steep.",
+    header = "Envelopes",
+    lines = {
+      "## Show/Hide",
+      {key = "Shift+V", desc = "Volume envelope"},
+      {key = "Shift+H", desc = "Pitch envelope"},
+      {key = "Shift+P", desc = "Pan envelope"},
+      {key = "H", desc = "Hide all envelopes"},
+      {key = "L", desc = "Lock envelopes (prevent edits)"},
+      {key = "Ctrl+4", desc = "Toggle snap to grid"},
+      "",
+      "## Editing",
+      "- Drag nodes to move them",
+      {key = "Alt+click", desc = "Delete a node"},
+      {key = "Shift+click", desc = "Insert new node on segment"},
+      "- Drag a segment vertically to move it",
+      {key = "Alt+drag segment", desc = "Adjust curve tension"},
+      {key = "Ctrl+drag (empty area)", desc = "Freehand drawing"},
+      {key = "Right-drag", desc = "Rectangle-select nodes"},
+      {key = "Delete", desc = "Remove selected nodes"},
+      "",
+      "Envelopes auto-show when switching to an item that has them.",
+      "Points are remapped when cropping (unless locked).",
+    },
   },
   {
-    header = "AUDIO PREVIEW",
-    body = "Ctrl+Space: Preview audio from cursor position.\nRequires SWS extension installed.",
+    header = "Fades",
+    lines = {
+      "- Drag fade handles at item edges to adjust length",
+      {key = "Shift+Mouse4", desc = "Set fade-in position at cursor"},
+      {key = "Shift+Mouse5", desc = "Set fade-out position at cursor"},
+      {key = "Alt+drag curve", desc = "Adjust tension/curvature"},
+      "",
+      "Right-click a fade handle to choose from 7 shapes:",
+      "  Linear, Fast Start, Fast End, Fast Start (Steep),",
+      "  Fast End (Steep), Slow Start/End, Slow Start/End (Steep)",
+      "Fades are clamped so they never overlap.",
+    },
   },
   {
-    header = "FX TOOLBAR",
-    body = "Left button: Toggle all FX bypass (when FX exist) / Add FX (when empty)\nRight button: Open FX chain window / Alt+click to remove all FX",
+    header = "Audio Preview",
+    lines = {
+      {key = "Ctrl+Space", desc = "Preview from cursor position"},
+      {key = "Space", desc = "Stop preview (while playing)"},
+      "Click on the waveform to place the preview cursor.",
+      "Requires the SWS extension (CF_CreatePreview).",
+    },
   },
   {
-    header = "FX LIST",
-    body = "Click: Open/close individual FX window\nShift+click: Toggle individual FX bypass\nAlt+click: Delete individual FX\nAlt+click FX button: Remove all FX\nCheckbox: Toggle individual FX bypass\nDrag up/down: Reorder FX chain\nRight-click: Context menu (Bypass/Enable, Set Offline/Online, Open Chain, Delete)\nScroll: Mouse wheel to scroll long FX lists",
+    header = "FX Toolbar",
+    lines = {
+      "The info bar shows FX controls when the take has FX.",
+      "",
+      "## FX Buttons",
+      {key = "Left FX button", desc = "Toggle all bypass / Add FX"},
+      {key = "Right FX button", desc = "Open FX chain. Alt+click to remove all"},
+      "",
+      "## FX List",
+      {key = "Click", desc = "Open/close individual FX window"},
+      {key = "Shift+click", desc = "Toggle individual FX bypass"},
+      {key = "Alt+click", desc = "Delete individual FX"},
+      "- Checkbox toggles bypass, drag to reorder",
+      "- Right-click for context menu",
+      "- Mouse wheel scrolls long lists",
+    },
   },
   {
-    header = "KEYBOARD SHORTCUTS",
-    body = "All keyboard shortcuts can be rebound in the Shortcuts tab.\nDefault shortcuts:\n  W: Toggle WARP mode\n  Num0: Toggle mute\n  M: Toggle WAV cue markers\n  R: Reverse item\n  C: Crop markers to selection\n  Shift+C: Clear pitch/speed\n  Ctrl+Alt+E: Open in external editor\n  F: Reset zoom to fit\n  Z: Zoom to selection / markers (toggle)\n  Alt+Z: Unzoom completely\n  +/-: Zoom in/out\n  Ctrl+4: Toggle envelope snap\n  L: Lock envelopes\n  Shift+V/H/P: Show Volume/Pitch/Pan envelope\n  H: Hide envelopes\n  Ctrl+Space: Audio preview\n  S: Open settings\n  Space: Play/Stop\n  Ctrl+Z/Y: Undo/Redo\n  Ctrl+C: Copy region",
+    header = "Custom Toolbar",
+    lines = {
+      "Add custom action buttons via the Toolbar tab in settings.",
+      "",
+      "## Adding",
+      "- Click a REAPER action from search, or paste a command ID",
+      "- Set a label and optionally pick an icon",
+      "",
+      "## Managing",
+      "- Drag rows to reorder, click to edit, x to remove",
+      "- Add separators to group buttons visually",
+      {key = "Ctrl+Z / Ctrl+Y", desc = "Undo/redo toolbar changes"},
+      "Right-click a toolbar button for its context menu.",
+    },
   },
   {
-    header = "WAV CUE MARKERS",
-    body = "M: Toggle display of embedded WAV cue markers\n\nSome WAV files contain embedded cue points (markers with labels). These appear as vertical dashed lines with text labels on the waveform.\nThe CUE button in the info bar appears when the current file has cue markers.\nRequires SWS extension.",
+    header = "Info Bar",
+    lines = {
+      "The bar at the top of the waveform area shows:",
+      "- Filename (click to open in Media Explorer)",
+      "- Sample rate, bit depth, BPM",
+      "- Playrate (when not 1x)",
+      "- CUE button (when file has WAV cue markers)",
+      "- FX controls and custom toolbar buttons",
+      "Track/item color appears as a strip above the bar.",
+    },
   },
   {
-    header = "TIPS",
-    body = "Map the script to a REAPER action shortcut (Actions > Show action list > search NVSD) for quick toggle on/off.\nRight-click the title bar to dock the window anywhere.\nGain changes are non-destructive and can be undone.\nWARP mode stretches audio to fit markers without pitch change.\nClick the filename in the info bar to show it in REAPER's Media Explorer.\nHover over any element for a tooltip with available actions.\nAll settings persist between sessions via ExtState.",
+    header = "WAV Cue Markers",
+    lines = {
+      {key = "M", desc = "Toggle display of embedded WAV cue markers"},
+      "Cue points appear as dashed lines with labels on the waveform.",
+      "The CUE button appears when the file has cue markers.",
+      "Requires the SWS extension.",
+    },
+  },
+  {
+    header = "Keyboard Shortcuts",
+    lines = {
+      "All shortcuts can be rebound in the Shortcuts tab.",
+      "",
+      "## Rebindable",
+      {key = "W", desc = "Toggle WARP mode"},
+      {key = "Num0", desc = "Toggle mute"},
+      {key = "R", desc = "Reverse item"},
+      {key = "C", desc = "Crop to selection"},
+      {key = "Shift+C", desc = "Clear pitch/speed/WARP"},
+      {key = "Ctrl+Alt+E", desc = "Open in external editor"},
+      {key = "F", desc = "Fit zoom"},
+      {key = "Z", desc = "Zoom to selection/markers"},
+      {key = "Alt+Z", desc = "Unzoom"},
+      {key = "Ctrl+4", desc = "Toggle envelope snap"},
+      {key = "L", desc = "Lock envelopes"},
+      {key = "Shift+V / H / P", desc = "Volume / Pitch / Pan envelope"},
+      {key = "H", desc = "Hide envelopes"},
+      {key = "M", desc = "Toggle cue markers"},
+      {key = "Ctrl+Space", desc = "Audio preview"},
+      {key = "Ctrl+F", desc = "Show in Media Explorer"},
+      {key = "S", desc = "Open settings"},
+      {key = "Mouse4 / Mouse5", desc = "Set start/end marker"},
+      {key = "Shift+Mouse4 / Mouse5", desc = "Set fade-in/fade-out"},
+      {key = "Ctrl+I", desc = "Insert warp marker"},
+      {key = "Ctrl+Shift+I", desc = "Insert transient"},
+      {key = "Ctrl+U", desc = "Quantize to transients"},
+      "",
+      "## Fixed (not rebindable)",
+      {key = "Space", desc = "Play/Stop transport (or stop preview)"},
+      {key = "Ctrl+Z", desc = "Undo (zoom > toolbar > REAPER)"},
+      {key = "Ctrl+Y", desc = "Redo (toolbar > REAPER)"},
+      {key = "Ctrl+C", desc = "Copy selected region"},
+      {key = "Escape", desc = "Clear selection, then close"},
+      {key = "Delete", desc = "Delete selected envelope nodes"},
+      {key = "Ctrl+Scroll", desc = "Zoom"},
+      {key = "Middle-drag", desc = "Pan"},
+      "Double-click any knob/slider to reset to default.",
+    },
+  },
+  {
+    header = "Tips",
+    lines = {
+      "- Map the script to a toolbar button or shortcut for quick toggle",
+      "- Running the script again while open will close it",
+      "- Right-click title bar to dock the window",
+      "- Deselecting an item doesn't clear the view",
+      "- WARP markers are remembered per-item and can be restored",
+      "- All settings persist between sessions",
+      "- JS_ReaScriptAPI extension improves knob/slider drag range",
+      "- Hover any element for a tooltip",
+    },
   },
 }
+
+-- Help rendering colors (extend base COLORS)
+local HELP_COLORS = {
+  key = 0x7BBDF7FF,        -- bright blue for shortcut keys
+  sub_header = 0xAAAAAAFF,  -- lighter gray for sub-headers
+  bullet = 0x666666FF,     -- dim bullet marker
+  step_num = 0x4A90D9FF,   -- accent for numbered steps
+}
+
+-- Render a single help line with smart formatting
+local function draw_help_line(ctx, line, content_w)
+  if type(line) == "table" then
+    -- Shortcut entry: {key = "...", desc = "..."}
+    reaper.ImGui_TextColored(ctx, HELP_COLORS.key, "  " .. line.key)
+    reaper.ImGui_SameLine(ctx)
+    reaper.ImGui_TextColored(ctx, COLORS.text_dim, " -")
+    reaper.ImGui_SameLine(ctx)
+    reaper.ImGui_PushTextWrapPos(ctx, content_w)
+    reaper.ImGui_TextWrapped(ctx, " " .. line.desc)
+    reaper.ImGui_PopTextWrapPos(ctx)
+  elseif line == "" then
+    -- Blank line: paragraph spacing
+    reaper.ImGui_Dummy(ctx, 0, 3)
+  elseif line:sub(1, 3) == "## " then
+    -- Sub-header
+    reaper.ImGui_Dummy(ctx, 0, 2)
+    reaper.ImGui_TextColored(ctx, HELP_COLORS.sub_header, "  " .. line:sub(4))
+    reaper.ImGui_Dummy(ctx, 0, 1)
+  elseif line:sub(1, 4) == "  - " then
+    -- Indented bullet
+    reaper.ImGui_TextColored(ctx, HELP_COLORS.bullet, "        -")
+    reaper.ImGui_SameLine(ctx)
+    reaper.ImGui_PushTextWrapPos(ctx, content_w)
+    reaper.ImGui_TextWrapped(ctx, " " .. line:sub(5))
+    reaper.ImGui_PopTextWrapPos(ctx)
+  elseif line:sub(1, 2) == "- " then
+    -- Bullet item
+    reaper.ImGui_TextColored(ctx, HELP_COLORS.bullet, "      -")
+    reaper.ImGui_SameLine(ctx)
+    reaper.ImGui_PushTextWrapPos(ctx, content_w)
+    reaper.ImGui_TextWrapped(ctx, " " .. line:sub(3))
+    reaper.ImGui_PopTextWrapPos(ctx)
+  elseif line:match("^%d+%. ") then
+    -- Numbered step
+    local num, rest = line:match("^(%d+%.) (.+)")
+    reaper.ImGui_TextColored(ctx, HELP_COLORS.step_num, "  " .. num)
+    reaper.ImGui_SameLine(ctx)
+    reaper.ImGui_PushTextWrapPos(ctx, content_w)
+    reaper.ImGui_TextWrapped(ctx, " " .. rest)
+    reaper.ImGui_PopTextWrapPos(ctx)
+  else
+    -- Normal text, indented
+    reaper.ImGui_PushTextWrapPos(ctx, content_w)
+    reaper.ImGui_TextWrapped(ctx, "    " .. line)
+    reaper.ImGui_PopTextWrapPos(ctx)
+  end
+end
 
 -- Draw Help tab content
 local function draw_help_tab(ctx, settings)
@@ -1745,27 +2014,32 @@ local function draw_help_tab(ctx, settings)
 
   local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
   if reaper.ImGui_BeginChild(ctx, "help_scroll", avail_w, avail_h - 54) then
+    local content_w = avail_w - 16  -- margin for scrollbar
     for i, section in ipairs(HELP_SECTIONS) do
       if i == 1 then
-        -- Title section: white, prominent
+        -- Title: white, prominent, with extra spacing
+        reaper.ImGui_Dummy(ctx, 0, 2)
         reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), COLORS.header_text)
-        reaper.ImGui_Text(ctx, section.header)
+        reaper.ImGui_Text(ctx, "  " .. section.header)
         reaper.ImGui_PopStyleColor(ctx)
+        reaper.ImGui_Dummy(ctx, 0, 1)
       else
-        -- Section header: accent color
-        reaper.ImGui_TextColored(ctx, COLORS.accent, section.header)
-      end
-      reaper.ImGui_Dummy(ctx, 0, 2)
-      reaper.ImGui_TextWrapped(ctx, section.body)
-      if i < #HELP_SECTIONS then
-        reaper.ImGui_Dummy(ctx, 0, 4)
+        -- Section header: accent color, uppercase
+        reaper.ImGui_Dummy(ctx, 0, 2)
         local dl = reaper.ImGui_GetWindowDrawList(ctx)
         local lx, ly = reaper.ImGui_GetCursorScreenPos(ctx)
-        local lw = reaper.ImGui_GetContentRegionAvail(ctx)
-        reaper.ImGui_DrawList_AddLine(dl, lx, ly, lx + lw, ly, COLORS.separator, 1)
+        reaper.ImGui_DrawList_AddLine(dl, lx + 4, ly, lx + content_w - 4, ly, COLORS.separator, 1)
         reaper.ImGui_Dummy(ctx, 0, 6)
+        reaper.ImGui_TextColored(ctx, COLORS.accent, "  " .. section.header:upper())
+        reaper.ImGui_Dummy(ctx, 0, 3)
+      end
+
+      -- Render body lines
+      for _, line in ipairs(section.lines) do
+        draw_help_line(ctx, line, content_w)
       end
     end
+    reaper.ImGui_Dummy(ctx, 0, 8)
     reaper.ImGui_EndChild(ctx)
   end
 end

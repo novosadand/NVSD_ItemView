@@ -827,4 +827,120 @@ function utils.compensate_adjacent_slope(take, state, new_pos, wave_y, waveform_
   reaper.SetTakeStretchMarkerSlope(take, state.slope_drag_adj_slope_idx, slope)
 end
 
+-- Save current item selection, deselect all, select a single item, run fn(), then restore.
+function utils.with_single_item_selected(item, fn)
+  local saved = {}
+  for i = 0, reaper.CountSelectedMediaItems(0) - 1 do
+    saved[#saved + 1] = reaper.GetSelectedMediaItem(0, i)
+  end
+  reaper.SelectAllMediaItems(0, false)
+  reaper.SetMediaItemSelected(item, true)
+  fn()
+  reaper.SelectAllMediaItems(0, false)
+  for _, si in ipairs(saved) do
+    if reaper.ValidatePtr(si, "MediaItem*") then
+      reaper.SetMediaItemSelected(si, true)
+    end
+  end
+end
+
+-- Clamp fades so they don't exceed the item length after a length change.
+function utils.clamp_fades_to_length(item, new_length)
+  local fi = reaper.GetMediaItemInfo_Value(item, "D_FADEINLEN")
+  local fo = reaper.GetMediaItemInfo_Value(item, "D_FADEOUTLEN")
+  local fia = reaper.GetMediaItemInfo_Value(item, "D_FADEINLEN_AUTO")
+  local foa = reaper.GetMediaItemInfo_Value(item, "D_FADEOUTLEN_AUTO")
+
+  local eff_fi = math.max(fi, fia)
+  local eff_fo = math.max(fo, foa)
+
+  if eff_fi + eff_fo > new_length then
+    eff_fo = math.max(0, new_length - eff_fi)
+    if eff_fo == 0 then eff_fi = math.min(eff_fi, new_length) end
+
+    reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", math.min(fi, eff_fi))
+    reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", math.min(fo, eff_fo))
+    reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN_AUTO", math.min(fia, eff_fi))
+    reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN_AUTO", math.min(foa, eff_fo))
+  end
+end
+
+-- Reverse an item using REAPER action 41051 and invalidate cache.
+function utils.reverse_item(item, state)
+  utils.with_single_item_selected(item, function()
+    reaper.Undo_BeginBlock()
+    reaper.Main_OnCommand(41051, 0)
+    reaper.UpdateArrange()
+    reaper.Undo_EndBlock("NVSD_ItemView: Reverse", -1)
+  end)
+  state.pending_cache_invalidation = 3
+end
+
+-- Open an item in external editor (or item properties if no editor configured).
+-- has_external_editor_fn should be a function returning true/false.
+function utils.open_editor(item, has_external_editor_fn)
+  utils.with_single_item_selected(item, function()
+    if has_external_editor_fn() then
+      reaper.Undo_BeginBlock()
+      reaper.Main_OnCommand(40109, 0)  -- Open items in external editor
+      reaper.Undo_EndBlock("NVSD_ItemView: Open in External Editor", -1)
+    else
+      reaper.Main_OnCommand(40009, 0)  -- Item properties dialog
+    end
+  end)
+end
+
+-- Enable WARP mode on a take: transfer pitch from playrate into D_PITCH.
+function utils.enable_warp(take)
+  local playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
+  local pitch_from_playrate = utils.playrate_to_semitones(playrate)
+  reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", pitch_from_playrate)
+  reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 1)
+end
+
+-- Disable WARP mode on a take: save stretch markers, remove them, transfer pitch to playrate.
+-- Returns the saved markers array (or nil if none were saved).
+function utils.disable_warp(take, state)
+  local item = reaper.GetMediaItemTake_Item(take)
+  local sm_count = reaper.GetTakeNumStretchMarkers(take)
+  local saved = nil
+
+  if sm_count > 0 then
+    local take_guid = reaper.BR_GetMediaItemTakeGUID(take)
+    if take_guid then
+      saved = {}
+      for si = 0, sm_count - 1 do
+        local _, pos, srcpos = reaper.GetTakeStretchMarker(take, si)
+        saved[#saved + 1] = { pos = pos, srcpos = srcpos }
+      end
+      if state.warp_saved_markers_map then
+        state.warp_saved_markers_map[take_guid] = saved
+      end
+    end
+    reaper.DeleteTakeStretchMarkers(take, 0, sm_count)
+  end
+
+  state.warp_markers = {}
+  state.warp_marker_selected_idx = -1
+
+  local cur_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH")
+  local old_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
+  local old_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+  local new_playrate = utils.semitones_to_playrate(cur_pitch)
+
+  reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", 0)
+  reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", new_playrate)
+  reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 0)
+
+  if new_playrate > 0 then
+    local new_length = old_length * (old_playrate / new_playrate)
+    reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_length)
+    utils.clamp_fades_to_length(item, new_length)
+  end
+
+  state.warp_mode = false
+
+  return saved
+end
+
 return utils

@@ -110,68 +110,15 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
           state.warp_restore_take = take
           state.warp_restore_guid = take_guid
         else
-          -- Fresh warp on: transfer pitch from playrate into D_PITCH
           reaper.Undo_BeginBlock()
-          local pitch_from_playrate = utils.playrate_to_semitones(current_playrate)
-          reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", pitch_from_playrate)
-          reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 1)
+          utils.enable_warp(take)
           reaper.UpdateArrange()
           reaper.Undo_EndBlock("NVSD_ItemView: Toggle WARP", -1)
         end
       else
-        -- Turning WARP OFF: save markers, then remove them
+        -- Turning WARP OFF
         reaper.Undo_BeginBlock()
-        local take_item = reaper.GetMediaItemTake_Item(take)
-        local sm_count = reaper.GetTakeNumStretchMarkers(take)
-        if sm_count > 0 then
-          -- Save markers for potential restore (keyed by take GUID)
-          local take_guid = reaper.BR_GetMediaItemTakeGUID(take)
-          if take_guid then
-            local saved = {}
-            for si = 0, sm_count - 1 do
-              local _, pos, srcpos = reaper.GetTakeStretchMarker(take, si)
-              saved[#saved + 1] = { pos = pos, srcpos = srcpos }
-            end
-            state.warp_saved_markers_map[take_guid] = saved
-          end
-          reaper.DeleteTakeStretchMarkers(take, 0, sm_count)
-        end
-        state.warp_markers = {}
-        state.warp_marker_selected_idx = -1
-        local old_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
-        local old_length = reaper.GetMediaItemInfo_Value(take_item, "D_LENGTH")
-        local new_playrate = utils.semitones_to_playrate(current_pitch)
-
-        reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", 0)
-        reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", new_playrate)
-        reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 0)
-
-        if new_playrate > 0 then
-          local new_length = old_length * (old_playrate / new_playrate)
-          reaper.SetMediaItemInfo_Value(take_item, "D_LENGTH", new_length)
-
-          -- Clamp fades so they don't cross (effective fade = max of manual and auto at each edge)
-          local fi = reaper.GetMediaItemInfo_Value(take_item, "D_FADEINLEN")
-          local fo = reaper.GetMediaItemInfo_Value(take_item, "D_FADEOUTLEN")
-          local fia = reaper.GetMediaItemInfo_Value(take_item, "D_FADEINLEN_AUTO")
-          local foa = reaper.GetMediaItemInfo_Value(take_item, "D_FADEOUTLEN_AUTO")
-
-          local eff_fi = math.max(fi, fia)
-          local eff_fo = math.max(fo, foa)
-
-          if eff_fi + eff_fo > new_length then
-            eff_fo = math.max(0, new_length - eff_fi)
-            if eff_fo == 0 then eff_fi = math.min(eff_fi, new_length) end
-
-            reaper.SetMediaItemInfo_Value(take_item, "D_FADEINLEN", math.min(fi, eff_fi))
-            reaper.SetMediaItemInfo_Value(take_item, "D_FADEOUTLEN", math.min(fo, eff_fo))
-            reaper.SetMediaItemInfo_Value(take_item, "D_FADEINLEN_AUTO", math.min(fia, eff_fi))
-            reaper.SetMediaItemInfo_Value(take_item, "D_FADEOUTLEN_AUTO", math.min(foa, eff_fo))
-          end
-        end
-
-        -- Immediately update state so auto-add marker doesn't fire next frame
-        state.warp_mode = false
+        utils.disable_warp(take, state)
         reaper.UpdateArrange()
         reaper.Undo_EndBlock("NVSD_ItemView: Toggle WARP", -1)
       end
@@ -237,10 +184,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       local t = state.warp_restore_take
       if t and reaper.ValidatePtr(t, "MediaItem_Take*") then
         reaper.Undo_BeginBlock()
-        local pitch_from_playrate = utils.playrate_to_semitones(
-            reaper.GetMediaItemTakeInfo_Value(t, "D_PLAYRATE"))
-        reaper.SetMediaItemTakeInfo_Value(t, "D_PITCH", pitch_from_playrate)
-        reaper.SetMediaItemTakeInfo_Value(t, "B_PPITCH", 1)
+        utils.enable_warp(t)
         reaper.UpdateArrange()
         reaper.Undo_EndBlock("NVSD_ItemView: Toggle WARP", -1)
       end
@@ -262,10 +206,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       local saved = guid and state.warp_saved_markers_map[guid]
       if t and reaper.ValidatePtr(t, "MediaItem_Take*") and saved then
         reaper.Undo_BeginBlock()
-        local pitch_from_playrate = utils.playrate_to_semitones(
-            reaper.GetMediaItemTakeInfo_Value(t, "D_PLAYRATE"))
-        reaper.SetMediaItemTakeInfo_Value(t, "D_PITCH", pitch_from_playrate)
-        reaper.SetMediaItemTakeInfo_Value(t, "B_PPITCH", 1)
+        utils.enable_warp(t)
         for _, sm in ipairs(saved) do
           reaper.SetTakeStretchMarker(t, -1, sm.pos, sm.srcpos)
         end
@@ -434,51 +375,9 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     dropdown_height = dropdown_height + menu_height
   end
 
-  -- CLEAR button (reset to default state)
-  local clear_btn_y = warp_btn_y + btn_height + 4 + dropdown_height
-  local clear_btn_width = warp_btn_width
-  local clear_btn_x = left_col_x + btn_padding
-  local clear_btn_height = 20
-
-  local mouse_in_clear = mouse_x >= clear_btn_x and mouse_x <= clear_btn_x + clear_btn_width
-                         and mouse_y >= clear_btn_y and mouse_y <= clear_btn_y + clear_btn_height
-
-  local clear_bg_color = mouse_in_clear and COLOR_BTN_HOVER or COLOR_BTN_OFF
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, clear_btn_x, clear_btn_y, clear_btn_x + clear_btn_width, clear_btn_y + clear_btn_height, clear_bg_color, 3)
-  local clear_text_w = reaper.ImGui_CalcTextSize(ctx, "Clear")
-  local clear_text_x = clear_btn_x + (clear_btn_width - clear_text_w) / 2
-  local clear_text_y = clear_btn_y + (clear_btn_height - text_height) / 2
-  reaper.ImGui_DrawList_AddText(draw_list, clear_text_x, clear_text_y, COLOR_BTN_TEXT, "Clear")
-
-  if mouse_in_clear then
-    drawing.tooltip(ctx, "clear_btn", tip_with_key("Reset pitch and playrate", settings, "clear"))
-  end
-
-  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_clear then
-    if take and item then
-      reaper.Undo_BeginBlock()
-
-      -- Get current values to calculate original length
-      local current_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
-      local current_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
-
-      -- Calculate what the length should be at playrate 1.0
-      local original_length = current_length * current_playrate
-
-      -- Reset to default state
-      reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", 0)
-      reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", 1.0)
-      reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 0)  -- Disable warp
-      reaper.SetMediaItemInfo_Value(item, "D_LENGTH", original_length)
-
-      reaper.UpdateArrange()
-      reaper.Undo_EndBlock("NVSD_ItemView: Clear pitch/speed", -1)
-    end
-  end
-
   -- Stretch x2 / /2 buttons (Ableton-style double/half speed)
   local gap = 6
-  local stretch_row_y = clear_btn_y + clear_btn_height + 4
+  local stretch_row_y = warp_btn_y + btn_height + 4 + dropdown_height
   local stretch_btn_width = math.floor((warp_btn_width - gap) / 2)
   local x2_btn_x = left_col_x + btn_padding
   local half_btn_x = x2_btn_x + stretch_btn_width + gap
@@ -576,25 +475,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_rev then
     if item then
-      -- Save current selection
-      local saved_items = {}
-      for i = 0, reaper.CountSelectedMediaItems(0) - 1 do
-        saved_items[#saved_items + 1] = reaper.GetSelectedMediaItem(0, i)
-      end
-      reaper.Undo_BeginBlock()
-      reaper.SelectAllMediaItems(0, false)
-      reaper.SetMediaItemSelected(item, true)
-      reaper.Main_OnCommand(41051, 0)
-      reaper.UpdateArrange()
-      reaper.Undo_EndBlock("NVSD_ItemView: Reverse", -1)
-      -- Restore selection outside undo block
-      reaper.SelectAllMediaItems(0, false)
-      for _, sel_item in ipairs(saved_items) do
-        if reaper.ValidatePtr(sel_item, "MediaItem*") then
-          reaper.SetMediaItemSelected(sel_item, true)
-        end
-      end
-      state.pending_cache_invalidation = 3
+      utils.reverse_item(item, state)
     end
   end
 
@@ -617,25 +498,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_edit then
     if item then
-      local saved_items = {}
-      for i = 0, reaper.CountSelectedMediaItems(0) - 1 do
-        saved_items[#saved_items + 1] = reaper.GetSelectedMediaItem(0, i)
-      end
-      reaper.SelectAllMediaItems(0, false)
-      reaper.SetMediaItemSelected(item, true)
-      if has_external_editor() then
-        reaper.Undo_BeginBlock()
-        reaper.Main_OnCommand(40109, 0)  -- Open items in external editor
-        reaper.Undo_EndBlock("NVSD_ItemView: Open in External Editor", -1)
-      else
-        reaper.Main_OnCommand(40009, 0)  -- Item properties dialog
-      end
-      reaper.SelectAllMediaItems(0, false)
-      for _, sel_item in ipairs(saved_items) do
-        if reaper.ValidatePtr(sel_item, "MediaItem*") then
-          reaper.SetMediaItemSelected(sel_item, true)
-        end
-      end
+      utils.open_editor(item, has_external_editor)
     end
   end
 
@@ -838,29 +701,7 @@ local function set_take_pitch(take, semitones, state, utils)
     if new_playrate > 0 then
       local new_length = old_length * (old_playrate / new_playrate)
       reaper.SetMediaItemInfo_Value(take_item, "D_LENGTH", new_length)
-
-      -- Clamp fades so they don't cross (effective fade = max of manual and auto at each edge)
-      local fi = reaper.GetMediaItemInfo_Value(take_item, "D_FADEINLEN")
-      local fo = reaper.GetMediaItemInfo_Value(take_item, "D_FADEOUTLEN")
-      local fia = reaper.GetMediaItemInfo_Value(take_item, "D_FADEINLEN_AUTO")
-      local foa = reaper.GetMediaItemInfo_Value(take_item, "D_FADEOUTLEN_AUTO")
-
-      local eff_fi = math.max(fi, fia)
-      local eff_fo = math.max(fo, foa)
-
-      if eff_fi + eff_fo > new_length then
-        -- Shrink fade-out first, then fade-in if needed
-        eff_fo = math.max(0, new_length - eff_fi)
-        if eff_fo == 0 then
-          eff_fi = math.min(eff_fi, new_length)
-        end
-
-        -- Clamp all fade values to their edge's effective limit
-        reaper.SetMediaItemInfo_Value(take_item, "D_FADEINLEN", math.min(fi, eff_fi))
-        reaper.SetMediaItemInfo_Value(take_item, "D_FADEOUTLEN", math.min(fo, eff_fo))
-        reaper.SetMediaItemInfo_Value(take_item, "D_FADEINLEN_AUTO", math.min(fia, eff_fi))
-        reaper.SetMediaItemInfo_Value(take_item, "D_FADEOUTLEN_AUTO", math.min(foa, eff_fo))
-      end
+      utils.clamp_fades_to_length(take_item, new_length)
     end
   end
 end
