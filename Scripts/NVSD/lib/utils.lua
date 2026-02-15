@@ -686,11 +686,33 @@ function utils.detect_transients(source, sensitivity, min_spacing)
   return result
 end
 
--- Add stretch markers at transient positions
+-- Snap a project time to the nearest grid line.
+-- Works regardless of snap on/off, respects tempo map and grid settings.
+local function snap_to_grid(project_time)
+  -- Primary: SWS BR_GetClosestGridDivision (handles tempo, time sig, grid)
+  if reaper.BR_GetClosestGridDivision then
+    return reaper.BR_GetClosestGridDivision(project_time)
+  end
+  -- Fallback: manual QN math with GetSetProjectGrid
+  if reaper.GetSetProjectGrid then
+    local _, div = reaper.GetSetProjectGrid(0, false)
+    if div and div > 0 then
+      local qn = reaper.TimeMap2_timeToQN(0, project_time)
+      local snapped_qn = math.floor(qn / div + 0.5) * div
+      return reaper.TimeMap2_QNToTime(0, snapped_qn)
+    end
+  end
+  -- Last resort: SnapToGrid (may not work with snap off)
+  return reaper.SnapToGrid(0, project_time)
+end
+
+-- Add stretch markers at transient positions, quantized to nearest grid
 -- Optional range_start/range_end in SOURCE time to limit to a region
 -- Optional warp_map/playrate for correct pos computation in warped view
 function utils.add_markers_at_transients(take, transients, range_start, range_end, warp_map, playrate)
   local count = 0
+  local item = reaper.GetMediaItemTake_Item(take)
+  local item_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
   local sm_count = reaper.GetTakeNumStretchMarkers(take)
   -- Build list of existing srcpos for fast lookup
   local existing = {}
@@ -706,12 +728,103 @@ function utils.add_markers_at_transients(take, transients, range_start, range_en
       end
       if not has then
         local pos = warp_map and utils.warp_src_to_pos(warp_map, srcpos, playrate or 1) or srcpos
+        -- Snap destination to nearest grid line
+        pos = snap_to_grid(item_pos + pos) - item_pos
         reaper.SetTakeStretchMarker(take, -1, pos, srcpos)
         count = count + 1
       end
     end
   end
   return count
+end
+
+-- Quantize all existing stretch markers to nearest grid line.
+-- Collects all markers first, then deletes and re-adds to avoid
+-- index shifting (SetTakeStretchMarker can re-sort by position).
+function utils.quantize_warp_markers(take)
+  local item = reaper.GetMediaItemTake_Item(take)
+  local item_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
+  local sm_count = reaper.GetTakeNumStretchMarkers(take)
+  if sm_count == 0 then return 0 end
+  -- Collect all markers first
+  local markers = {}
+  for i = 0, sm_count - 1 do
+    local _, pos, srcpos = reaper.GetTakeStretchMarker(take, i)
+    markers[#markers + 1] = {pos = pos, srcpos = srcpos}
+  end
+  -- Compute snapped positions
+  local moved = 0
+  for _, m in ipairs(markers) do
+    local project_time = item_pos + m.pos
+    local snapped_time = snap_to_grid(project_time)
+    local snapped_pos = snapped_time - item_pos
+    if math.abs(snapped_pos - m.pos) > 0.0001 then
+      m.pos = snapped_pos
+      moved = moved + 1
+    end
+  end
+  if moved > 0 then
+    -- Delete all and re-add with snapped positions
+    reaper.DeleteTakeStretchMarkers(take, 0, sm_count)
+    for _, m in ipairs(markers) do
+      reaper.SetTakeStretchMarker(take, -1, m.pos, m.srcpos)
+    end
+  end
+  return moved
+end
+
+-- Insert a single warp marker at a view-time position.
+-- Returns true if a marker was created, false if out of bounds or duplicate.
+function utils.insert_warp_marker_at(take, time, is_warped, warp_map, playrate, source_length)
+  local pos, srcpos
+  if is_warped then
+    pos = time
+    srcpos = utils.warp_pos_to_src(warp_map, pos, playrate)
+  else
+    srcpos = time
+    pos = srcpos
+  end
+  if srcpos < 0 or srcpos > source_length then return false end
+  -- Check for existing marker at same position
+  local sm_count = reaper.GetTakeNumStretchMarkers(take)
+  for i = 0, sm_count - 1 do
+    local _, _, sp = reaper.GetTakeStretchMarker(take, i)
+    if math.abs(sp - srcpos) < 0.005 then return false end
+  end
+  reaper.SetTakeStretchMarker(take, -1, pos, srcpos)
+  return true
+end
+
+-- Compensate an adjacent segment's slope after moving a shared marker.
+-- Keeps the local rate at the shared marker's handle fixed so the handle doesn't move.
+-- Uses: state.slope_drag_adj_local_rate (saved at drag start)
+function utils.compensate_adjacent_slope(take, state, new_pos, wave_y, waveform_height)
+  if not state.slope_drag_has_adj then return end
+  -- Compute new average rate of adjacent segment
+  local p1, p2, s1, s2
+  if state.slope_drag_endpoint == 1 then
+    -- Adjacent is prev segment, shared marker is its RIGHT end
+    p1, p2 = state.slope_drag_adj_partner_pos, new_pos
+    s1, s2 = state.slope_drag_adj_partner_srcpos, state.slope_drag_start_srcpos
+  else
+    -- Adjacent is next segment, shared marker is its LEFT end
+    p1, p2 = new_pos, state.slope_drag_adj_partner_pos
+    s1, s2 = state.slope_drag_start_srcpos, state.slope_drag_adj_partner_srcpos
+  end
+  local avg_rate = (p2 ~= p1) and (s2 - s1) / (p2 - p1) or 1
+  if avg_rate <= 0 then return end
+  -- Compute slope that keeps the pinned local rate at the shared marker end
+  local pinned_lr = state.slope_drag_adj_local_rate
+  local slope
+  if state.slope_drag_endpoint == 1 then
+    -- Pin right handle: rate_right = avg_rate * (1 + slope) = pinned_lr
+    slope = pinned_lr / avg_rate - 1
+  else
+    -- Pin left handle: rate_left = avg_rate * (1 - slope) = pinned_lr
+    slope = 1 - pinned_lr / avg_rate
+  end
+  slope = math.max(-0.999, math.min(0.999, slope))
+  reaper.SetTakeStretchMarkerSlope(take, state.slope_drag_adj_slope_idx, slope)
 end
 
 return utils

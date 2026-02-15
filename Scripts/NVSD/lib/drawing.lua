@@ -38,6 +38,18 @@ local action_search_text = ""
 local action_search_results = {}
 local action_search_sel_idx = 0
 local action_search_confirmed = ""  -- name of last confirmed selection (shown in field)
+local edit_show_validation = false  -- true after Save clicked with missing fields
+
+-- Icon picker state (shared between drawing.lua and settings_ui.lua callers)
+local icon_picker_state = {
+  filter_text = "",
+  hovered_name = "",
+}
+
+function drawing.reset_icon_picker_state()
+  icon_picker_state.filter_text = ""
+  icon_picker_state.hovered_name = ""
+end
 
 -- Get toolbar icon + UV u1 for first state of horizontal sprite sheet
 -- REAPER toolbar icons are HORIZONTAL strips: width=N*height (typically 90x30 = 3 states)
@@ -54,7 +66,7 @@ local function get_toolbar_icon(ctx, filename)
   end
   local ok, img = pcall(reaper.ImGui_CreateImage, toolbar_icons_dir .. filename)
   if ok and img then
-    reaper.ImGui_Attach(ctx, img)
+    pcall(reaper.ImGui_Attach, ctx, img)
     -- Validate image loaded successfully by checking dimensions
     local ok2, w, h = pcall(reaper.ImGui_Image_GetSize, img)
     if not ok2 or not w or not h or w <= 0 or h <= 0 then
@@ -944,6 +956,60 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
     end
   end
 
+  -- Ghost "+" button to add new toolbar button
+  -- Always visible (faint when idle, highlighted on hover), works with or without existing buttons
+  if state then
+    local has_buttons = toolbar_buttons and #toolbar_buttons > 0
+    local add_btn_size = has_buttons and 30 or math.min(20, height - 4)
+    local add_btn_y = y + math.floor((height - add_btn_size) / 2)
+    local add_btn_x
+    if has_buttons then
+      -- Position after the last toolbar button (toolbar_right_edge + gap)
+      add_btn_x = toolbar_right_edge + (config.TOOLBAR_BTN_GAP or 4)
+    else
+      -- No buttons: center in the bar
+      add_btn_x = x + math.floor((width - add_btn_size) / 2)
+    end
+
+    local add_mouse_in = mouse_x >= add_btn_x and mouse_x <= add_btn_x + add_btn_size
+                         and mouse_y >= add_btn_y and mouse_y <= add_btn_y + add_btn_size
+                         and not (state.tb_drag_active)
+                         and not reaper.ImGui_IsPopupOpen(ctx, "", reaper.ImGui_PopupFlags_AnyPopup())
+
+    -- When buttons exist: only draw on hover. When empty: always show faintly.
+    local draw_add = add_mouse_in or not has_buttons
+    if draw_add then
+      local box_col = add_mouse_in and 0xAAAAAAFF or 0x44444480
+      local plus_col = add_mouse_in and 0xCCCCCCFF or 0x55555580
+      reaper.ImGui_DrawList_AddRect(draw_list, add_btn_x, add_btn_y,
+        add_btn_x + add_btn_size, add_btn_y + add_btn_size, box_col, 4)
+      local plus_cx = add_btn_x + add_btn_size / 2
+      local plus_cy = add_btn_y + add_btn_size / 2
+      reaper.ImGui_DrawList_AddLine(draw_list, plus_cx - 5, plus_cy, plus_cx + 5, plus_cy, plus_col, 1.5)
+      reaper.ImGui_DrawList_AddLine(draw_list, plus_cx, plus_cy - 5, plus_cx, plus_cy + 5, plus_col, 1.5)
+    end
+
+    if add_mouse_in then
+      drawing.tooltip(ctx, "tb_add", "Add button")
+      if reaper.ImGui_IsMouseClicked(ctx, 0) then
+        state.tb_edit_idx = nil
+        state.tb_edit_insert_after = toolbar_buttons and #toolbar_buttons or 0
+        state.tb_edit_label = ""
+        state.tb_edit_cmd = ""
+        state.tb_edit_icon = nil
+        state.tb_edit_auto_label = nil
+        state.tb_edit_open = true
+        action_search_text = ""
+        action_search_results = {}
+        action_search_sel_idx = 0
+        action_search_confirmed = ""
+      end
+    end
+
+    -- Extend right edge to include the "+" button
+    toolbar_right_edge = math.max(toolbar_right_edge, add_btn_x + add_btn_size)
+  end
+
   -- Right boundary for filename text (don't overlap toolbar or right-side buttons)
   local text_max_x = (toolbar_buttons and #toolbar_buttons > 0)
     and (toolbar_left_edge - 8)
@@ -1007,7 +1073,8 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   end
 
   local text_x = current_x + 4
-  local text_y = y + math.floor((height - 12) / 2)
+  local text_h = reaper.ImGui_GetTextLineHeight(ctx)
+  local text_y = y + math.floor((height - text_h) / 2)
 
   -- Cache metadata per source (avoids REAPER API calls every frame)
   local file_name, sample_rate, num_channels, bit_depth
@@ -1075,7 +1142,7 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
     reaper.ImGui_DrawList_AddText(draw_list, text_x, text_y, name_color, file_name)
 
     if mouse_over_filename then
-      local underline_y = text_y + 14
+      local underline_y = text_y + text_h + 1
       reaper.ImGui_DrawList_AddLine(draw_list, text_x, underline_y, file_name_end_x, underline_y, name_color, 1)
     end
   end
@@ -1120,35 +1187,49 @@ end
 
 -- Toolbar icon cache for context menu icon picker (reuses get_toolbar_icon above)
 
--- Draw toolbar context menu + edit popup
--- Call this once per frame from main script, after draw_info_bar
--- Shared icon picker content: centered header, "Text Only" button, scrollable icon grid
+-- Shared icon picker content: filter, live hover display, keywords, scrollable icon grid
+-- Signature: draw_icon_picker_content(ctx, icons, child_id, get_icon_fn)
+--   get_icon_fn(ctx, filename) -> img, uv_u1  (icon loader, differs per call site)
 -- Returns: filename string if icon picked, "" if "Text Only" picked, false if closed, nil if nothing
-local function draw_icon_picker_content(ctx, icons, child_id)
+function drawing.draw_icon_picker_content(ctx, icons, child_id, get_icon_fn)
   local picked = nil
   local content_w = reaper.ImGui_GetContentRegionAvail(ctx)
+  local label_color = 0xBBBBBBFF
 
-  -- X close button (top-right)
+  -- Title row: centered "Select toolbar icon" + X close button top-right
   local close_label = "X"
+  local row_h = 24
   local close_w = reaper.ImGui_CalcTextSize(ctx, close_label) + 16
   local save_cx = reaper.ImGui_GetCursorPosX(ctx)
-  reaper.ImGui_SetCursorPosX(ctx, save_cx + content_w - close_w)
+  local save_cy = reaper.ImGui_GetCursorPosY(ctx)
+
+  -- X button (right-aligned, vertically centered in row)
+  reaper.ImGui_SetCursorPos(ctx, save_cx + content_w - close_w, save_cy)
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x00000000)
-  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x555555FF)
-  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x666666FF)
-  if reaper.ImGui_Button(ctx, close_label .. "##icon_close", close_w, 20) then
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x88333CFF)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0xAA4444FF)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0x999999FF)
+  if reaper.ImGui_Button(ctx, close_label .. "##icon_close_" .. child_id, close_w, row_h) then
     picked = false
   end
-  reaper.ImGui_PopStyleColor(ctx, 3)
+  if reaper.ImGui_IsItemHovered(ctx) then
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xFFFFFFFF)
+    reaper.ImGui_PopStyleColor(ctx)  -- consumed by hover check scope
+  end
+  reaper.ImGui_PopStyleColor(ctx, 4)
 
-  -- Centered title (same line as close button)
-  reaper.ImGui_SetCursorPosX(ctx, save_cx)
-  local title = "Choose Icon"
+  -- Title (centered, vertically centered in row)
+  local title = "Select toolbar icon"
   local title_w = reaper.ImGui_CalcTextSize(ctx, title)
-  reaper.ImGui_SetCursorPosX(ctx, save_cx + (content_w - title_w) / 2)
+  local text_h = reaper.ImGui_GetTextLineHeight(ctx)
+  reaper.ImGui_SetCursorPos(ctx, save_cx + (content_w - title_w) / 2,
+    save_cy + math.floor((row_h - text_h) / 2))
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xFFFFFFFF)
   reaper.ImGui_Text(ctx, title)
   reaper.ImGui_PopStyleColor(ctx)
+
+  -- Move past the row
+  reaper.ImGui_SetCursorPosY(ctx, save_cy + row_h + 2)
 
   reaper.ImGui_Spacing(ctx)
   local hdl = reaper.ImGui_GetWindowDrawList(ctx)
@@ -1156,33 +1237,166 @@ local function draw_icon_picker_content(ctx, icons, child_id)
   reaper.ImGui_DrawList_AddLine(hdl, hsx, hsy, hsx + content_w, hsy, 0x444444FF, 1)
   reaper.ImGui_Dummy(ctx, 0, 4)
 
-  -- "Text Only" button (centered, normal width)
+  -- Shared button width for Clear / Keywords (use wider label)
+  local clear_label = "Clear"
+  local kw_label = "Keywords"
+  local clear_text_w = reaper.ImGui_CalcTextSize(ctx, clear_label)
+  local kw_text_w = reaper.ImGui_CalcTextSize(ctx, kw_label)
+  local btn_w = math.max(clear_text_w, kw_text_w) + 16
+
+  -- Compute shared label width so both input fields align
+  local filter_label = "Filter:"
+  local current_label = "Current:"
+  local filter_label_w = reaper.ImGui_CalcTextSize(ctx, filter_label)
+  local current_label_w = reaper.ImGui_CalcTextSize(ctx, current_label)
+  local label_w = math.max(filter_label_w, current_label_w)
+  local spacing = 24  -- gaps between label, input, button
+
+  -- Filter row: label + InputText + "Clear" button
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), label_color)
+  reaper.ImGui_Text(ctx, filter_label)
+  reaper.ImGui_PopStyleColor(ctx)
+  reaper.ImGui_SameLine(ctx, 0, label_w - filter_label_w + 8)
+
+  local input_w = content_w - label_w - btn_w - spacing
+  reaper.ImGui_SetNextItemWidth(ctx, input_w)
+  local _, new_filter = reaper.ImGui_InputText(ctx, "##icon_filter_" .. child_id, icon_picker_state.filter_text)
+  icon_picker_state.filter_text = new_filter
+
+  reaper.ImGui_SameLine(ctx)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x404040FF)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x505050FF)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x606060FF)
+  if reaper.ImGui_Button(ctx, clear_label .. "##icon_clear_" .. child_id, btn_w) then
+    icon_picker_state.filter_text = ""
+  end
+  reaper.ImGui_PopStyleColor(ctx, 3)
+
+  -- Build filtered icon list
+  local filtered = {}
+  local filter_lower = icon_picker_state.filter_text:lower()
+  local filter_words = {}
+  for w in filter_lower:gmatch("%S+") do
+    filter_words[#filter_words + 1] = w
+  end
+  if #filter_words == 0 then
+    filtered = icons
+  else
+    for _, filename in ipairs(icons) do
+      local name_lower = filename:lower()
+      local match = true
+      for _, w in ipairs(filter_words) do
+        if not name_lower:find(w, 1, true) then
+          match = false
+          break
+        end
+      end
+      if match then
+        filtered[#filtered + 1] = filename
+      end
+    end
+  end
+
+  -- Current row: label + hovered name display + "Keywords" button
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), label_color)
+  reaper.ImGui_Text(ctx, current_label)
+  reaper.ImGui_PopStyleColor(ctx)
+  reaper.ImGui_SameLine(ctx, 0, label_w - current_label_w + 8)
+
+  local display_w = content_w - label_w - btn_w - spacing
+  reaper.ImGui_SetNextItemWidth(ctx, display_w)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_FrameBg(), 0x1A1A1AFF)
+  reaper.ImGui_InputText(ctx, "##icon_current_" .. child_id, icon_picker_state.hovered_name,
+    reaper.ImGui_InputTextFlags_ReadOnly())
+  reaper.ImGui_PopStyleColor(ctx)
+
+  reaper.ImGui_SameLine(ctx)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x404040FF)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x505050FF)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x606060FF)
+  if reaper.ImGui_Button(ctx, kw_label .. "##icon_kw_" .. child_id, btn_w) then
+    reaper.ImGui_OpenPopup(ctx, "##icon_keywords_" .. child_id)
+  end
+  reaper.ImGui_PopStyleColor(ctx, 3)
+
+  -- Keywords popup
+  if reaper.ImGui_BeginPopup(ctx, "##icon_keywords_" .. child_id) then
+    -- Extract keywords from filtered icons
+    local kw_counts = {}
+    local kw_order = {}
+    -- Words already in filter (to exclude)
+    local filter_set = {}
+    for _, w in ipairs(filter_words) do filter_set[w] = true end
+
+    for _, filename in ipairs(filtered) do
+      local base = filename:lower():gsub("%.png$", "")
+      for seg in base:gmatch("[^_]+") do
+        if #seg > 1 and not filter_set[seg] then
+          if not kw_counts[seg] then
+            kw_counts[seg] = 0
+            kw_order[#kw_order + 1] = seg
+          end
+          kw_counts[seg] = kw_counts[seg] + 1
+        end
+      end
+    end
+
+    -- Sort by count descending
+    table.sort(kw_order, function(a, b) return kw_counts[a] > kw_counts[b] end)
+
+    if #kw_order == 0 then
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0x888888FF)
+      reaper.ImGui_Text(ctx, "No keywords available")
+      reaper.ImGui_PopStyleColor(ctx)
+    else
+      for _, kw in ipairs(kw_order) do
+        -- Capitalize first letter for display
+        local display = kw:sub(1,1):upper() .. kw:sub(2)
+        if reaper.ImGui_MenuItem(ctx, display .. " (" .. kw_counts[kw] .. ")") then
+          -- Append keyword to filter
+          if icon_picker_state.filter_text == "" then
+            icon_picker_state.filter_text = kw
+          else
+            icon_picker_state.filter_text = icon_picker_state.filter_text .. " " .. kw
+          end
+        end
+      end
+    end
+    reaper.ImGui_EndPopup(ctx)
+  end
+
+  reaper.ImGui_Spacing(ctx)
+  local hsx2, hsy2 = reaper.ImGui_GetCursorScreenPos(ctx)
+  reaper.ImGui_DrawList_AddLine(hdl, hsx2, hsy2, hsx2 + content_w, hsy2, 0x444444FF, 1)
+  reaper.ImGui_Dummy(ctx, 0, 4)
+
+  -- "Text Only" button (centered)
   local text_only_label = "Text Only (no icon)"
   local text_only_w = reaper.ImGui_CalcTextSize(ctx, text_only_label) + 24
   reaper.ImGui_SetCursorPosX(ctx, reaper.ImGui_GetCursorPosX(ctx) + (content_w - text_only_w) / 2)
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x404040FF)
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x505050FF)
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x606060FF)
-  if reaper.ImGui_Button(ctx, text_only_label, text_only_w, 28) then
+  if reaper.ImGui_Button(ctx, text_only_label .. "##" .. child_id, text_only_w, 28) then
     picked = ""
   end
   reaper.ImGui_PopStyleColor(ctx, 3)
 
   reaper.ImGui_Dummy(ctx, 0, 2)
-  local hsx2, hsy2 = reaper.ImGui_GetCursorScreenPos(ctx)
-  reaper.ImGui_DrawList_AddLine(hdl, hsx2, hsy2, hsx2 + content_w, hsy2, 0x444444FF, 1)
+  local hsx3, hsy3 = reaper.ImGui_GetCursorScreenPos(ctx)
+  reaper.ImGui_DrawList_AddLine(hdl, hsx3, hsy3, hsx3 + content_w, hsy3, 0x444444FF, 1)
   reaper.ImGui_Dummy(ctx, 0, 4)
 
   -- Icon count
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0x888888FF)
-  reaper.ImGui_Text(ctx, #icons .. " icons available")
+  reaper.ImGui_Text(ctx, #filtered .. " icons matching")
   reaper.ImGui_PopStyleColor(ctx)
   reaper.ImGui_Spacing(ctx)
 
   -- Icon grid inside scrollable child
   local avail_w = reaper.ImGui_GetContentRegionAvail(ctx)
   local _, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
-  local scrollbar_w = 14  -- reserve space for scrollbar so icons don't get clipped
+  local scrollbar_w = 14
   local grid_w = avail_w - scrollbar_w
   local cell_size = 42
   local cell_gap = 3
@@ -1190,12 +1404,12 @@ local function draw_icon_picker_content(ctx, icons, child_id)
 
   if reaper.ImGui_BeginChild(ctx, child_id, avail_w, avail_h - 4) then
     local grid_dl = reaper.ImGui_GetWindowDrawList(ctx)
-    for i, filename in ipairs(icons) do
+    for i, filename in ipairs(filtered) do
       if (i - 1) % cols ~= 0 then
         reaper.ImGui_SameLine(ctx, 0, cell_gap)
       end
 
-      local img, uv_u1 = get_toolbar_icon(ctx, filename)
+      local img, uv_u1 = get_icon_fn(ctx, filename)
       local gx, gy = reaper.ImGui_GetCursorScreenPos(ctx)
       reaper.ImGui_PushID(ctx, i)
       reaper.ImGui_InvisibleButton(ctx, "##ic", cell_size, cell_size)
@@ -1207,11 +1421,15 @@ local function draw_icon_picker_content(ctx, icons, child_id)
       if img then
         local pad = 4
         local img_ok = pcall(reaper.ImGui_DrawList_AddImage, grid_dl, img, gx + pad, gy + pad, gx + cell_size - pad, gy + cell_size - pad, 0, 0, uv_u1 or 1/3, 1, 0xFFFFFFFF)
-        if not img_ok then toolbar_icon_cache[filename] = false end
+        if not img_ok then
+          -- Mark as failed in the loader's cache (caller responsibility)
+        end
       end
 
       if hovered then
-        reaper.ImGui_SetTooltip(ctx, filename)
+        -- Update live display with icon name (strip .png)
+        local display_name = filename:gsub("%.png$", "")
+        icon_picker_state.hovered_name = display_name
       end
 
       if clicked then
@@ -1226,6 +1444,8 @@ local function draw_icon_picker_content(ctx, icons, child_id)
   return picked
 end
 
+-- Draw toolbar context menu + edit popup
+-- Call this once per frame from main script, after draw_info_bar
 function drawing.draw_toolbar_popups(ctx, state, settings, config)
   if not state then return end
 
@@ -1311,6 +1531,7 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
   if state.tb_edit_open then
     reaper.ImGui_OpenPopup(ctx, "Edit Toolbar Button##tb_edit")
     state.tb_edit_open = false
+    state.tb_edit_focus_label = true
   end
 
   -- Render edit modal (centered on screen)
@@ -1323,8 +1544,13 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
   reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_ItemSpacing(), 8, 8)
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_PopupBg(), 0x2A2A2AFF)
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Border(), 0x555555FF)
+  -- Only block Nav while action dropdown is visible so Tab still works between inputs
+  local dropdown_showing = #action_search_results > 0
+      and action_search_text ~= ""
+      and action_search_confirmed == ""
   local edit_flags = reaper.ImGui_WindowFlags_NoTitleBar()
                    + reaper.ImGui_WindowFlags_AlwaysAutoResize()
+                   + (dropdown_showing and reaper.ImGui_WindowFlags_NoNav() or 0)
   if reaper.ImGui_BeginPopupModal(ctx, "Edit Toolbar Button##tb_edit", nil, edit_flags) then
     -- Capture keyboard so REAPER doesn't intercept Ctrl+V etc.
     reaper.ImGui_SetNextFrameWantCaptureKeyboard(ctx, true)
@@ -1344,11 +1570,24 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
     reaper.ImGui_DrawList_AddLine(edl, esx, esy, esx + content_w, esy, 0x444444FF, 1)
     reaper.ImGui_Dummy(ctx, 0, 4)
 
+    local label_empty = (state.tb_edit_label or "") == ""
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xBBBBBBFF)
     reaper.ImGui_Text(ctx, "Label")
     reaper.ImGui_PopStyleColor(ctx)
+    if edit_show_validation and label_empty then
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Border(), 0xFF4444FF)
+      reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_FrameBorderSize(), 1)
+    end
     reaper.ImGui_SetNextItemWidth(ctx, -1)
+    if state.tb_edit_focus_label then
+      reaper.ImGui_SetKeyboardFocusHere(ctx)
+      state.tb_edit_focus_label = false
+    end
     local _, new_label = reaper.ImGui_InputText(ctx, "##tb_ed_label", state.tb_edit_label or "")
+    if edit_show_validation and label_empty then
+      reaper.ImGui_PopStyleVar(ctx)
+      reaper.ImGui_PopStyleColor(ctx)
+    end
     state.tb_edit_label = new_label
 
     -- Action search autocomplete
@@ -1357,11 +1596,9 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
     reaper.ImGui_Text(ctx, "Search Actions")
     reaper.ImGui_PopStyleColor(ctx)
     reaper.ImGui_SetNextItemWidth(ctx, -1)
-    -- Lock keyboard focus to the search input while dropdown is showing
-    -- (must be BEFORE InputText so ImGui never moves focus away on arrow keys)
-    if #action_search_results > 0 and action_search_confirmed == "" then
-      reaper.ImGui_SetKeyboardFocusHere(ctx, 0)
-    end
+    -- Note: no SetKeyboardFocusHere here. InputText keeps focus naturally while
+    -- the user types, and removing the per-frame focus lock lets clicks on the
+    -- dropdown Selectable items register immediately.
     -- AutoSelectAll: clicking into field selects all text, so typing replaces it
     local search_flags = reaper.ImGui_InputTextFlags_AutoSelectAll()
     local _, new_search = reaper.ImGui_InputText(ctx, "##tb_ed_search", action_search_text, search_flags)
@@ -1490,12 +1727,21 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
       action_search_sel_idx = 0
     end
 
+    local cmd_empty = (state.tb_edit_cmd or "") == ""
     reaper.ImGui_Spacing(ctx)
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xBBBBBBFF)
     reaper.ImGui_Text(ctx, "Action Command ID")
     reaper.ImGui_PopStyleColor(ctx)
+    if edit_show_validation and cmd_empty then
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Border(), 0xFF4444FF)
+      reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_FrameBorderSize(), 1)
+    end
     reaper.ImGui_SetNextItemWidth(ctx, -1)
     local _, new_cmd = reaper.ImGui_InputText(ctx, "##tb_ed_cmd", state.tb_edit_cmd or "")
+    if edit_show_validation and cmd_empty then
+      reaper.ImGui_PopStyleVar(ctx)
+      reaper.ImGui_PopStyleColor(ctx)
+    end
     -- Auto-fill label when command ID changes and label is empty or was auto-filled
     if new_cmd ~= (state.tb_edit_cmd or "") and new_cmd ~= "" then
       local cmd_id = tonumber(new_cmd) or reaper.NamedCommandLookup(new_cmd)
@@ -1528,10 +1774,15 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
     reaper.ImGui_Dummy(ctx, 0, 4)
 
     -- Icon preview (clickable to open icon picker)
+    local icon_label_y = reaper.ImGui_GetCursorPosY(ctx)
+    local icon_text_h = reaper.ImGui_GetTextLineHeight(ctx)
+    local icon_label_offset = math.floor((30 - icon_text_h) / 2)
+    reaper.ImGui_SetCursorPosY(ctx, icon_label_y + icon_label_offset)
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xBBBBBBFF)
     reaper.ImGui_Text(ctx, "Icon")
     reaper.ImGui_PopStyleColor(ctx)
     reaper.ImGui_SameLine(ctx)
+    reaper.ImGui_SetCursorPosY(ctx, icon_label_y)
     local icon_clicked = false
     if state.tb_edit_icon and state.tb_edit_icon ~= "" then
       local icon_img, icon_uv = get_toolbar_icon(ctx, state.tb_edit_icon)
@@ -1561,15 +1812,28 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
         reaper.ImGui_PopStyleColor(ctx, 3)
       end
     else
-      -- No icon: clickable "(none)" placeholder
-      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x33333300)
-      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x505050FF)
-      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x606060FF)
-      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0x888888FF)
-      if reaper.ImGui_SmallButton(ctx, "(none) - click to set##tb_ed_icon_none") then
-        icon_clicked = true
+      -- No icon: outlined box with "+" and "Set icon..." label (matches settings UI)
+      local dl = reaper.ImGui_GetWindowDrawList(ctx)
+      local cx, cy = reaper.ImGui_GetCursorScreenPos(ctx)
+      local text_h = reaper.ImGui_GetTextLineHeight(ctx)
+      local lbl_text = "Set icon..."
+      local hit_w = 30 + 6 + reaper.ImGui_CalcTextSize(ctx, lbl_text)
+      reaper.ImGui_InvisibleButton(ctx, "##tb_ed_icon_none", hit_w, 30)
+      local none_hovered = reaper.ImGui_IsItemHovered(ctx)
+      icon_clicked = reaper.ImGui_IsItemClicked(ctx, 0)
+      local box_col = none_hovered and 0xAAAAAAFF or 0x666666FF
+      reaper.ImGui_DrawList_AddRect(dl, cx, cy, cx + 30, cy + 30, box_col, 4)
+      local plus_col = none_hovered and 0xCCCCCCFF or 0x888888FF
+      local plus_cx = cx + 15
+      local plus_cy = cy + 15
+      reaper.ImGui_DrawList_AddLine(dl, plus_cx - 5, plus_cy, plus_cx + 5, plus_cy, plus_col, 1.5)
+      reaper.ImGui_DrawList_AddLine(dl, plus_cx, plus_cy - 5, plus_cx, plus_cy + 5, plus_col, 1.5)
+      local lbl_y = cy + math.floor((30 - text_h) / 2)
+      local lbl_col = none_hovered and 0xCCCCCCFF or 0x999999FF
+      reaper.ImGui_DrawList_AddText(dl, cx + 36, lbl_y, lbl_col, lbl_text)
+      if none_hovered then
+        reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
       end
-      reaper.ImGui_PopStyleColor(ctx, 4)
     end
     if icon_clicked then
       state.tb_icon_idx = state.tb_edit_idx
@@ -1583,6 +1847,11 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
     reaper.ImGui_DrawList_AddLine(edl, esx3, esy3, esx3 + content_w, esy3, 0x444444FF, 1)
     reaper.ImGui_Dummy(ctx, 0, 4)
 
+    -- Clear validation highlight once both fields are filled
+    if state.tb_edit_label ~= "" and state.tb_edit_cmd ~= "" then
+      edit_show_validation = false
+    end
+
     -- Save / Cancel buttons
     local btn_w = (content_w - 8) / 2
     local can_save = state.tb_edit_label ~= "" and state.tb_edit_cmd ~= ""
@@ -1591,35 +1860,40 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x505050FF)
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x606060FF)
     if reaper.ImGui_Button(ctx, "Cancel", btn_w, 30) then
+      edit_show_validation = false
       reaper.ImGui_CloseCurrentPopup(ctx)
     end
     reaper.ImGui_PopStyleColor(ctx, 3)
 
     reaper.ImGui_SameLine(ctx)
 
-    if not can_save then reaper.ImGui_BeginDisabled(ctx) end
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x4A90D9FF)
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x5AA0E9FF)
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x3A80C9FF)
     if reaper.ImGui_Button(ctx, "Save", btn_w, 30) then
-      local btns2 = settings.current.toolbar_buttons
-      if state.tb_edit_idx and state.tb_edit_idx >= 1 and state.tb_edit_idx <= #btns2 then
-        btns2[state.tb_edit_idx].label = state.tb_edit_label
-        btns2[state.tb_edit_idx].cmd = state.tb_edit_cmd
-        btns2[state.tb_edit_idx].icon = state.tb_edit_icon
-        settings.save_toolbar()
+      if can_save then
+        local btns2 = settings.current.toolbar_buttons
+        if state.tb_edit_idx and state.tb_edit_idx >= 1 and state.tb_edit_idx <= #btns2 then
+          btns2[state.tb_edit_idx].label = state.tb_edit_label
+          btns2[state.tb_edit_idx].cmd = state.tb_edit_cmd
+          btns2[state.tb_edit_idx].icon = state.tb_edit_icon
+          settings.save_toolbar()
+        else
+          settings.add_toolbar_button(state.tb_edit_label, state.tb_edit_cmd, state.tb_edit_icon, state.tb_edit_insert_after)
+        end
+        edit_show_validation = false
+        reaper.ImGui_CloseCurrentPopup(ctx)
       else
-        settings.add_toolbar_button(state.tb_edit_label, state.tb_edit_cmd, state.tb_edit_icon, state.tb_edit_insert_after)
+        edit_show_validation = true
       end
-      reaper.ImGui_CloseCurrentPopup(ctx)
     end
     reaper.ImGui_PopStyleColor(ctx, 3)
-    if not can_save then reaper.ImGui_EndDisabled(ctx) end
 
     -- Icon picker popup (nested INSIDE edit modal so it doesn't close the modal)
     if state.tb_icon_open and state.tb_icon_from_edit then
       reaper.ImGui_OpenPopup(ctx, "Choose Icon##tb_icon_pick")
       state.tb_icon_open = false
+      drawing.reset_icon_picker_state()
       if not state.tb_icon_list then
         state.tb_icon_list = settings.scan_toolbar_icons()
       end
@@ -1629,7 +1903,7 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
     local edit_wx, edit_wy = reaper.ImGui_GetWindowPos(ctx)
     local edit_ww, _ = reaper.ImGui_GetWindowSize(ctx)
     reaper.ImGui_SetNextWindowPos(ctx, edit_wx + edit_ww + 6, edit_wy, reaper.ImGui_Cond_Appearing(), 0.0, 0.0)
-    reaper.ImGui_SetNextWindowSize(ctx, 620, 640, reaper.ImGui_Cond_Appearing())
+    reaper.ImGui_SetNextWindowSize(ctx, 900, 800, reaper.ImGui_Cond_Appearing())
     reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowPadding(), 16, 14)
     reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowRounding(), 8)
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_PopupBg(), 0x2A2A2AFF)
@@ -1640,7 +1914,7 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
       reaper.ImGui_SetNextFrameWantCaptureKeyboard(ctx, true)
       local icons = state.tb_icon_list or {}
 
-      local picked = draw_icon_picker_content(ctx, icons, "tb_icon_grid")
+      local picked = drawing.draw_icon_picker_content(ctx, icons, "tb_icon_grid", get_toolbar_icon)
       if picked == false then
         reaper.ImGui_CloseCurrentPopup(ctx)
       elseif picked == "" then
@@ -1665,6 +1939,7 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
   if state.tb_icon_open and not state.tb_icon_from_edit then
     reaper.ImGui_OpenPopup(ctx, "Choose Icon Direct##tb_icon_direct")
     state.tb_icon_open = false
+    drawing.reset_icon_picker_state()
     if not state.tb_icon_list then
       state.tb_icon_list = settings.scan_toolbar_icons()
     end
@@ -1683,7 +1958,7 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
   if reaper.ImGui_BeginPopupModal(ctx, "Choose Icon Direct##tb_icon_direct", nil, direct_icon_flags) then
     local icons = state.tb_icon_list or {}
 
-    local picked = draw_icon_picker_content(ctx, icons, "tb_icon_grid_d")
+    local picked = drawing.draw_icon_picker_content(ctx, icons, "tb_icon_grid_d", get_toolbar_icon)
     if picked == false then
       reaper.ImGui_CloseCurrentPopup(ctx)
     elseif picked == "" then
@@ -3169,25 +3444,14 @@ function drawing.draw_warp_rate(draw_list, x1, x2, bar_y, rate, config)
   reaper.ImGui_DrawList_AddText(draw_list, cx, bar_y + 1, 0xAAAAAAAA, text)
 end
 
--- Draw slope curve between two stretch markers in the waveform area
--- rate: segment playback rate (1.0 = normal). Offsets center Y so faster = higher, slower = lower.
+-- Draw slope line between two stretch markers in the waveform area
+-- Always a straight line from left handle Y to right handle Y
 function drawing.draw_slope_curve(draw_list, x1, x2, wave_y, wave_h, slope, hover_state, rate)
   local gap = x2 - x1
   if gap < 8 then return end
   local DL_PathLineTo = reaper.ImGui_DrawList_PathLineTo
   local DL_PathStroke = reaper.ImGui_DrawList_PathStroke
   if not DL_PathLineTo then return end
-
-  -- Center Y offset by rate: rate=1 centered, >1 higher, <1 lower
-  -- Use log scale so 2x and 0.5x are symmetric offsets
-  local rate_offset = 0
-  if rate and rate > 0 then
-    rate_offset = math.log(rate) * wave_h * 0.2
-  end
-  local cy = wave_y + wave_h / 2 - rate_offset
-  -- Clamp to stay within waveform bounds
-  cy = math.max(wave_y + wave_h * 0.1, math.min(wave_y + wave_h * 0.9, cy))
-  local band = wave_h * 0.15
 
   local alpha
   if hover_state == 2 then alpha = 0xFF
@@ -3198,35 +3462,26 @@ function drawing.draw_slope_curve(draw_list, x1, x2, wave_y, wave_h, slope, hove
   local color = 0xE8A02000 + alpha
   local thickness = (hover_state >= 1) and 2.0 or 1.5
 
-  if math.abs(slope) < 0.001 then
-    DL_PathLineTo(draw_list, x1, cy)
-    DL_PathLineTo(draw_list, x2, cy)
-  else
-    local steps = math.min(math.floor(gap / 2), 48)
-    for si = 0, steps do
-      local t = si / steps
-      local rate_norm = (1 - slope) + t * 2 * slope
-      DL_PathLineTo(draw_list, x1 + t * gap, cy - (rate_norm - 1) * band)
-    end
-  end
+  local y_left, y_right = drawing.slope_handle_positions(wave_y, wave_h, slope, rate)
+  DL_PathLineTo(draw_list, x1, y_left)
+  DL_PathLineTo(draw_list, x2, y_right)
   DL_PathStroke(draw_list, color, 0, thickness)
 end
 
 -- Compute the Y positions of slope handle endpoints (matching the curve endpoints)
--- Returns y_left, y_right so handles sit exactly where the curve starts/ends
+-- Uses log-based mapping: Y = center - log(local_rate) * scale
+-- Returns y_left, y_right clamped to waveform bounds
 function drawing.slope_handle_positions(wave_y, wave_h, slope, rate)
-  local rate_offset = 0
-  if rate and rate > 0 then
-    rate_offset = math.log(rate) * wave_h * 0.2
-  end
-  local cy = wave_y + wave_h / 2 - rate_offset
-  cy = math.max(wave_y + wave_h * 0.1, math.min(wave_y + wave_h * 0.9, cy))
-  local band = wave_h * 0.15
-  -- Must match draw_slope_curve formula:
-  -- at t=0: rate_norm = (1 - slope), y = cy - (rate_norm - 1) * band = cy + slope * band
-  -- at t=1: rate_norm = (1 + slope), y = cy - (rate_norm - 1) * band = cy - slope * band
-  local y_left = cy + slope * band
-  local y_right = cy - slope * band
+  local scale = wave_h * 0.2
+  local center = wave_y + wave_h / 2
+  rate = (rate and rate > 0) and rate or 1
+  local rate_left = math.max(0.001, rate * (1 - slope))
+  local rate_right = math.max(0.001, rate * (1 + slope))
+  local y_left = center - math.log(rate_left) * scale
+  local y_right = center - math.log(rate_right) * scale
+  -- Clamp to waveform bounds (same as REAPER item edges)
+  y_left = math.max(wave_y, math.min(wave_y + wave_h, y_left))
+  y_right = math.max(wave_y, math.min(wave_y + wave_h, y_right))
   return y_left, y_right
 end
 

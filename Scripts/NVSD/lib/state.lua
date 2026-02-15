@@ -168,6 +168,7 @@ state.transients = {}
 state.transients_source = nil
 state.transients_computed = false
 state.transient_hovered_idx = -1
+state.transients_original = nil          -- copy of initial detected transients for reset
 
 -- Envelope overlay visibility (true = show envelope overlay on waveform)
 state.envelopes_visible = true

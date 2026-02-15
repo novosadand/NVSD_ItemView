@@ -37,6 +37,8 @@ settings.DEFAULT_SHORTCUTS = {
   toggle_cue_markers = {ctrl = false, shift = false, alt = false, key = "M"},
   show_in_explorer = {ctrl = true, shift = false, alt = false, key = "F"},
   quantize_transients = {ctrl = true, shift = false, alt = false, key = "U"},
+  insert_warp_marker = {ctrl = true, shift = false, alt = false, key = "I"},
+  add_transient = {ctrl = true, shift = true, alt = false, key = "I"},
 }
 
 -- Map key names to ImGui key getter function names (created once at module load)
@@ -942,14 +944,19 @@ function settings.format_shortcut(shortcut)
   return table.concat(parts, "+")
 end
 
+-- Format shortcut by name (looks up from current settings)
+function settings.format_shortcut_by_name(name)
+  local sc = settings.current.shortcuts[name]
+  if sc and sc.key ~= "" then return settings.format_shortcut(sc) end
+  return ""
+end
+
 -- Mouse button index map (ImGui button indices: 3=X2/Mouse5, 4=X1/Mouse4 on this hardware)
 local MOUSE_BUTTON_MAP = { Mouse4 = 4, Mouse5 = 3 }
 
 -- Check if a shortcut matches current key state
 function settings.check_shortcut(ctx, name)
   if settings.listening then return false end
-  -- Don't fire shortcuts while a text input is active (e.g. toolbar edit popup)
-  if reaper.ImGui_IsAnyItemActive(ctx) then return false end
   local shortcut = settings.current.shortcuts[name]
   if not shortcut or shortcut.key == "" then return false end
 
