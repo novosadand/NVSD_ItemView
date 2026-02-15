@@ -7,7 +7,7 @@ local drawing = {}
 local tooltip_hover_id = nil
 local tooltip_hover_time = 0
 local tooltip_last_frame = 0
-local TOOLTIP_DELAY = 1.5
+local TOOLTIP_DELAY = 0.5
 local frame_time = 0  -- Cached time for current frame (set once per frame)
 
 -- Call once per frame from main loop to cache the current time
@@ -360,16 +360,21 @@ local function compute_grid_params(x, width, view_start, view_length, item_posit
 end
 
 -- Per-frame grid params cache (avoids computing twice per frame for grid+ruler)
-local grid_cache = { x = -1, width = -1, view_start = -1, view_length = -1, result = nil }
+local grid_cache = { x = -1, width = -1, view_start = -1, view_length = -1,
+                     start_offset = -1, item_position = -1, playrate = -1, result = nil }
 
 local function get_grid_params(x, width, view_start, view_length, item_position, start_offset, playrate, config, utils)
   if grid_cache.x == x and grid_cache.width == width
-      and grid_cache.view_start == view_start and grid_cache.view_length == view_length then
+      and grid_cache.view_start == view_start and grid_cache.view_length == view_length
+      and grid_cache.start_offset == start_offset and grid_cache.item_position == item_position
+      and grid_cache.playrate == playrate then
     return grid_cache.result
   end
   local g = compute_grid_params(x, width, view_start, view_length, item_position, start_offset, playrate, config, utils)
   grid_cache.x = x; grid_cache.width = width
   grid_cache.view_start = view_start; grid_cache.view_length = view_length
+  grid_cache.start_offset = start_offset; grid_cache.item_position = item_position
+  grid_cache.playrate = playrate
   grid_cache.result = g
   return g
 end
@@ -678,11 +683,83 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
     end
   end
 
+  -- Waveform zoom indicator widget (left of CUE or gear)
+  local zoom_anchor_x = (has_cues and cue_btn_x or gear_btn_x) - 4
+  local zoom_val = config.waveform_zoom or 1
+  local zoom_btn_h = has_toolbar and 30 or 14
+  local zoom_btn_w = has_toolbar and 50 or 44
+  local zoom_btn_x = zoom_anchor_x - zoom_btn_w
+  local zoom_btn_y = y + math.floor((height - zoom_btn_h) / 2)
+
+  local mouse_in_zoom = state and mouse_x >= zoom_btn_x and mouse_x <= zoom_btn_x + zoom_btn_w
+                        and mouse_y >= zoom_btn_y and mouse_y <= zoom_btn_y + zoom_btn_h
+
+  -- Background
+  local zoom_bg = (mouse_in_zoom and not (state and state.wf_zoom_dragging)) and config.COLOR_BTN_HOVER or config.COLOR_GRID_BAR
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, zoom_btn_x, zoom_btn_y,
+      zoom_btn_x + zoom_btn_w, zoom_btn_y + zoom_btn_h, zoom_bg, 3)
+
+  -- Fill bar (logarithmic: 0.05x..1000x, 1.0x at ~30%)
+  local log_min = math.log(0.1)
+  local log_max = math.log(20)
+  local fill_pct = (math.log(zoom_val) - log_min) / (log_max - log_min)
+  if fill_pct < 0 then fill_pct = 0 elseif fill_pct > 1 then fill_pct = 1 end
+  local fill_w = fill_pct * (zoom_btn_w - 2)
+  if fill_w > 0 then
+    local fill_color = color_with_alpha(config.COLOR_WAVEFORM, 0x99)
+    reaper.ImGui_DrawList_AddRectFilled(draw_list, zoom_btn_x + 1, zoom_btn_y + 1,
+        zoom_btn_x + 1 + fill_w, zoom_btn_y + zoom_btn_h - 1, fill_color, 2)
+  end
+
+  -- Text label
+  local zoom_label
+  if zoom_val >= 100 then
+    zoom_label = string.format("%.0fx", zoom_val)
+  elseif zoom_val >= 10 then
+    zoom_label = string.format("%.1fx", zoom_val)
+  else
+    zoom_label = string.format("%.2fx", zoom_val)
+  end
+  local zoom_text_w, zoom_text_h = reaper.ImGui_CalcTextSize(ctx, zoom_label)
+  local zoom_text_x = zoom_btn_x + math.floor((zoom_btn_w - zoom_text_w) / 2)
+  local zoom_text_y = zoom_btn_y + math.floor((zoom_btn_h - zoom_text_h) / 2)
+  local zoom_text_color = mouse_in_zoom and config.COLOR_BTN_TEXT or 0xDDDDDDFF
+  reaper.ImGui_DrawList_AddText(draw_list, zoom_text_x, zoom_text_y, zoom_text_color, zoom_label)
+
+  -- Tooltip
+  if mouse_in_zoom and state and not state.wf_zoom_dragging then
+    local tip = "Waveform zoom (Ctrl+Shift+Wheel)\nDrag up/down to adjust, double-click to reset"
+    if #state.wf_zoom_history > 0 then
+      tip = tip .. "\nRight-click to undo"
+    end
+    drawing.tooltip(ctx, "wf_zoom", tip)
+  end
+
+  -- Interaction: double-click resets, right-click undoes, click starts vertical drag
+  if state and mouse_in_zoom then
+    if reaper.ImGui_IsMouseDoubleClicked(ctx, 0) then
+      table.insert(state.wf_zoom_history, state.waveform_zoom)
+      state.waveform_zoom = 1.0
+      state.wf_zoom_dragging = false
+    elseif reaper.ImGui_IsMouseClicked(ctx, 1) then
+      -- Undo: pop previous zoom from history
+      local n = #state.wf_zoom_history
+      if n > 0 then
+        state.waveform_zoom = state.wf_zoom_history[n]
+        state.wf_zoom_history[n] = nil
+      end
+    elseif reaper.ImGui_IsMouseClicked(ctx, 0) and not reaper.ImGui_IsMouseDoubleClicked(ctx, 0) then
+      state.wf_zoom_dragging = true
+      state.wf_zoom_drag_start_y = mouse_y
+      state.wf_zoom_drag_start_val = state.waveform_zoom
+    end
+  end
+
   -- Custom toolbar buttons (centered horizontally in the info bar)
   -- Clicked index stored on state.toolbar_clicked to avoid local limit in caller
   if state then state.toolbar_clicked = nil end
   local toolbar_left_edge = x  -- will be updated if buttons are drawn
-  local toolbar_right_edge = (has_cues and cue_btn_x or gear_btn_x) - 6
+  local toolbar_right_edge = zoom_btn_x - 6
 
   if toolbar_buttons and #toolbar_buttons > 0 then
     local tb_btn_h = 30
@@ -692,13 +769,18 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
     -- First pass: measure total width and store per-button metrics
     local total_w = 0
     local btn_metrics = {}  -- {x, w} per button (filled in pass 2)
+    local sep_w = 20  -- separator: 1.5px line + ~9px padding each side
     for i = 1, #toolbar_buttons do
       local btn = toolbar_buttons[i]
-      local has_icon = btn.icon and btn.icon ~= "" and (get_toolbar_icon(ctx, btn.icon)) or false
-      if has_icon then
-        total_w = total_w + tb_btn_h  -- square for icon buttons
+      if btn.type == "separator" then
+        total_w = total_w + sep_w
       else
-        total_w = total_w + reaper.ImGui_CalcTextSize(ctx, btn.label) + 12
+        local has_icon = btn.icon and btn.icon ~= "" and (get_toolbar_icon(ctx, btn.icon)) or false
+        if has_icon then
+          total_w = total_w + tb_btn_h  -- square for icon buttons
+        else
+          total_w = total_w + reaper.ImGui_CalcTextSize(ctx, btn.label) + 12
+        end
       end
       if i < #toolbar_buttons then total_w = total_w + gap end
     end
@@ -709,72 +791,100 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
     -- Second pass: draw buttons left-to-right from centered position
     for i = 1, #toolbar_buttons do
       local btn = toolbar_buttons[i]
-      local icon_img, icon_uv_u1
-      if btn.icon and btn.icon ~= "" then
-        icon_img, icon_uv_u1 = get_toolbar_icon(ctx, btn.icon)
-      end
-      local btn_w
-      if icon_img then
-        btn_w = tb_btn_h  -- square
+
+      if btn.type == "separator" then
+        -- Draw vertical separator line
+        local btn_w = sep_w
+        btn_metrics[i] = {x = tb_x, w = btn_w}
+        local is_dragging = state.tb_drag_active and state.tb_drag_idx == i
+        local sep_col = is_dragging and 0x66666659 or 0x777777FF
+        local sep_x = tb_x + math.floor(btn_w / 2)
+        local sep_pad = 5
+        reaper.ImGui_DrawList_AddLine(draw_list, sep_x, tb_btn_y + sep_pad, sep_x, tb_btn_y + tb_btn_h - sep_pad, sep_col, 1.5)
+
+        -- Hit area for drag/right-click (wider than visual for easier interaction)
+        local hit_pad = 4
+        local mouse_in = mouse_x >= tb_x - hit_pad and mouse_x <= tb_x + btn_w + hit_pad
+                         and mouse_y >= tb_btn_y and mouse_y <= tb_btn_y + tb_btn_h
+
+        if mouse_in and reaper.ImGui_IsMouseClicked(ctx, 0) then
+          state.tb_drag_idx = i
+          state.tb_drag_start_x = mouse_x
+          state.tb_drag_active = false
+        end
+
+        if mouse_in and reaper.ImGui_IsMouseClicked(ctx, 1) then
+          state.tb_ctx_idx = i
+          state.tb_ctx_open = true
+          state.tb_ctx_x = mouse_x
+          state.tb_ctx_y = mouse_y
+          state.tb_bar_y = y
+        end
+
+        if i == 1 then toolbar_left_edge = tb_x end
+        tb_x = tb_x + btn_w + gap
       else
-        btn_w = reaper.ImGui_CalcTextSize(ctx, btn.label) + 12
-      end
-      btn_metrics[i] = {x = tb_x, w = btn_w}
-
-      local is_dragging = state.tb_drag_active and state.tb_drag_idx == i
-      local mouse_in = mouse_x >= tb_x and mouse_x <= tb_x + btn_w
-                       and mouse_y >= tb_btn_y and mouse_y <= tb_btn_y + tb_btn_h
-
-      -- Draw button (dimmed if being dragged)
-      local alpha = is_dragging and 0.35 or 1.0
-      if icon_img then
-        -- Icon IS the button: no container, draw icon at full size
-        if mouse_in and not state.tb_drag_active then
-          reaper.ImGui_DrawList_AddRectFilled(draw_list, tb_x, tb_btn_y, tb_x + btn_w, tb_btn_y + tb_btn_h, 0xFFFFFF20, 3)
+        -- Regular button
+        local icon_img, icon_uv_u1
+        if btn.icon and btn.icon ~= "" then
+          icon_img, icon_uv_u1 = get_toolbar_icon(ctx, btn.icon)
         end
-        local tint = is_dragging and 0xFFFFFF59 or 0xFFFFFFFF
-        local draw_ok = pcall(reaper.ImGui_DrawList_AddImage, draw_list, icon_img, tb_x, tb_btn_y, tb_x + btn_w, tb_btn_y + tb_btn_h, 0, 0, icon_uv_u1, 1, tint)
-        if not draw_ok then
-          toolbar_icon_cache[btn.icon] = false
-          icon_img = nil
+        local btn_w
+        if icon_img then
+          btn_w = tb_btn_h  -- square
+        else
+          btn_w = reaper.ImGui_CalcTextSize(ctx, btn.label) + 12
         end
-      end
-      if not icon_img then
-        -- Text button with container
-        local bg = (mouse_in and not state.tb_drag_active) and config.COLOR_BTN_HOVER or config.COLOR_GRID_BAR
-        if is_dragging then bg = 0x40404059 end
-        reaper.ImGui_DrawList_AddRectFilled(draw_list, tb_x, tb_btn_y, tb_x + btn_w, tb_btn_y + tb_btn_h, bg, 3)
-        local btn_text_w = reaper.ImGui_CalcTextSize(ctx, btn.label)
-        local text_color = mouse_in and config.COLOR_BTN_TEXT or config.COLOR_INFO_BAR_TEXT
-        if is_dragging then text_color = 0xBBBBBB59 end
-        reaper.ImGui_DrawList_AddText(draw_list, tb_x + (btn_w - btn_text_w) / 2,
-            tb_btn_y + (tb_btn_h - 12) / 2, text_color, btn.label)
-      end
+        btn_metrics[i] = {x = tb_x, w = btn_w}
 
-      if mouse_in and not state.tb_drag_active and not reaper.ImGui_IsPopupOpen(ctx, "", reaper.ImGui_PopupFlags_AnyPopup()) then
-        drawing.tooltip(ctx, "tb_" .. i, btn.label)
+        local is_dragging = state.tb_drag_active and state.tb_drag_idx == i
+        local mouse_in = mouse_x >= tb_x and mouse_x <= tb_x + btn_w
+                         and mouse_y >= tb_btn_y and mouse_y <= tb_btn_y + tb_btn_h
+
+        -- Draw button (dimmed if being dragged)
+        if icon_img then
+          if mouse_in and not state.tb_drag_active then
+            reaper.ImGui_DrawList_AddRectFilled(draw_list, tb_x, tb_btn_y, tb_x + btn_w, tb_btn_y + tb_btn_h, 0xFFFFFF20, 3)
+          end
+          local tint = is_dragging and 0xFFFFFF59 or 0xFFFFFFFF
+          local draw_ok = pcall(reaper.ImGui_DrawList_AddImage, draw_list, icon_img, tb_x, tb_btn_y, tb_x + btn_w, tb_btn_y + tb_btn_h, 0, 0, icon_uv_u1, 1, tint)
+          if not draw_ok then
+            toolbar_icon_cache[btn.icon] = false
+            icon_img = nil
+          end
+        end
+        if not icon_img then
+          local bg = (mouse_in and not state.tb_drag_active) and config.COLOR_BTN_HOVER or config.COLOR_GRID_BAR
+          if is_dragging then bg = 0x40404059 end
+          reaper.ImGui_DrawList_AddRectFilled(draw_list, tb_x, tb_btn_y, tb_x + btn_w, tb_btn_y + tb_btn_h, bg, 3)
+          local btn_text_w = reaper.ImGui_CalcTextSize(ctx, btn.label)
+          local text_color = mouse_in and config.COLOR_BTN_TEXT or config.COLOR_INFO_BAR_TEXT
+          if is_dragging then text_color = 0xBBBBBB59 end
+          reaper.ImGui_DrawList_AddText(draw_list, tb_x + (btn_w - btn_text_w) / 2,
+              tb_btn_y + (tb_btn_h - 12) / 2, text_color, btn.label)
+        end
+
+        if mouse_in and not state.tb_drag_active and not reaper.ImGui_IsPopupOpen(ctx, "", reaper.ImGui_PopupFlags_AnyPopup()) then
+          drawing.tooltip(ctx, "tb_" .. i, btn.label)
+        end
+
+        if mouse_in and reaper.ImGui_IsMouseClicked(ctx, 0) then
+          state.tb_drag_idx = i
+          state.tb_drag_start_x = mouse_x
+          state.tb_drag_active = false
+        end
+
+        if mouse_in and reaper.ImGui_IsMouseClicked(ctx, 1) then
+          state.tb_ctx_idx = i
+          state.tb_ctx_open = true
+          state.tb_ctx_x = mouse_x
+          state.tb_ctx_y = mouse_y
+          state.tb_bar_y = y
+        end
+
+        if i == 1 then toolbar_left_edge = tb_x end
+        tb_x = tb_x + btn_w + gap
       end
-
-      -- Left-click: start potential drag
-      if mouse_in and reaper.ImGui_IsMouseClicked(ctx, 0) then
-        state.tb_drag_idx = i
-        state.tb_drag_start_x = mouse_x
-        state.tb_drag_active = false  -- not active until threshold met
-      end
-
-      -- Right-click: context menu
-      if mouse_in and reaper.ImGui_IsMouseClicked(ctx, 1) then
-        state.tb_ctx_idx = i
-        state.tb_ctx_open = true
-        state.tb_ctx_x = mouse_x
-        state.tb_ctx_y = mouse_y
-        state.tb_bar_y = y
-      end
-
-      -- Track left edge for text clipping
-      if i == 1 then toolbar_left_edge = tb_x end
-
-      tb_x = tb_x + btn_w + gap
     end
     -- Track right edge for text clipping
     toolbar_right_edge = tb_x - gap
@@ -821,8 +931,11 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
           settings.move_toolbar_button(from, to)
         end
       elseif not state.tb_drag_active then
-        -- Was a click, not a drag: trigger the action
-        state.toolbar_clicked = state.tb_drag_idx
+        -- Was a click, not a drag: trigger the action (skip separators)
+        local clicked_btn = toolbar_buttons[state.tb_drag_idx]
+        if clicked_btn and clicked_btn.type ~= "separator" then
+          state.toolbar_clicked = state.tb_drag_idx
+        end
       end
       state.tb_drag_idx = nil
       state.tb_drag_start_x = nil
@@ -993,7 +1106,7 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   if state and not state.tb_ctx_open and reaper.ImGui_IsMouseClicked(ctx, 1) then
     local in_bar = mouse_x >= x and mouse_x <= x + width
                    and mouse_y >= y and mouse_y <= y + height
-    if in_bar and not mouse_in_gear and not mouse_over_filename and not mouse_in_mute then
+    if in_bar and not mouse_in_gear and not mouse_over_filename and not mouse_in_mute and not mouse_in_zoom then
       state.tb_ctx_idx = nil  -- nil = empty area
       state.tb_ctx_open = true
       state.tb_ctx_x = mouse_x
@@ -1128,45 +1241,54 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
     local btns = settings.current.toolbar_buttons or {}
 
     if idx and idx >= 1 and idx <= #btns then
-      -- Right-clicked on an existing button
       local btn = btns[idx]
 
-      if reaper.ImGui_MenuItem(ctx, "Edit...") then
-        state.tb_edit_idx = idx
-        state.tb_edit_label = btn.label
-        state.tb_edit_cmd = btn.cmd
-        state.tb_edit_icon = btn.icon
-        state.tb_edit_auto_label = nil
-        state.tb_edit_open = true
-        -- Look up real action name from command ID
-        local action_name = ""
-        if btn.cmd and btn.cmd ~= "" then
-          local cache = get_action_cache()
-          for _, entry in ipairs(cache) do
-            if entry.cmd == btn.cmd then
-              action_name = entry.name
-              break
+      if btn.type == "separator" then
+        -- Right-clicked on a separator
+        if reaper.ImGui_MenuItem(ctx, "Remove Separator") then
+          settings.remove_toolbar_button(idx)
+        end
+        reaper.ImGui_Separator(ctx)
+      else
+        -- Right-clicked on a button
+        if reaper.ImGui_MenuItem(ctx, "Edit...") then
+          state.tb_edit_idx = idx
+          state.tb_edit_label = btn.label
+          state.tb_edit_cmd = btn.cmd
+          state.tb_edit_icon = btn.icon
+          state.tb_edit_auto_label = nil
+          state.tb_edit_open = true
+          local action_name = ""
+          if btn.cmd and btn.cmd ~= "" then
+            local cache = get_action_cache()
+            for _, entry in ipairs(cache) do
+              if entry.cmd == btn.cmd then
+                action_name = entry.name
+                break
+              end
             end
           end
+          action_search_text = action_name
+          action_search_results = {}
+          action_search_sel_idx = 0
+          action_search_confirmed = action_name
         end
-        action_search_text = action_name
-        action_search_results = {}
-        action_search_sel_idx = 0
-        action_search_confirmed = action_name
+
+        reaper.ImGui_Separator(ctx)
+
+        if reaper.ImGui_MenuItem(ctx, "Remove") then
+          settings.remove_toolbar_button(idx)
+        end
+
+        reaper.ImGui_Separator(ctx)
       end
-
-      reaper.ImGui_Separator(ctx)
-
-      if reaper.ImGui_MenuItem(ctx, "Remove") then
-        settings.remove_toolbar_button(idx)
-      end
-
-      reaper.ImGui_Separator(ctx)
     end
 
-    -- Always show "Add" at the bottom (both for button right-click and empty area)
-    if reaper.ImGui_MenuItem(ctx, "Add Toolbar Button...") then
-      state.tb_edit_idx = nil  -- nil = new button
+    -- Always show "Add" options at the bottom
+    -- idx is the right-clicked item (or nil for empty area): insert after it
+    if reaper.ImGui_MenuItem(ctx, "Add Button...") then
+      state.tb_edit_idx = nil
+      state.tb_edit_insert_after = idx  -- insert after right-clicked item
       state.tb_edit_label = ""
       state.tb_edit_cmd = ""
       state.tb_edit_icon = nil
@@ -1176,6 +1298,10 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
       action_search_results = {}
       action_search_sel_idx = 0
       action_search_confirmed = ""
+    end
+
+    if reaper.ImGui_MenuItem(ctx, "Add Separator") then
+      settings.add_toolbar_separator(idx)
     end
 
     reaper.ImGui_EndPopup(ctx)
@@ -1483,7 +1609,7 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
         btns2[state.tb_edit_idx].icon = state.tb_edit_icon
         settings.save_toolbar()
       else
-        settings.add_toolbar_button(state.tb_edit_label, state.tb_edit_cmd, state.tb_edit_icon)
+        settings.add_toolbar_button(state.tb_edit_label, state.tb_edit_cmd, state.tb_edit_icon, state.tb_edit_insert_after)
       end
       reaper.ImGui_CloseCurrentPopup(ctx)
     end
@@ -1662,7 +1788,8 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
       and wf_cache.width == width
       and wf_cache.height == height
       and wf_cache.x == x
-      and wf_cache.y == y then
+      and wf_cache.y == y
+      and wf_cache.waveform_zoom == (config.waveform_zoom or 1) then
     -- Cache hit: reuse Phase 1+2 results
     col_tops = wf_cache.col_tops
     col_bots = wf_cache.col_bots
@@ -1710,7 +1837,7 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
           local v = peak_maxs[flat_idx] or 0
           local raw = v * visual_gain
           if raw > 1 then raw = 1 elseif raw < -1 then raw = -1 end
-          local extent = power_curve(math.abs(raw)) * half_height
+          local extent = power_curve(math.abs(raw)) * half_height * (config.waveform_zoom or 1)
           col_tops[ch][i] = center_y - extent
           col_bots[ch][i] = center_y + extent
         else
@@ -1725,8 +1852,9 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
           local raw = v_abs * visual_gain
           if raw > 1 then raw = 1 end
           local scaled = power_curve(raw)
-          local top_y = center_y - scaled * half_height
-          local bot_y = center_y + scaled * half_height
+          local wf_zoom = config.waveform_zoom or 1
+          local top_y = center_y - scaled * half_height * wf_zoom
+          local bot_y = center_y + scaled * half_height * wf_zoom
           if bot_y - top_y < 1 then
             top_y = center_y - 0.5
             bot_y = center_y + 0.5
@@ -1774,6 +1902,7 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
     wf_cache.segments = segments
     wf_cache.n_segs = n_segs
     wf_cache.is_waveform_mode = is_waveform_mode
+    wf_cache.waveform_zoom = config.waveform_zoom or 1
   end
 
   -- Phase 3: Render (always runs — ImGui immediate mode requires redrawing every frame)

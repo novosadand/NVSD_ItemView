@@ -1093,10 +1093,12 @@ function controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_left then
     if take then
       if not has_fx then
-        -- No FX: open take FX chain first (so browser targets this take), then open browser
-        reaper.TakeFX_Show(take, 0, 1)  -- Show FX chain for take (index 0, showFlag 1 = chain)
-        if reaper.GetToggleCommandState(40271) ~= 1 then
-          reaper.Main_OnCommand(40271, 0)
+        -- No FX: open take FX chain (same as clicking item's FX button)
+        local fx_item = reaper.GetMediaItemTake_Item(take)
+        if fx_item then
+          reaper.SetMediaItemSelected(fx_item, true)
+          reaper.SetActiveTake(take)
+          reaper.Main_OnCommand(40638, 0)  -- Item: Show FX chain for item take
         end
       else
         -- Has FX: toggle bypass on all
@@ -1162,9 +1164,12 @@ function controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
           reaper.TakeFX_Show(take, 0, 1)  -- show chain
         end
       else
-        -- No FX: open/focus FX Browser (only open if closed, never close)
-        if reaper.GetToggleCommandState(40271) ~= 1 then
-          reaper.Main_OnCommand(40271, 0)
+        -- No FX: open take FX chain (same as clicking item's FX button)
+        local fx_item = reaper.GetMediaItemTake_Item(take)
+        if fx_item then
+          reaper.SetMediaItemSelected(fx_item, true)
+          reaper.SetActiveTake(take)
+          reaper.Main_OnCommand(40638, 0)  -- Item: Show FX chain for item take
         end
       end
     end

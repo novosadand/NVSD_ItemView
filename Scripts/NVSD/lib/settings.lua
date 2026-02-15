@@ -996,56 +996,146 @@ end
 
 -- Load toolbar buttons from ExtState
 function settings.load_toolbar()
-  local count = tonumber(reaper.GetExtState(EXT_SECTION, "toolbar_count")) or 0
   settings.current.toolbar_buttons = {}
-  for i = 1, count do
-    local label = reaper.GetExtState(EXT_SECTION, "toolbar_" .. i .. "_label")
-    local cmd = reaper.GetExtState(EXT_SECTION, "toolbar_" .. i .. "_cmd")
-    local icon = reaper.GetExtState(EXT_SECTION, "toolbar_" .. i .. "_icon")
-    if label ~= "" and cmd ~= "" then
-      settings.current.toolbar_buttons[#settings.current.toolbar_buttons + 1] = {
-        label = label, cmd = cmd, icon = icon ~= "" and icon or nil
-      }
+  -- New format: single serialized key
+  local data = reaper.GetExtState(EXT_SECTION, "toolbar_data")
+  if data ~= "" then
+    for line in data:gmatch("[^\n]+") do
+      if line == "S" then
+        settings.current.toolbar_buttons[#settings.current.toolbar_buttons + 1] = {type = "separator"}
+      elseif line:sub(1, 2) == "B\t" then
+        local fields = {}
+        for f in (line:sub(3) .. "\t"):gmatch("(.-)\t") do fields[#fields + 1] = f end
+        local label = fields[1] or ""
+        local cmd = fields[2] or ""
+        local icon = fields[3]
+        if label ~= "" and cmd ~= "" then
+          settings.current.toolbar_buttons[#settings.current.toolbar_buttons + 1] = {
+            label = label, cmd = cmd, icon = (icon and icon ~= "") and icon or nil
+          }
+        end
+      end
+    end
+    return
+  end
+  -- Legacy format: per-item keys (migrate on first save)
+  local count = tonumber(reaper.GetExtState(EXT_SECTION, "toolbar_count")) or 0
+  if count > 0 then
+    for i = 1, count do
+      local item_type = reaper.GetExtState(EXT_SECTION, "toolbar_" .. i .. "_type")
+      if item_type == "separator" then
+        settings.current.toolbar_buttons[#settings.current.toolbar_buttons + 1] = {type = "separator"}
+      else
+        local label = reaper.GetExtState(EXT_SECTION, "toolbar_" .. i .. "_label")
+        local cmd = reaper.GetExtState(EXT_SECTION, "toolbar_" .. i .. "_cmd")
+        local icon = reaper.GetExtState(EXT_SECTION, "toolbar_" .. i .. "_icon")
+        if label ~= "" and cmd ~= "" then
+          settings.current.toolbar_buttons[#settings.current.toolbar_buttons + 1] = {
+            label = label, cmd = cmd, icon = (icon and icon ~= "") and icon or nil
+          }
+        end
+      end
+    end
+    -- Migrate: save in new format and clean up old keys
+    settings.save_toolbar()
+    reaper.DeleteExtState(EXT_SECTION, "toolbar_count", true)
+    for i = 1, count + 5 do
+      reaper.DeleteExtState(EXT_SECTION, "toolbar_" .. i .. "_label", true)
+      reaper.DeleteExtState(EXT_SECTION, "toolbar_" .. i .. "_cmd", true)
+      reaper.DeleteExtState(EXT_SECTION, "toolbar_" .. i .. "_icon", true)
+      reaper.DeleteExtState(EXT_SECTION, "toolbar_" .. i .. "_type", true)
     end
   end
 end
 
--- Save toolbar buttons to ExtState
+-- Save toolbar to a single ExtState key (tab-delimited, one item per line)
 function settings.save_toolbar()
   local btns = settings.current.toolbar_buttons or {}
-  reaper.SetExtState(EXT_SECTION, "toolbar_count", tostring(#btns), true)
+  local lines = {}
   for i, btn in ipairs(btns) do
-    reaper.SetExtState(EXT_SECTION, "toolbar_" .. i .. "_label", btn.label, true)
-    reaper.SetExtState(EXT_SECTION, "toolbar_" .. i .. "_cmd", btn.cmd, true)
-    reaper.SetExtState(EXT_SECTION, "toolbar_" .. i .. "_icon", btn.icon or "", true)
+    if btn.type == "separator" then
+      lines[i] = "S"
+    else
+      lines[i] = "B\t" .. (btn.label or "") .. "\t" .. (btn.cmd or "") .. "\t" .. (btn.icon or "")
+    end
   end
-  -- Clean up stale entries beyond current count
-  local j = #btns + 1
-  while true do
-    local old = reaper.GetExtState(EXT_SECTION, "toolbar_" .. j .. "_label")
-    if old == "" then break end
-    reaper.DeleteExtState(EXT_SECTION, "toolbar_" .. j .. "_label", true)
-    reaper.DeleteExtState(EXT_SECTION, "toolbar_" .. j .. "_cmd", true)
-    reaper.DeleteExtState(EXT_SECTION, "toolbar_" .. j .. "_icon", true)
-    j = j + 1
-  end
+  reaper.SetExtState(EXT_SECTION, "toolbar_data", table.concat(lines, "\n"), true)
 end
 
--- Add a toolbar button
-function settings.add_toolbar_button(label, cmd, icon)
+-- Toolbar undo/redo stack
+local tb_undo_stack = {}
+local tb_redo_stack = {}
+local TB_UNDO_MAX = 30
+
+local function tb_deep_copy(btns)
+  local copy = {}
+  for i, btn in ipairs(btns) do
+    copy[i] = {type = btn.type, label = btn.label, cmd = btn.cmd, icon = btn.icon}
+  end
+  return copy
+end
+
+local function tb_push_undo()
+  tb_undo_stack[#tb_undo_stack + 1] = tb_deep_copy(settings.current.toolbar_buttons)
+  if #tb_undo_stack > TB_UNDO_MAX then table.remove(tb_undo_stack, 1) end
+  tb_redo_stack = {}
+end
+
+function settings.toolbar_undo()
+  if #tb_undo_stack == 0 then return false end
+  tb_redo_stack[#tb_redo_stack + 1] = tb_deep_copy(settings.current.toolbar_buttons)
+  settings.current.toolbar_buttons = table.remove(tb_undo_stack)
+  settings.save_toolbar()
+  return true
+end
+
+function settings.toolbar_redo()
+  if #tb_redo_stack == 0 then return false end
+  tb_undo_stack[#tb_undo_stack + 1] = tb_deep_copy(settings.current.toolbar_buttons)
+  settings.current.toolbar_buttons = table.remove(tb_redo_stack)
+  settings.save_toolbar()
+  return true
+end
+
+function settings.toolbar_can_undo() return #tb_undo_stack > 0 end
+function settings.toolbar_can_redo() return #tb_redo_stack > 0 end
+
+-- Add a toolbar button (after_idx: insert after this index, nil = append)
+function settings.add_toolbar_button(label, cmd, icon, after_idx)
+  tb_push_undo()
   local btns = settings.current.toolbar_buttons
-  btns[#btns + 1] = {label = label, cmd = cmd, icon = icon or nil}
+  local entry = {label = label, cmd = cmd, icon = icon or nil}
+  if after_idx and after_idx >= 1 and after_idx <= #btns then
+    table.insert(btns, after_idx + 1, entry)
+  else
+    btns[#btns + 1] = entry
+  end
+  settings.save_toolbar()
+end
+
+-- Add a toolbar separator (after_idx: insert after this index, nil = append)
+function settings.add_toolbar_separator(after_idx)
+  tb_push_undo()
+  local btns = settings.current.toolbar_buttons
+  local entry = {type = "separator"}
+  if after_idx and after_idx >= 1 and after_idx <= #btns then
+    table.insert(btns, after_idx + 1, entry)
+  else
+    btns[#btns + 1] = entry
+  end
   settings.save_toolbar()
 end
 
 -- Remove a toolbar button by index
 function settings.remove_toolbar_button(index)
+  tb_push_undo()
   table.remove(settings.current.toolbar_buttons, index)
   settings.save_toolbar()
 end
 
 -- Move a toolbar button from one index to another
 function settings.move_toolbar_button(from, to)
+  tb_push_undo()
   local btns = settings.current.toolbar_buttons
   if from < 1 or from > #btns or to < 1 or to > #btns then return end
   local btn = table.remove(btns, from)

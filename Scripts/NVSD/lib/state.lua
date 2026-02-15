@@ -77,6 +77,12 @@ state.last_panned_item = nil
 
 -- Zoom state
 state.zoom_level = 1.0
+state.waveform_zoom = 1.0  -- Vertical waveform zoom (display-only, per session)
+state.wf_zoom_per_item = {}  -- Per-item zoom memory (item pointer → zoom value)
+state.wf_zoom_history = {}  -- Undo stack for zoom values
+state.wf_zoom_dragging = false  -- Zoom widget click-drag active
+state.wf_zoom_drag_start_y = 0  -- Mouse Y at drag start
+state.wf_zoom_drag_start_val = 1.0  -- Zoom value at drag start
 state.is_ruler_dragging = false
 state.ruler_drag_start_y = 0
 state.ruler_drag_start_zoom = 1.0
@@ -354,6 +360,7 @@ function state.reset_all_drags()
   state.slope_drag_start_slope = 0
   state.slope_hovered_segment = -1
   state.slope_hovered_endpoint = 0
+  state.wf_zoom_dragging = false
 end
 
 -- Stop any active audio preview (CF_Preview or REAPER transport)
@@ -382,6 +389,7 @@ function state.any_drag_active()
       or state.pitch_gutter_dragging
       or state.dragging_warp_marker
       or state.slope_dragging
+      or state.wf_zoom_dragging
       or state.is_any_control_dragging()
 end
 

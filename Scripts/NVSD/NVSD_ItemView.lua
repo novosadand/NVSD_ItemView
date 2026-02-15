@@ -246,6 +246,7 @@ local function loop()
       state.was_mouse_down = false
       state.invalidate_view_peaks()
       drawing.clear_icon_cache()
+      settings_ui.clear_icon_cache()
       -- Stop audio preview on dialog recovery
       state.stop_preview()
       state.preview_start_requested = false
@@ -361,7 +362,19 @@ local function loop()
 
     -- Forward undo/redo to REAPER (universal, not configurable)
     if reaper_is_active and not text_input_active and not settings.listening and ctrl_held then
-      if reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Z()) then
+      if reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Z()) and not shift_held
+          and #state.wf_zoom_history > 0 then
+        -- Undo waveform zoom first (before passing to REAPER)
+        local n = #state.wf_zoom_history
+        state.waveform_zoom = state.wf_zoom_history[n]
+        state.wf_zoom_history[n] = nil
+      elseif reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Z()) and not shift_held
+          and settings.toolbar_can_undo() then
+        settings.toolbar_undo()
+      elseif reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Y())
+          and settings.toolbar_can_redo() then
+        settings.toolbar_redo()
+      elseif reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Z()) then
         reaper.Main_OnCommand(shift_held and 40030 or 40029, 0)  -- Shift: Redo, else Undo
       elseif reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Y()) then
         reaper.Main_OnCommand(40030, 0)  -- Redo
@@ -509,6 +522,12 @@ local function loop()
     -- Skip when REAPER is unfocused to prevent spurious resets.
     if reaper_is_active and selected_item ~= state.last_selected_item then
       if selected_item then
+        -- Save current item's waveform zoom, load new item's zoom
+        if state.last_selected_item then
+          state.wf_zoom_per_item[state.last_selected_item] = state.waveform_zoom
+        end
+        state.waveform_zoom = state.wf_zoom_per_item[selected_item] or 1.0
+        state.wf_zoom_history = {}
         -- Switched to a different item: clear sticky, preview, region, auto-switch envelopes
         state.sticky_item = nil
         state.sticky_item_valid = false
@@ -1541,7 +1560,7 @@ local function loop()
             grid_playrate = 1
             grid_view_start = view_start
           else
-            grid_offset = (state.dragging_start or state.dragging_end) and state.drag_start_offset or start_offset
+            grid_offset = (state.dragging_start or state.dragging_end) and state.drag_current_start or start_offset
             grid_playrate = (state.dragging_start or state.dragging_end) and state.drag_start_playrate or playrate
             grid_view_start = (state.dragging_start or state.dragging_end) and state.drag_start_view_start or view_start
           end
@@ -1573,6 +1592,7 @@ local function loop()
             state.wf_bounds_start = nil
             state.wf_bounds_end = nil
           end
+          config.waveform_zoom = state.waveform_zoom
           local start_px, end_px = drawing.draw_waveform(draw_list, wave_x, wave_y,
             waveform_width, waveform_height,
             state.view_peaks, view_offset, view_item_length, wf_source_len, view_start, view_length, ruler_y, item_vol, wf_reversed, state.view_num_channels, config, pixel_step, state.wf_bounds_start, state.wf_bounds_end)
@@ -1601,6 +1621,23 @@ local function loop()
               state._tb_pending_cmd = state.toolbar_buttons[state.toolbar_clicked].cmd
             end
             state.toolbar_clicked = nil
+          end
+
+          -- Zoom widget drag handling (vertical: up = more, down = less)
+          if state.wf_zoom_dragging then
+            if reaper.ImGui_IsMouseDown(ctx, 0) then
+              local dy = state.wf_zoom_drag_start_y - mouse_y  -- negative Y = up = more zoom
+              local log_start = math.log(state.wf_zoom_drag_start_val)
+              local log_delta = dy * 0.02  -- sensitivity: ~50px per decade
+              local new_zoom = math.exp(log_start + log_delta)
+              state.waveform_zoom = math.max(0.1, math.min(20, new_zoom))
+            else
+              -- Drag released: push pre-drag value to undo history
+              if state.wf_zoom_drag_start_val ~= state.waveform_zoom then
+                table.insert(state.wf_zoom_history, state.wf_zoom_drag_start_val)
+              end
+              state.wf_zoom_dragging = false
+            end
           end
 
           -- (Envelopes tab is always available, no auto-switch needed)
@@ -1895,11 +1932,12 @@ local function loop()
 
           -- Helper: snap source time to finest visible grid subdivision
           -- snap_offset: override start_offset for snapping (use drag_start_offset during marker drags)
-          local function snap_to_grid_if_enabled(source_t, snap_offset)
+          local function snap_to_grid_if_enabled(source_t, snap_offset, item_pos_override)
             if not state.env_snap_enabled then return source_t end
 
             local offset = snap_offset or start_offset
-            local project_t = utils.source_to_project_time(source_t, item_position, offset, playrate)
+            local pos = item_pos_override or item_position
+            local project_t = utils.source_to_project_time(source_t, pos, offset, playrate)
 
             -- Compute finest visible grid subdivision (same logic as grid display)
             local bpm, bpi = reaper.GetProjectTimeSignature2(0, project_t)
@@ -1925,12 +1963,12 @@ local function loop()
             end
 
             local snapped_project_t = reaper.TimeMap2_beatsToTime(0, snapped_beat, snapped_measure)
-            return utils.project_to_source_time(snapped_project_t, item_position, offset, playrate)
+            return utils.project_to_source_time(snapped_project_t, pos, offset, playrate)
           end
 
           -- Helper: snap with both grid and source boundary, pick closest to raw position
-          local function snap_best(raw_t, src_len, threshold_time, snap_offset)
-            local grid_t = snap_to_grid_if_enabled(raw_t, snap_offset)
+          local function snap_best(raw_t, src_len, threshold_time, snap_offset, item_pos_override)
+            local grid_t = snap_to_grid_if_enabled(raw_t, snap_offset, item_pos_override)
             local boundary_t = snap_to_source_boundary(raw_t, src_len, threshold_time)
             -- If both snapped to different targets, pick the one closer to raw
             if grid_t ~= raw_t and boundary_t ~= raw_t then
@@ -2360,8 +2398,8 @@ local function loop()
               and not (state.warp_mode and state.slope_hovered_segment > 0)
 
           -- Cursor feedback (alt_held cached at top of frame)
-          -- Skip cursor changes when a popup modal is open (so popup title bar drag works)
-          if text_input_active then
+          -- Skip cursor changes when a popup/modal is open (context menus, edit modals, etc.)
+          if text_input_active or reaper.ImGui_IsPopupOpen(ctx, "", reaper.ImGui_PopupFlags_AnyPopup()) then
             -- Let ImGui handle cursor naturally for popup windows
           elseif state.dragging_warp_marker then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
@@ -2729,7 +2767,15 @@ local function loop()
           -- Ctrl+mouse wheel zoom / pitch vertical scroll
           local wheel = reaper.ImGui_GetMouseWheel(ctx)
           if wheel ~= 0 and mouse_in_view then
-            if ctrl_held then
+            if ctrl_held and shift_held then
+              -- Vertical waveform zoom (display-only)
+              table.insert(state.wf_zoom_history, state.waveform_zoom)
+              local wf_zoom_factor = 1.15
+              local new_wf_zoom = wheel > 0
+                and (state.waveform_zoom * wf_zoom_factor)
+                or (state.waveform_zoom / wf_zoom_factor)
+              state.waveform_zoom = math.max(0.1, math.min(20, new_wf_zoom))
+            elseif ctrl_held then
               local zoom_factor = 1.15
               local new_zoom = wheel > 0 and (state.zoom_level * zoom_factor) or (state.zoom_level / zoom_factor)
               zoom_to_cursor(new_zoom, mouse_x)
@@ -4938,9 +4984,9 @@ local function loop()
               local new_start
 
               if state.dragging_start then
-                new_start = snap_best(raw_start, source_length, snap_threshold_time, state.drag_start_offset)
+                new_start = snap_best(raw_start, source_length, snap_threshold_time, state.drag_start_offset, state.drag_start_item_position)
               else
-                local snapped_end = snap_best(raw_end, source_length, snap_threshold_time, state.drag_start_offset)
+                local snapped_end = snap_best(raw_end, source_length, snap_threshold_time, state.drag_start_offset, state.drag_start_item_position)
                 new_start = snapped_end - original_source_length
               end
 
@@ -5001,16 +5047,25 @@ local function loop()
               and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
             -- Use frozen view coordinates for stable drag sensitivity (prevents feedback loop
             -- where the view re-scales each frame and amplifies small mouse movements)
-            local frozen_vs = state.drag_start_view_start
             local frozen_vl = state.drag_start_view_length
+            -- Auto-scroll when mouse exceeds waveform edges during drag
+            if mouse_x < wave_x then
+              local overflow_px = wave_x - mouse_x
+              local speed = math.min(overflow_px / 40, 4)
+              state.drag_start_view_start = state.drag_start_view_start - frozen_vl * 0.015 * speed
+            elseif mouse_x > wave_x + waveform_width then
+              local overflow_px = mouse_x - (wave_x + waveform_width)
+              local speed = math.min(overflow_px / 40, 4)
+              state.drag_start_view_start = state.drag_start_view_start + frozen_vl * 0.015 * speed
+            end
+            local frozen_vs = state.drag_start_view_start
             local new_start
-            if mouse_x >= wave_x and mouse_x <= wave_x + waveform_width then
-              new_start = frozen_vs + ((mouse_x - wave_x) / waveform_width) * frozen_vl
+            if mouse_x < wave_x then
+              new_start = frozen_vs
+            elseif mouse_x > wave_x + waveform_width then
+              new_start = frozen_vs + frozen_vl
             else
-              local edge_time = mouse_x < wave_x and frozen_vs or frozen_vs + frozen_vl
-              local overflow_px = mouse_x < wave_x and (wave_x - mouse_x) or (mouse_x - wave_x - waveform_width)
-              local overflow_time = (overflow_px / waveform_width) * source_length
-              new_start = mouse_x < wave_x and (edge_time - overflow_time) or (edge_time + overflow_time)
+              new_start = frozen_vs + ((mouse_x - wave_x) / waveform_width) * frozen_vl
             end
 
             if is_warped_view and state.drag_start_warp_markers then
@@ -5019,7 +5074,8 @@ local function loop()
               new_start = math.min(new_start, state.drag_start_length - 0.01)
               -- Snap to grid in pos-time
               if state.env_snap_enabled then
-                local proj_t = item_position + new_start
+                local drag_item_pos = state.drag_start_item_position
+                local proj_t = drag_item_pos + new_start
                 local bpm, bpi = reaper.GetProjectTimeSignature2(0)
                 local beats_per_bar = math.floor(bpi)
                 if beats_per_bar < 1 then beats_per_bar = 4 end
@@ -5039,7 +5095,7 @@ local function loop()
                   snapped_measure = measure + 1
                 end
                 local snapped_proj_t = reaper.TimeMap2_beatsToTime(0, snapped_beat, snapped_measure)
-                new_start = snapped_proj_t - item_position
+                new_start = snapped_proj_t - drag_item_pos
                 new_start = math.min(new_start, state.drag_start_length - 0.01)
               end
               local delta = new_start
@@ -5073,7 +5129,7 @@ local function loop()
               reaper.UpdateArrange()
             else
               local original_source_end = state.drag_start_offset + (state.drag_start_length * state.drag_start_playrate)
-              new_start = snap_best(new_start, source_length, snap_threshold_time, state.drag_start_offset)
+              new_start = snap_best(new_start, source_length, snap_threshold_time, state.drag_start_offset, state.drag_start_item_position)
               new_start = math.min(new_start, original_source_end - 0.01)
               local new_source_length = original_source_end - new_start
               local new_item_length = new_source_length / state.drag_start_playrate
@@ -5151,16 +5207,25 @@ local function loop()
           -- Dragging end marker
           elseif state.dragging_end and state.marker_drag_activated and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
             -- Use frozen view coordinates for stable drag sensitivity
-            local frozen_vs = state.drag_start_view_start
             local frozen_vl = state.drag_start_view_length
+            -- Auto-scroll when mouse exceeds waveform edges during drag
+            if mouse_x < wave_x then
+              local overflow_px = wave_x - mouse_x
+              local speed = math.min(overflow_px / 40, 4)
+              state.drag_start_view_start = state.drag_start_view_start - frozen_vl * 0.015 * speed
+            elseif mouse_x > wave_x + waveform_width then
+              local overflow_px = mouse_x - (wave_x + waveform_width)
+              local speed = math.min(overflow_px / 40, 4)
+              state.drag_start_view_start = state.drag_start_view_start + frozen_vl * 0.015 * speed
+            end
+            local frozen_vs = state.drag_start_view_start
             local new_end
-            if mouse_x >= wave_x and mouse_x <= wave_x + waveform_width then
-              new_end = frozen_vs + ((mouse_x - wave_x) / waveform_width) * frozen_vl
+            if mouse_x < wave_x then
+              new_end = frozen_vs
+            elseif mouse_x > wave_x + waveform_width then
+              new_end = frozen_vs + frozen_vl
             else
-              local edge_time = mouse_x < wave_x and frozen_vs or frozen_vs + frozen_vl
-              local overflow_px = mouse_x < wave_x and (wave_x - mouse_x) or (mouse_x - wave_x - waveform_width)
-              local overflow_time = (overflow_px / waveform_width) * source_length
-              new_end = mouse_x < wave_x and (edge_time - overflow_time) or (edge_time + overflow_time)
+              new_end = frozen_vs + ((mouse_x - wave_x) / waveform_width) * frozen_vl
             end
 
             if is_warped_view then
@@ -5195,7 +5260,7 @@ local function loop()
               reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_end)
               reaper.UpdateArrange()
             else
-              new_end = snap_best(new_end, source_length, snap_threshold_time, state.drag_start_offset)
+              new_end = snap_best(new_end, source_length, snap_threshold_time, state.drag_start_offset, state.drag_start_item_position)
               new_end = math.max(state.drag_start_offset + 0.01 * state.drag_start_playrate, new_end)
               local new_source_length = new_end - state.drag_start_offset
               local new_item_length = new_source_length / state.drag_start_playrate
@@ -5676,6 +5741,7 @@ local function loop()
       reaper.ImGui_Attach(ctx, font)
     end
     drawing.clear_icon_cache()
+    settings_ui.clear_icon_cache()
     -- Reset all interaction state to prevent stuck drags after error
     state.dragging_start = false
     state.dragging_end = false
