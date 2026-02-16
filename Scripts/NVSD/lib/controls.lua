@@ -73,15 +73,16 @@ local function parse_name_atoms(name, use_structural)
 end
 
 -- Parse sub-mode names into flag groups for checkbox-style menu.
--- Detects format: structural (Elastique, no commas) vs comma-separated (Rubber Band).
+-- Detects format: structural (bracket suffixes like [Multi-Stereo]) vs plain comma-separated.
 -- Uses co-occurrence analysis to group mutually exclusive atoms.
 local function parse_submode_flags(sub_modes)
-  -- Format detection: if ANY non-default name contains commas, use plain comma split
-  local use_structural = true
+  -- Format detection: bracket suffixes [xyz] indicate structural format (Elastique)
+  -- Rubber Band uses pure comma-separated names without brackets
+  local use_structural = false
   for _, sm in ipairs(sub_modes) do
     local n = sm.name or ""
-    if n ~= "" and n ~= "Normal" and n ~= "Default" and n:find(",") then
-      use_structural = false
+    if n:match("%[.-%]%s*$") then
+      use_structural = true
       break
     end
   end
@@ -613,29 +614,19 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   local current_sub_name = nil
   local is_project_default = (current_mode < 0)
 
-  -- Resolve "Project default" (-1) to the actual project pitch algorithm
+  -- Resolve "Project default" (-1): pick the algorithm with the most sub-modes
   if take and current_algo_id == -1 and reaper.EnumPitchShiftSubModes then
     if not state._resolved_default_algo then
-      local resolved = -1
-      -- Try SWS extension: read project's default pitch shift config
-      if reaper.SNM_GetIntConfigVar then
-        local defcfg = reaper.SNM_GetIntConfigVar("defpitchcfg", -1)
-        if defcfg >= 0 then resolved = defcfg >> 16 end
-      end
-      -- Fallback: pick the algorithm with the most sub-modes
-      if resolved < 0 then
-        local best_id, best_count = -1, 0
-        for _, mode in ipairs(config.PITCH_MODES) do
-          if mode.value >= 0 then
-            local test_id = mode.value >> 16
-            local count = 0
-            while reaper.EnumPitchShiftSubModes(test_id, count) do count = count + 1 end
-            if count > best_count then best_count = count; best_id = test_id end
-          end
+      local best_id, best_count = -1, 0
+      for _, mode in ipairs(config.PITCH_MODES) do
+        if mode.value >= 0 then
+          local test_id = mode.value >> 16
+          local count = 0
+          while reaper.EnumPitchShiftSubModes(test_id, count) do count = count + 1 end
+          if count > best_count then best_count = count; best_id = test_id end
         end
-        resolved = best_id
       end
-      state._resolved_default_algo = resolved
+      state._resolved_default_algo = best_id
     end
     current_algo_id = state._resolved_default_algo
   end
