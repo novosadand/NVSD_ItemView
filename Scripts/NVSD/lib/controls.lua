@@ -611,21 +611,31 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   local current_algo_id = current_mode >= 0 and (current_mode >> 16) or -1
   local current_sub_idx = current_mode >= 0 and (current_mode & 0xFFFF) or 0
   local current_sub_name = nil
+  local is_project_default = (current_mode < 0)
 
-  -- Resolve "Project default" (-1) to the best available algorithm
+  -- Resolve "Project default" (-1) to the actual project pitch algorithm
   if take and current_algo_id == -1 and reaper.EnumPitchShiftSubModes then
-    -- Find the algorithm with the most sub-modes (usually Elastique 3 Pro)
     if not state._resolved_default_algo then
-      local best_id, best_count = nil, 0
-      for _, mode in ipairs(config.PITCH_MODES) do
-        if mode.value >= 0 then
-          local test_id = mode.value >> 16
-          local count = 0
-          while reaper.EnumPitchShiftSubModes(test_id, count) do count = count + 1 end
-          if count > best_count then best_count = count; best_id = test_id end
-        end
+      local resolved = -1
+      -- Try SWS extension: read project's default pitch shift config
+      if reaper.SNM_GetIntConfigVar then
+        local defcfg = reaper.SNM_GetIntConfigVar("defpitchcfg", -1)
+        if defcfg >= 0 then resolved = defcfg >> 16 end
       end
-      state._resolved_default_algo = best_id or -1
+      -- Fallback: pick the algorithm with the most sub-modes
+      if resolved < 0 then
+        local best_id, best_count = -1, 0
+        for _, mode in ipairs(config.PITCH_MODES) do
+          if mode.value >= 0 then
+            local test_id = mode.value >> 16
+            local count = 0
+            while reaper.EnumPitchShiftSubModes(test_id, count) do count = count + 1 end
+            if count > best_count then best_count = count; best_id = test_id end
+          end
+        end
+        resolved = best_id
+      end
+      state._resolved_default_algo = resolved
     end
     current_algo_id = state._resolved_default_algo
   end
@@ -721,7 +731,8 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       local mode_dd_height = dropdown_btn_height + 6
 
       -- Current mode name
-      local current_mode_atom = cache.has_default and "Default" or mode_group[1]
+      local default_label = is_project_default and "Project default" or "Default"
+      local current_mode_atom = cache.has_default and default_label or mode_group[1]
       for _, atom in ipairs(mode_group) do
         if active_atoms[atom] then
           current_mode_atom = atom
@@ -821,7 +832,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
         local mode_items = {}
         local default_offset = 0
         if cache.has_default then
-          mode_items[1] = "Default"
+          mode_items[1] = default_label
           default_offset = 1
         end
         for _, atom in ipairs(mode_group) do mode_items[#mode_items + 1] = atom end
@@ -847,7 +858,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
           end
 
           local is_default_entry = (default_offset == 1 and i == 1)
-          local is_current = (is_default_entry and current_mode_atom == "Default") or (not is_default_entry and name == current_mode_atom)
+          local is_current = (is_default_entry and current_mode_atom == default_label) or (not is_default_entry and name == current_mode_atom)
           local item_tc = is_current and config.COLOR_MARKER or config.COLOR_INFO_BAR_TEXT
           reaper.ImGui_DrawList_AddText(menu_dl, dropdown_x + 4, iy + 2, item_tc, name)
 
