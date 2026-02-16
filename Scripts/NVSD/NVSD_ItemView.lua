@@ -1729,6 +1729,56 @@ local function loop()
             drawing.draw_loop_bar(draw_list, wave_x, loop_bar_y, waveform_width, loop_bar_height,
               time_to_px(loop_start_time), time_to_px(loop_end_time),
               loop_hovered, state.loop_bar_dragging, config)
+
+            -- Click to start drag
+            if mouse_in_loop_bar and loop_hovered and not state.loop_bar_dragging
+                and reaper.ImGui_IsMouseClicked(ctx, 0) then
+              state.loop_bar_dragging = loop_hovered
+              state.loop_drag_start_x = mouse_x
+              if loop_hovered == "start" then
+                state.loop_drag_start_val = loop_start_time
+              elseif loop_hovered == "end" then
+                state.loop_drag_start_val = loop_end_time
+              elseif loop_hovered == "body" then
+                state.loop_drag_start_val = loop_start_time
+                state.loop_drag_body_end = loop_end_time
+              end
+            end
+          end
+
+          -- Loop bar drag processing
+          if state.loop_bar_dragging and item and take then
+            if reaper.ImGui_IsMouseDown(ctx, 0) then
+              local dx = mouse_x - state.loop_drag_start_x
+              local dt = (dx / waveform_width) * view_length
+              local playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
+
+              if state.loop_bar_dragging == "end" then
+                local new_end_time = math.max(state.loop_drag_start_val + dt, loop_start_time + 0.01)
+                local new_item_length = (new_end_time - start_offset) / playrate
+                reaper.SetMediaItemInfo_Value(item, "D_LENGTH", math.max(0.001, new_item_length))
+                reaper.UpdateItemInProject(item)
+              elseif state.loop_bar_dragging == "start" then
+                local new_start = math.max(0, state.loop_drag_start_val + dt)
+                new_start = math.min(new_start, loop_end_time - 0.01)
+                local offset_delta = (new_start - state.loop_drag_start_val) / playrate
+                local old_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
+                local old_len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+                reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_start - section_offset)
+                reaper.SetMediaItemInfo_Value(item, "D_POSITION", old_pos + offset_delta)
+                reaper.SetMediaItemInfo_Value(item, "D_LENGTH", math.max(0.001, old_len - offset_delta))
+                state.loop_drag_start_val = new_start
+                state.loop_drag_start_x = mouse_x
+                reaper.UpdateItemInProject(item)
+              elseif state.loop_bar_dragging == "body" then
+                local new_start = math.max(0, state.loop_drag_start_val + dt)
+                reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_start - section_offset)
+                reaper.UpdateItemInProject(item)
+              end
+            else
+              reaper.Undo_OnStateChange("NVSD_ItemView: Adjust loop region")
+              state.loop_bar_dragging = nil
+            end
           end
 
           -- Draw warp bar (only when WARP mode is active)
@@ -2445,6 +2495,14 @@ local function loop()
           -- Skip cursor changes when a popup/modal is open (context menus, edit modals, etc.)
           if text_input_active or reaper.ImGui_IsPopupOpen(ctx, "", reaper.ImGui_PopupFlags_AnyPopup()) then
             -- Let ImGui handle cursor naturally for popup windows
+          elseif state.loop_bar_dragging == "start" or state.loop_bar_dragging == "end" then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
+          elseif state.loop_bar_dragging == "body" then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
+          elseif loop_hovered == "start" or loop_hovered == "end" then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
+          elseif loop_hovered == "body" then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
           elseif state.dragging_warp_marker then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
           elseif mouse_in_warp_bar and state.warp_marker_hovered_idx > 0 then
