@@ -813,9 +813,10 @@ local function loop()
             -- During start marker drag or alt+drag (slide both), keep original markers/map frozen.
             -- REAPER markers are shifted each frame for arrange view,
             -- but view coordinates stay in original pos-time system.
-            state._freeze_warp = (state.dragging_start or state.drag_alt_latched)
+            state._freeze_warp = ((state.dragging_start or state.drag_alt_latched)
                 and state.marker_drag_activated
-                and state.drag_start_warp_markers
+                and state.drag_start_warp_markers)
+                or (state.slope_dragging and state.slope_drag_activated)
             if not state._freeze_warp then
               -- Always refresh markers (cheap read) so external changes are picked up
               state.warp_markers = utils.get_stretch_markers(take)
@@ -3608,18 +3609,20 @@ local function loop()
                 state.slope_drag_partner_srcpos = sm2.srcpos
                 state.slope_drag_slope_idx = sm1.idx
                 state.slope_drag_start_slope = cur_slope
-                -- Save all marker positions for cascading during drag
+                -- Save all marker positions for cascading during drag (keyed by srcpos string)
                 state.slope_drag_orig_markers = {}
                 local sm_total = reaper.GetTakeNumStretchMarkers(take)
                 for si = 0, sm_total - 1 do
                   local _, mpos, msrcpos = reaper.GetTakeStretchMarker(take, si)
-                  state.slope_drag_orig_markers[si] = {pos = mpos, srcpos = msrcpos}
+                  state.slope_drag_orig_markers[#state.slope_drag_orig_markers + 1] = {pos = mpos, srcpos = msrcpos}
                 end
                 -- Save view state for freeze during drag
                 state.slope_drag_start_view_start = view_start
                 state.slope_drag_start_view_length = view_length
                 state.slope_drag_start_ext_start = ext_start
                 state.slope_drag_start_ext_end = ext_end
+                state.slope_drag_start_wave_y = wave_y
+                state.slope_drag_start_waveform_height = waveform_height
                 state.slope_drag_activated = false
               end
             end
@@ -4584,23 +4587,34 @@ local function loop()
             if state.slope_drag_activated then
               local mouse_delta_y = state.slope_drag_start_mouse_y - mouse_y  -- up = positive
               local band = waveform_height * 0.5
-              if shift_held then
+              -- Look up current REAPER indices by srcpos (indices shift when positions change)
+              local slope_idx, partner_idx
+              local sm_count = reaper.GetTakeNumStretchMarkers(take)
+              for si = 0, sm_count - 1 do
+                local _, _, srcpos = reaper.GetTakeStretchMarker(take, si)
+                if math.abs(srcpos - state.slope_drag_start_srcpos) < 0.0001 then slope_idx = si end
+                if math.abs(srcpos - state.slope_drag_partner_srcpos) < 0.0001 then partner_idx = si end
+              end
+              if slope_idx and partner_idx and shift_held then
                 -- Shift+drag: pure slope change (both handles move in opposite directions)
                 local slope_dir = (state.slope_drag_endpoint == 2) and 1 or -1
                 local new_slope = state.slope_drag_start_slope + mouse_delta_y / band * slope_dir
                 new_slope = math.max(-1, math.min(1, new_slope))
-                reaper.SetTakeStretchMarkerSlope(take, state.slope_drag_slope_idx, new_slope)
+                reaper.SetTakeStretchMarkerSlope(take, slope_idx, new_slope)
                 -- Re-set marker position to force REAPER to invalidate waveform cache
-                local _, mpos, msrcpos = reaper.GetTakeStretchMarker(take, state.slope_drag_slope_idx)
-                reaper.SetTakeStretchMarker(take, state.slope_drag_slope_idx, mpos, msrcpos)
-              else
+                local _, mpos, msrcpos = reaper.GetTakeStretchMarker(take, slope_idx)
+                reaper.SetTakeStretchMarker(take, slope_idx, mpos, msrcpos)
+              elseif slope_idx and partner_idx then
                 -- Normal drag: map mouse Y to local rate, derive slope
                 -- The dragged handle stays on its line; the partner marker moves
-                local scale = waveform_height * 0.2
-                local center = wave_y + waveform_height / 2
+                -- Use frozen wave_y/waveform_height to avoid feedback oscillation
+                local frozen_wy = state.slope_drag_start_wave_y
+                local frozen_wh = state.slope_drag_start_waveform_height
+                local scale = frozen_wh * 0.2
+                local center = frozen_wy + frozen_wh / 2
                 local target_y = state.slope_drag_start_handle_y - mouse_delta_y * 0.6
                 -- Clamp target Y to waveform area (handle half-height = 6)
-                target_y = math.max(wave_y + 6, math.min(wave_y + waveform_height - 6, target_y))
+                target_y = math.max(frozen_wy + 6, math.min(frozen_wy + frozen_wh - 6, target_y))
                 -- Convert Y to local rate: y = center - log(rate) * scale
                 local target_lr = math.exp((center - target_y) / scale)
                 target_lr = math.max(0.01, target_lr)
@@ -4617,29 +4631,45 @@ local function loop()
                 -- Compute new M2 position: M1 stays fixed, M2 = M1 + src_d / avg_rate
                 local src_d = math.abs(state.slope_drag_partner_srcpos - state.slope_drag_start_srcpos)
                 local new_partner_pos = state.slope_drag_start_pos + src_d / avg_rate
-                -- Clamp: partner can't cross its neighbors
-                local sm_count = reaper.GetTakeNumStretchMarkers(take)
-                local prev_pos, next_pos = -math.huge, math.huge
-                for si = 0, sm_count - 1 do
-                  if si ~= state.slope_drag_partner_idx then
-                    local _, spos = reaper.GetTakeStretchMarker(take, si)
-                    if spos < state.slope_drag_partner_pos and spos > prev_pos then prev_pos = spos end
-                    if spos > state.slope_drag_partner_pos and spos < next_pos then next_pos = spos end
-                  end
-                end
-                new_partner_pos = math.max(prev_pos + 0.001, math.min(next_pos - 0.001, new_partner_pos))
-                reaper.SetTakeStretchMarker(take, state.slope_drag_partner_idx, new_partner_pos, state.slope_drag_partner_srcpos)
-                reaper.SetTakeStretchMarkerSlope(take, state.slope_drag_slope_idx, new_slope)
-                -- Cascade: shift all markers to the RIGHT of M2 by the same delta
-                -- so adjacent segments keep their geometry (handles don't move)
+                -- Clamp: M2 can't cross M1 (left boundary of this segment).
+                -- Right-side markers are handled by cascade (preserves ordering).
+                -- Only need to prevent M2 from going left of M1.
+                new_partner_pos = math.max(state.slope_drag_start_pos + 0.001, new_partner_pos)
+                -- Cascade FIRST: shift markers to the RIGHT of M2 so REAPER
+                -- won't clamp M2 against its next neighbor
                 local total_delta = new_partner_pos - state.slope_drag_partner_pos
-                if state.slope_drag_orig_markers then
-                  for si, orig in pairs(state.slope_drag_orig_markers) do
-                    if si ~= state.slope_drag_partner_idx and orig.pos > state.slope_drag_partner_pos then
-                      reaper.SetTakeStretchMarker(take, si, orig.pos + total_delta, orig.srcpos)
+                local sm_count2 = reaper.GetTakeNumStretchMarkers(take)
+                if state.slope_drag_orig_markers and total_delta ~= 0 then
+                  for _, orig in pairs(state.slope_drag_orig_markers) do
+                    if math.abs(orig.srcpos - state.slope_drag_partner_srcpos) > 0.0001
+                        and orig.pos > state.slope_drag_partner_pos then
+                      for si = 0, sm_count2 - 1 do
+                        local _, _, ssrcpos = reaper.GetTakeStretchMarker(take, si)
+                        if math.abs(ssrcpos - orig.srcpos) < 0.0001 then
+                          reaper.SetTakeStretchMarker(take, si, orig.pos + total_delta, orig.srcpos)
+                          break
+                        end
+                      end
                     end
                   end
                 end
+                -- Re-lookup partner_idx after cascade (indices may have shifted)
+                local partner_idx2 = partner_idx
+                sm_count2 = reaper.GetTakeNumStretchMarkers(take)
+                for si = 0, sm_count2 - 1 do
+                  local _, _, sp = reaper.GetTakeStretchMarker(take, si)
+                  if math.abs(sp - state.slope_drag_partner_srcpos) < 0.0001 then partner_idx2 = si; break end
+                end
+                -- Now set M2 position (neighbors already moved out of the way)
+                reaper.SetTakeStretchMarker(take, partner_idx2, new_partner_pos, state.slope_drag_partner_srcpos)
+                -- Set slope
+                -- Re-lookup slope_idx too (cascade may have changed indices)
+                local slope_idx2 = slope_idx
+                for si = 0, sm_count2 - 1 do
+                  local _, _, sp = reaper.GetTakeStretchMarker(take, si)
+                  if math.abs(sp - state.slope_drag_start_srcpos) < 0.0001 then slope_idx2 = si; break end
+                end
+                reaper.SetTakeStretchMarkerSlope(take, slope_idx2, new_slope)
 
               end
               reaper.UpdateItemInProject(item)

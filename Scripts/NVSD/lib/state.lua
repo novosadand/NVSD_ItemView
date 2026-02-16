@@ -185,6 +185,8 @@ state.slope_drag_start_view_start = 0   -- view start at slope drag begin
 state.slope_drag_start_view_length = 0  -- view length at slope drag begin
 state.slope_drag_start_ext_start = nil  -- ext_start at slope drag begin
 state.slope_drag_start_ext_end = nil    -- ext_end at slope drag begin
+state.slope_drag_start_wave_y = 0      -- wave_y frozen at drag begin
+state.slope_drag_start_waveform_height = 0 -- waveform_height frozen at drag begin
 
 -- Transient detection
 state.transients = {}
