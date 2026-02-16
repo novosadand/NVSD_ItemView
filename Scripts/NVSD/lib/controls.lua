@@ -502,7 +502,43 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     end
   end
 
-  return row2_y + btn_height
+  -- Third row: Loop toggle
+  local row3_y = row2_y + btn_height + 4
+  local loop_btn_width = config.LEFT_COLUMN_WIDTH - (btn_padding * 2)
+  local loop_btn_x = left_col_x + btn_padding
+
+  local is_looped = item and reaper.GetMediaItemInfo_Value(item, "B_LOOPSRC") == 1
+
+  local mouse_in_loop = mouse_x >= loop_btn_x and mouse_x <= loop_btn_x + loop_btn_width
+                        and mouse_y >= row3_y and mouse_y <= row3_y + btn_height
+
+  local loop_bg_color = is_looped and 0x3A5A3AFF
+    or mouse_in_loop and COLOR_BTN_HOVER
+    or COLOR_BTN_OFF
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, loop_btn_x, row3_y, loop_btn_x + loop_btn_width, row3_y + btn_height, loop_bg_color, 3)
+  local loop_label = is_looped and "Loop ON" or "Loop"
+  local loop_text_w = reaper.ImGui_CalcTextSize(ctx, loop_label)
+  local loop_text_x = loop_btn_x + (loop_btn_width - loop_text_w) / 2
+  local loop_text_y = row3_y + (btn_height - text_height) / 2
+  local loop_text_color = is_looped and 0x88DD88FF or COLOR_BTN_TEXT
+  reaper.ImGui_DrawList_AddText(draw_list, loop_text_x, loop_text_y, loop_text_color, loop_label)
+
+  if mouse_in_loop then
+    drawing.tooltip(ctx, "loop_btn", "Toggle loop source")
+  end
+
+  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_loop then
+    if item then
+      reaper.Undo_BeginBlock()
+      local new_val = is_looped and 0 or 1
+      reaper.SetMediaItemInfo_Value(item, "B_LOOPSRC", new_val)
+      reaper.UpdateItemInProject(item)
+      reaper.UpdateArrange()
+      reaper.Undo_EndBlock("NVSD_ItemView: Toggle loop source", -1)
+    end
+  end
+
+  return row3_y + btn_height
 end
 
 -- Draw gain slider with tick marks
