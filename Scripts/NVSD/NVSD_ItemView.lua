@@ -905,6 +905,8 @@ local function loop()
           local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
           local envelope_bar_height = config.ENVELOPE_BAR_HEIGHT
           local warp_bar_height = state.warp_mode and config.WARP_BAR_HEIGHT or 0
+          local is_loop_src = item and reaper.GetMediaItemInfo_Value(item, "B_LOOPSRC") == 1
+          local loop_bar_height = is_loop_src and config.LOOP_BAR_HEIGHT or 0
           state.toolbar_buttons = settings.current.toolbar_buttons or {}
           state.info_bar_height = #state.toolbar_buttons > 0
               and config.INFO_BAR_HEIGHT_TOOLBAR
@@ -922,8 +924,8 @@ local function loop()
             end
           end
 
-          local waveform_height = math.max(50, avail_h - (config.WAVEFORM_MARGIN_V * 2) - state.info_bar_height - config.RULER_HEIGHT - warp_bar_height - config.TIME_RULER_HEIGHT - envelope_bar_height - state.strip_h)
-          local panel_height = state.strip_h + state.info_bar_height + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height
+          local waveform_height = math.max(50, avail_h - (config.WAVEFORM_MARGIN_V * 2) - state.info_bar_height - config.RULER_HEIGHT - loop_bar_height - warp_bar_height - config.TIME_RULER_HEIGHT - envelope_bar_height - state.strip_h)
+          local panel_height = state.strip_h + state.info_bar_height + config.RULER_HEIGHT + loop_bar_height + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height
 
           local two_col_panel = panel_height < 270
           local effective_panel_width = two_col_panel
@@ -949,13 +951,14 @@ local function loop()
           local wave_x = cursor_x + total_left_width + config.WAVEFORM_MARGIN_H + pitch_gutter
           local info_bar_y = cursor_y + state.strip_h + config.WAVEFORM_MARGIN_V
           local ruler_y = info_bar_y + state.info_bar_height
-          local warp_bar_y = ruler_y + config.RULER_HEIGHT
+          local loop_bar_y = ruler_y + config.RULER_HEIGHT
+          local warp_bar_y = loop_bar_y + loop_bar_height
           local wave_y = warp_bar_y + warp_bar_height
           local time_ruler_y = wave_y + waveform_height
           local envelope_bar_y = time_ruler_y + config.TIME_RULER_HEIGHT
 
           -- Reserve the full area
-          local total_height = state.strip_h + config.WAVEFORM_MARGIN_V + state.info_bar_height + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height + config.WAVEFORM_MARGIN_V
+          local total_height = state.strip_h + config.WAVEFORM_MARGIN_V + state.info_bar_height + config.RULER_HEIGHT + loop_bar_height + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height + config.WAVEFORM_MARGIN_V
           reaper.ImGui_InvisibleButton(ctx, "waveform_area", avail_w, math.max(avail_h, total_height))
 
           local mouse_x, mouse_y = reaper.ImGui_GetMousePos(ctx)
