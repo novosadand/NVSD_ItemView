@@ -43,14 +43,8 @@ config.COLOR_WARP_MARKER_SELECTED = 0x66CCCCFF
 config.COLOR_WARP_BAR_BG = 0x1E1E1EFF
 config.COLOR_WARP_BAR_BORDER = 0x333333FF
 
--- Loop bar (Ableton-style loop region)
-config.LOOP_BAR_HEIGHT = 14
-config.COLOR_LOOP_BAR_BG = 0x1A1A1AFF
-config.COLOR_LOOP_BRACKET = 0x999999FF
-config.COLOR_LOOP_BRACKET_HOVER = 0xCCCCCCFF
-config.COLOR_LOOP_BRACKET_ACTIVE = 0xFFFFFFFF
+-- Loop boundary marker color (vertical line at source_length intervals)
 config.COLOR_LOOP_REGION = 0xFFAA3360
-config.COLOR_LOOP_CONNECTOR = 0x66666680
 
 -- Envelope editor
 config.ENVELOPE_BAR_HEIGHT = 18

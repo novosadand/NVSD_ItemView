@@ -258,89 +258,6 @@ local function loop()
     return
   end
 
-  -- Loop bar interaction helper (extracted to avoid local variable pressure in main loop)
-  local function process_loop_bar(ctx, draw_list, mouse_x, mouse_y, wave_x, waveform_width,
-                                   start_offset, source_length, section_offset, view_length,
-                                   item, take, time_to_px)
-    state.loop_hovered = nil
-    state.loop_start_time = start_offset
-    state.loop_end_time = start_offset + source_length
-    if not state.is_loop_src then return end
-
-    -- Hit detection for loop handles
-    local mouse_in_loop_bar = mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
-      and mouse_y >= state.loop_bar_y and mouse_y <= state.loop_bar_y + state.loop_bar_height
-    if mouse_in_loop_bar and not state.any_drag_active() then
-      local lp = time_to_px(state.loop_start_time)
-      local rp = time_to_px(state.loop_end_time)
-      local hit_radius = 6
-      if math.abs(mouse_x - lp) <= hit_radius then
-        state.loop_hovered = "start"
-      elseif math.abs(mouse_x - rp) <= hit_radius then
-        state.loop_hovered = "end"
-      elseif mouse_x > lp + hit_radius and mouse_x < rp - hit_radius then
-        state.loop_hovered = "body"
-      end
-    end
-    -- Override hover during active drag
-    if state.loop_bar_dragging then
-      state.loop_hovered = state.loop_bar_dragging
-    end
-    drawing.draw_loop_bar(draw_list, wave_x, state.loop_bar_y, waveform_width, state.loop_bar_height,
-      time_to_px(state.loop_start_time), time_to_px(state.loop_end_time),
-      state.loop_hovered, state.loop_bar_dragging, config)
-
-    -- Click to start drag
-    if mouse_in_loop_bar and state.loop_hovered and not state.loop_bar_dragging
-        and reaper.ImGui_IsMouseClicked(ctx, 0) then
-      state.loop_bar_dragging = state.loop_hovered
-      state.loop_drag_start_x = mouse_x
-      if state.loop_hovered == "start" then
-        state.loop_drag_start_val = state.loop_start_time
-      elseif state.loop_hovered == "end" then
-        state.loop_drag_start_val = state.loop_end_time
-      elseif state.loop_hovered == "body" then
-        state.loop_drag_start_val = state.loop_start_time
-        state.loop_drag_body_end = state.loop_end_time
-      end
-    end
-
-    -- Drag processing
-    if state.loop_bar_dragging and item and take then
-      if reaper.ImGui_IsMouseDown(ctx, 0) then
-        local dx = mouse_x - state.loop_drag_start_x
-        local dt = (dx / waveform_width) * view_length
-        local playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
-
-        if state.loop_bar_dragging == "end" then
-          local new_end_time = math.max(state.loop_drag_start_val + dt, state.loop_start_time + 0.01)
-          local new_item_length = (new_end_time - start_offset) / playrate
-          reaper.SetMediaItemInfo_Value(item, "D_LENGTH", math.max(0.001, new_item_length))
-          reaper.UpdateItemInProject(item)
-        elseif state.loop_bar_dragging == "start" then
-          local new_start = math.max(0, state.loop_drag_start_val + dt)
-          new_start = math.min(new_start, state.loop_end_time - 0.01)
-          local offset_delta = (new_start - state.loop_drag_start_val) / playrate
-          local old_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
-          local old_len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
-          reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_start - section_offset)
-          reaper.SetMediaItemInfo_Value(item, "D_POSITION", old_pos + offset_delta)
-          reaper.SetMediaItemInfo_Value(item, "D_LENGTH", math.max(0.001, old_len - offset_delta))
-          state.loop_drag_start_val = new_start
-          state.loop_drag_start_x = mouse_x
-          reaper.UpdateItemInProject(item)
-        elseif state.loop_bar_dragging == "body" then
-          local new_start = math.max(0, state.loop_drag_start_val + dt)
-          reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_start - section_offset)
-          reaper.UpdateItemInProject(item)
-        end
-      else
-        reaper.Undo_OnStateChange("NVSD_ItemView: Adjust loop region")
-        state.loop_bar_dragging = nil
-      end
-    end
-  end
-
   -- Everything below is wrapped in pcall to catch Lua-level errors.
   local open = true
   local needs_reload = false
@@ -989,7 +906,6 @@ local function loop()
           local envelope_bar_height = config.ENVELOPE_BAR_HEIGHT
           local warp_bar_height = state.warp_mode and config.WARP_BAR_HEIGHT or 0
           state.is_loop_src = item and reaper.GetMediaItemInfo_Value(item, "B_LOOPSRC") == 1
-          state.loop_bar_height = state.is_loop_src and config.LOOP_BAR_HEIGHT or 0
           state.toolbar_buttons = settings.current.toolbar_buttons or {}
           state.info_bar_height = #state.toolbar_buttons > 0
               and config.INFO_BAR_HEIGHT_TOOLBAR
@@ -1007,8 +923,8 @@ local function loop()
             end
           end
 
-          local waveform_height = math.max(50, avail_h - (config.WAVEFORM_MARGIN_V * 2) - state.info_bar_height - config.RULER_HEIGHT - state.loop_bar_height - warp_bar_height - config.TIME_RULER_HEIGHT - envelope_bar_height - state.strip_h)
-          local panel_height = state.strip_h + state.info_bar_height + config.RULER_HEIGHT + state.loop_bar_height + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height
+          local waveform_height = math.max(50, avail_h - (config.WAVEFORM_MARGIN_V * 2) - state.info_bar_height - config.RULER_HEIGHT - warp_bar_height - config.TIME_RULER_HEIGHT - envelope_bar_height - state.strip_h)
+          local panel_height = state.strip_h + state.info_bar_height + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height
 
           local two_col_panel = panel_height < 270
           local effective_panel_width = two_col_panel
@@ -1034,14 +950,13 @@ local function loop()
           local wave_x = cursor_x + total_left_width + config.WAVEFORM_MARGIN_H + pitch_gutter
           local info_bar_y = cursor_y + state.strip_h + config.WAVEFORM_MARGIN_V
           local ruler_y = info_bar_y + state.info_bar_height
-          state.loop_bar_y = ruler_y + config.RULER_HEIGHT
-          local warp_bar_y = state.loop_bar_y + state.loop_bar_height
+          local warp_bar_y = ruler_y + config.RULER_HEIGHT
           local wave_y = warp_bar_y + warp_bar_height
           local time_ruler_y = wave_y + waveform_height
           local envelope_bar_y = time_ruler_y + config.TIME_RULER_HEIGHT
 
           -- Reserve the full area
-          local total_height = state.strip_h + config.WAVEFORM_MARGIN_V + state.info_bar_height + config.RULER_HEIGHT + state.loop_bar_height + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height + config.WAVEFORM_MARGIN_V
+          local total_height = state.strip_h + config.WAVEFORM_MARGIN_V + state.info_bar_height + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height + config.WAVEFORM_MARGIN_V
           reaper.ImGui_InvisibleButton(ctx, "waveform_area", avail_w, math.max(avail_h, total_height))
 
           local mouse_x, mouse_y = reaper.ImGui_GetMousePos(ctx)
@@ -1791,10 +1706,6 @@ local function loop()
           drawing.draw_ruler_and_grid(draw_list, wave_x, ruler_y, wave_y, waveform_width, config.RULER_HEIGHT, waveform_height,
             grid_view_start, view_length, item_position, grid_offset, grid_playrate, config, utils)
 
-          -- Loop bar interaction (extracted to separate function for local variable budget)
-          process_loop_bar(ctx, draw_list, mouse_x, mouse_y, wave_x, waveform_width,
-            start_offset, source_length, section_offset, view_length, item, take, time_to_px)
-
           -- Draw warp bar (only when WARP mode is active)
           state.warp_marker_hovered_idx = -1
           state.transient_hovered_idx = -1
@@ -2509,14 +2420,6 @@ local function loop()
           -- Skip cursor changes when a popup/modal is open (context menus, edit modals, etc.)
           if text_input_active or reaper.ImGui_IsPopupOpen(ctx, "", reaper.ImGui_PopupFlags_AnyPopup()) then
             -- Let ImGui handle cursor naturally for popup windows
-          elseif state.loop_bar_dragging == "start" or state.loop_bar_dragging == "end" then
-            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
-          elseif state.loop_bar_dragging == "body" then
-            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
-          elseif state.loop_hovered == "start" or state.loop_hovered == "end" then
-            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
-          elseif state.loop_hovered == "body" then
-            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
           elseif state.dragging_warp_marker then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
           elseif mouse_in_warp_bar and state.warp_marker_hovered_idx > 0 then
