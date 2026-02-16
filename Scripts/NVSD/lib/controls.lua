@@ -36,13 +36,68 @@ local function tip_with_key(text, settings, shortcut_name)
   return text
 end
 
+-- Known algorithm sub-mode UI structure (matches REAPER's native Item Properties)
+-- structural: names use "Prefix: Core [Suffix]" format
+-- defaults: sub-mode names that represent "all off" state (skipped during atom extraction)
+-- flags: ordered list of flag groups as shown in REAPER's native dialog
+--        atoms not in any flag group become the Mode dropdown entries
+local ALGO_UI = {
+  [0] = {  -- SoundTouch
+    defaults = {Default = true},
+    flags = {},
+  },
+  [6] = {  -- Elastique 2 Pro
+    structural = true,
+    defaults = {Normal = true},
+    flags = {{"Synchronized"}, {"Mid/Side"}},
+  },
+  [7] = {  -- Elastique 2 Efficient
+    structural = true,
+    defaults = {Normal = true},
+    flags = {{"Synchronized"}, {"Mid/Side"}},
+  },
+  [8] = {  -- Elastique 2 Soloist
+    structural = true,
+    defaults = {},
+    flags = {{"Mid/Side"}},
+  },
+  [9] = {  -- Elastique 3 Pro
+    structural = true,
+    defaults = {Normal = true},
+    flags = {{"Synchronized"}, {"Mid/Side"}, {"Multi-Stereo", "Multi-Mono"}},
+  },
+  [10] = {  -- Elastique 3 Efficient
+    structural = true,
+    defaults = {Normal = true},
+    flags = {{"Synchronized"}, {"Mid/Side"}, {"Multi-Stereo", "Multi-Mono"}},
+  },
+  [11] = {  -- Elastique 3 Soloist
+    structural = true,
+    defaults = {},
+    flags = {{"Mid/Side"}},
+  },
+  [13] = {  -- Rubber Band Library
+    defaults = {Default = true, Normal = true},
+    flags = {
+      {"Preserve Formants"},
+      {"Mid/Side"},
+      {"Independent Phase"},
+      {"Time Domain Smoothing"},
+      {"Transients: Mixed", "Transients: Smooth"},
+      {"Detector: Percussive", "Detector: Soft"},
+      {"Pitch Mode: HighQ", "Pitch Mode: Consistent"},
+      {"Window: Short", "Window: Long"},
+    },
+  },
+}
+
 -- Parse a single sub-mode name into atoms.
--- use_structural=true: "Prefix: Core1, Core2 [Suffix]" format (Elastique)
--- use_structural=false: pure comma-separated "Atom1, Atom2" (Rubber Band)
-local function parse_name_atoms(name, use_structural)
+-- structural: extract "Prefix: " and " [Suffix]" before comma-splitting core
+-- skip_names: set of core names to skip (e.g. {Normal=true, Default=true})
+local function parse_name_atoms(name, structural, skip_names)
   local atoms = {}
 
-  if use_structural then
+  if structural then
     -- Extract "Prefix: " (first colon-space separator)
     local pf, rest = name:match("^([^:]+):%s(.+)$")
     if pf then
@@ -58,12 +113,12 @@ local function parse_name_atoms(name, use_structural)
     end
   end
 
-  -- Core: comma-split, skip "Normal" and "Default"
+  -- Core: comma-split, skip default names
   local core = name:match("^%s*(.-)%s*$") or ""
-  if core ~= "" and core ~= "Normal" and core ~= "Default" then
+  if core ~= "" and not (skip_names and skip_names[core]) then
     for part in core:gmatch("[^,]+") do
       local atom = part:match("^%s*(.-)%s*$")
-      if atom and atom ~= "" then
+      if atom and atom ~= "" and not (skip_names and skip_names[atom]) then
         atoms[#atoms + 1] = atom
       end
     end
@@ -72,21 +127,29 @@ local function parse_name_atoms(name, use_structural)
   return atoms
 end
 
--- Parse sub-mode names into flag groups for checkbox-style menu.
--- Detects format: structural (bracket suffixes like [Multi-Stereo]) vs plain comma-separated.
--- Uses co-occurrence analysis to group mutually exclusive atoms.
-local function parse_submode_flags(sub_modes)
-  -- Format detection: bracket suffixes [xyz] indicate structural format (Elastique)
-  -- Rubber Band uses pure comma-separated names without brackets
+-- Build sub-mode flag cache for a given algorithm.
+-- Uses ALGO_UI definitions for known algorithms, falls back to auto-detection.
+local function parse_submode_flags(sub_modes, algo_id)
+  local def = ALGO_UI[algo_id]
+
+  -- Determine format and default names
   local use_structural = false
-  for _, sm in ipairs(sub_modes) do
-    local n = sm.name or ""
-    if n:match("%[.-%]%s*$") then
-      use_structural = true
-      break
+  local skip_names = {Normal = true, Default = true}
+
+  if def then
+    use_structural = def.structural or false
+    if def.defaults then skip_names = def.defaults end
+  else
+    -- Unknown algo: detect structural from bracket suffixes
+    for _, sm in ipairs(sub_modes) do
+      if (sm.name or ""):match("%[.-%]%s*$") then
+        use_structural = true
+        break
+      end
     end
   end
 
+  -- Enumerate atoms and build flagkey_to_id
   local all_atoms = {}
   local atom_set = {}
   local submode_atoms = {}
@@ -96,11 +159,10 @@ local function parse_submode_flags(sub_modes)
     local name = sm.name or ""
     local atoms = {}
 
-    if name ~= "" and name ~= "Normal" and name ~= "Default" then
-      atoms = parse_name_atoms(name, use_structural)
+    if name ~= "" and not skip_names[name] then
+      atoms = parse_name_atoms(name, use_structural, skip_names)
     end
 
-    -- Track unique atoms in discovery order
     for _, atom in ipairs(atoms) do
       if not atom_set[atom] then
         atom_set[atom] = true
@@ -109,106 +171,130 @@ local function parse_submode_flags(sub_modes)
     end
     submode_atoms[i] = atoms
 
-    -- Build key (sorted atoms) -> sub-mode ID
     local sorted = {}
     for _, a in ipairs(atoms) do sorted[#sorted + 1] = a end
     table.sort(sorted)
     flagkey_to_id[table.concat(sorted, ",")] = sm.id
   end
 
-  -- Co-occurrence analysis: atoms that appear together are NOT mutually exclusive
-  local cooccurs = {}
-  for _, atoms in ipairs(submode_atoms) do
-    for j = 1, #atoms do
-      for k = j + 1, #atoms do
-        cooccurs[atoms[j]] = cooccurs[atoms[j]] or {}
-        cooccurs[atoms[j]][atoms[k]] = true
-        cooccurs[atoms[k]] = cooccurs[atoms[k]] or {}
-        cooccurs[atoms[k]][atoms[j]] = true
-      end
-    end
-  end
-
-  -- Union-find: group atoms that NEVER co-occur (mutually exclusive)
-  local parent = {}
-  for _, atom in ipairs(all_atoms) do parent[atom] = atom end
-
-  local function find(x)
-    while parent[x] ~= x do x = parent[x] end
-    return x
-  end
-  local function union(a, b)
-    local ra, rb = find(a), find(b)
-    if ra ~= rb then parent[ra] = rb end
-  end
-
-  for i = 1, #all_atoms do
-    for j = i + 1, #all_atoms do
-      local a, b = all_atoms[i], all_atoms[j]
-      if not (cooccurs[a] and cooccurs[a][b]) then
-        union(a, b)
-      end
-    end
-  end
-
-  -- Collect groups preserving atom discovery order
-  local group_map = {}
-  for _, atom in ipairs(all_atoms) do
-    local root = find(atom)
-    if not group_map[root] then group_map[root] = {} end
-    group_map[root][#group_map[root] + 1] = atom
-  end
-
+  -- Build groups
   local groups = {}
-  local seen_roots = {}
-  for _, atom in ipairs(all_atoms) do
-    local root = find(atom)
-    if not seen_roots[root] then
-      seen_roots[root] = true
-      groups[#groups + 1] = group_map[root]
-    end
-  end
-
-  -- Mode group detection (for algorithms with diverse mutex names like Elastique)
   local mode_group_idx = nil
-  local min_lcp_fraction = 1.0
 
-  for gi, group in ipairs(groups) do
-    if #group > 1 then
-      local lcp_len = #group[1]
-      for i = 2, #group do
-        local a, b = group[1], group[i]
-        local match_len = 0
-        for c = 1, math.min(#a, #b) do
-          if a:sub(c, c) == b:sub(c, c) then match_len = match_len + 1
-          else break end
-        end
-        lcp_len = math.min(lcp_len, match_len)
-      end
-      local min_name_len = #group[1]
-      for i = 2, #group do
-        if #group[i] < min_name_len then min_name_len = #group[i] end
-      end
-      local fraction = min_name_len > 0 and (lcp_len / min_name_len) or 1.0
-      if fraction < min_lcp_fraction then
-        min_lcp_fraction = fraction
-        mode_group_idx = gi
+  if def and def.flags then
+    -- Known algorithm: hardcoded flag groups, remaining atoms become mode group
+    local flag_atom_set = {}
+    for _, fg in ipairs(def.flags) do
+      for _, atom in ipairs(fg) do flag_atom_set[atom] = true end
+    end
+
+    -- Mode group = discovered atoms not in any hardcoded flag group
+    local mode_candidates = {}
+    for _, atom in ipairs(all_atoms) do
+      if not flag_atom_set[atom] then
+        mode_candidates[#mode_candidates + 1] = atom
       end
     end
-  end
+    if #mode_candidates > 0 then
+      groups[1] = mode_candidates
+      mode_group_idx = 1
+    end
 
-  if min_lcp_fraction > 0.3 then
-    mode_group_idx = nil
+    -- Flag groups (only atoms that actually exist in the enumeration)
+    for _, fg in ipairs(def.flags) do
+      local existing = {}
+      for _, atom in ipairs(fg) do
+        if atom_set[atom] then existing[#existing + 1] = atom end
+      end
+      if #existing > 0 then
+        groups[#groups + 1] = existing
+      end
+    end
+  else
+    -- Unknown algorithm: auto-detect with co-occurrence analysis + union-find
+    local cooccurs = {}
+    for _, atoms in ipairs(submode_atoms) do
+      for j = 1, #atoms do
+        for k = j + 1, #atoms do
+          cooccurs[atoms[j]] = cooccurs[atoms[j]] or {}
+          cooccurs[atoms[j]][atoms[k]] = true
+          cooccurs[atoms[k]] = cooccurs[atoms[k]] or {}
+          cooccurs[atoms[k]][atoms[j]] = true
+        end
+      end
+    end
+
+    local parent = {}
+    for _, atom in ipairs(all_atoms) do parent[atom] = atom end
+    local function find(x)
+      while parent[x] ~= x do x = parent[x] end
+      return x
+    end
+    local function union(a, b)
+      local ra, rb = find(a), find(b)
+      if ra ~= rb then parent[ra] = rb end
+    end
+
+    for i = 1, #all_atoms do
+      for j = i + 1, #all_atoms do
+        local a, b = all_atoms[i], all_atoms[j]
+        if not (cooccurs[a] and cooccurs[a][b]) then
+          union(a, b)
+        end
+      end
+    end
+
+    local group_map = {}
+    for _, atom in ipairs(all_atoms) do
+      local root = find(atom)
+      if not group_map[root] then group_map[root] = {} end
+      group_map[root][#group_map[root] + 1] = atom
+    end
+
+    local seen_roots = {}
+    for _, atom in ipairs(all_atoms) do
+      local root = find(atom)
+      if not seen_roots[root] then
+        seen_roots[root] = true
+        groups[#groups + 1] = group_map[root]
+      end
+    end
+
+    -- Mode group: the mutex group with most diverse names (lowest LCP fraction)
+    local min_lcp_fraction = 1.0
+    for gi, group in ipairs(groups) do
+      if #group > 1 then
+        local lcp_len = #group[1]
+        for ii = 2, #group do
+          local a, b = group[1], group[ii]
+          local match_len = 0
+          for c = 1, math.min(#a, #b) do
+            if a:sub(c, c) == b:sub(c, c) then match_len = match_len + 1
+            else break end
+          end
+          lcp_len = math.min(lcp_len, match_len)
+        end
+        local min_name_len = #group[1]
+        for ii = 2, #group do
+          if #group[ii] < min_name_len then min_name_len = #group[ii] end
+        end
+        local fraction = min_name_len > 0 and (lcp_len / min_name_len) or 1.0
+        if fraction < min_lcp_fraction then
+          min_lcp_fraction = fraction
+          mode_group_idx = gi
+        end
+      end
+    end
+    if min_lcp_fraction > 0.3 then mode_group_idx = nil end
   end
 
   -- Check if sub-mode 0 has a default/empty name
   local has_default = flagkey_to_id[""] ~= nil
   if not has_default then
-    -- Also check if sub-mode 0 is "Normal" or "Default" (skipped during atom extraction)
     for _, sm in ipairs(sub_modes) do
-      if sm.id == 0 and (sm.name == "Normal" or sm.name == "Default" or sm.name == "") then
+      if sm.id == 0 and (skip_names[sm.name or ""] or sm.name == "") then
         has_default = true
-        flagkey_to_id[""] = 0  -- ensure empty key maps to id 0
+        flagkey_to_id[""] = 0
         break
       end
     end
@@ -221,6 +307,7 @@ local function parse_submode_flags(sub_modes)
     mode_group_idx = mode_group_idx,
     has_default = has_default,
     use_structural = use_structural,
+    skip_names = skip_names,
   }
 end
 
@@ -649,12 +736,13 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
     -- Build/refresh flag cache
     if current_algo_id ~= state.warp_submode_flag_cache_algo then
-      state.warp_submode_flag_cache = parse_submode_flags(sub_modes)
+      state.warp_submode_flag_cache = parse_submode_flags(sub_modes, current_algo_id)
       state.warp_submode_flag_cache_algo = current_algo_id
       -- Debug: log parsed sub-mode structure
       local c = state.warp_submode_flag_cache
       if c then
-        reaper.ShowConsoleMsg("[SubMode] Algo=" .. current_algo_id .. " SubModes=" .. #sub_modes .. " structural=" .. tostring(c.use_structural) .. "\n")
+        local known = ALGO_UI[current_algo_id] and "known" or "auto"
+        reaper.ShowConsoleMsg("[SubMode] Algo=" .. current_algo_id .. " SubModes=" .. #sub_modes .. " " .. known .. " structural=" .. tostring(c.use_structural) .. "\n")
         -- Print first 15 raw sub-mode names to see the actual data
         for i = 1, math.min(15, #sub_modes) do
           reaper.ShowConsoleMsg("  [" .. sub_modes[i].id .. "] " .. sub_modes[i].name .. "\n")
@@ -688,8 +776,9 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
     -- Parse currently active atoms from sub-mode name
     local active_atoms = {}
-    if current_sub_name and current_sub_name ~= "" and current_sub_name ~= "Normal" and current_sub_name ~= "Default" then
-      local atoms = parse_name_atoms(current_sub_name, cache and cache.use_structural)
+    local sn = cache and cache.skip_names
+    if current_sub_name and current_sub_name ~= "" and not (sn and sn[current_sub_name]) then
+      local atoms = parse_name_atoms(current_sub_name, cache.use_structural, sn)
       for _, atom in ipairs(atoms) do active_atoms[atom] = true end
     end
 
