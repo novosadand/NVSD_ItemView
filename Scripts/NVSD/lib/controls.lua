@@ -45,7 +45,7 @@ local function parse_submode_flags(sub_modes)
 
   for i, sm in ipairs(sub_modes) do
     local atoms = {}
-    if sm.id ~= 0 and sm.name ~= "Normal" then
+    if sm.name and sm.name ~= "" and sm.name ~= "Normal" then
       for part in sm.name:gmatch("[^,]+") do
         local atom = part:match("^%s*(.-)%s*$")
         if atom and atom ~= "" then
@@ -157,11 +157,15 @@ local function parse_submode_flags(sub_modes)
     mode_group_idx = nil
   end
 
+  -- Check if an "empty" sub-mode exists (all atoms off = "Normal")
+  local has_default = flagkey_to_id[""] ~= nil
+
   return {
     groups = groups,
     flagkey_to_id = flagkey_to_id,
     all_atoms = all_atoms,
     mode_group_idx = mode_group_idx,
+    has_default = has_default,
   }
 end
 
@@ -574,6 +578,21 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     if current_algo_id ~= state.warp_submode_flag_cache_algo then
       state.warp_submode_flag_cache = parse_submode_flags(sub_modes)
       state.warp_submode_flag_cache_algo = current_algo_id
+      -- Debug: log parsed sub-mode structure
+      local c = state.warp_submode_flag_cache
+      if c then
+        reaper.ShowConsoleMsg("[SubMode] Algo=" .. current_algo_id .. " SubModes=" .. #sub_modes .. "\n")
+        for i, sm in ipairs(sub_modes) do
+          reaper.ShowConsoleMsg("  [" .. sm.id .. "] " .. sm.name .. "\n")
+        end
+        reaper.ShowConsoleMsg("  Atoms: " .. table.concat(c.all_atoms, " | ") .. "\n")
+        reaper.ShowConsoleMsg("  Groups:\n")
+        for gi, g in ipairs(c.groups) do
+          local prefix = (gi == c.mode_group_idx) and "  MODE>" or "  FLAG>"
+          reaper.ShowConsoleMsg(prefix .. " {" .. table.concat(g, ", ") .. "}\n")
+        end
+        reaper.ShowConsoleMsg("  has_default=" .. tostring(c.has_default) .. "\n")
+      end
     end
     local cache = state.warp_submode_flag_cache
 
@@ -594,7 +613,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
     -- Parse currently active atoms from sub-mode name
     local active_atoms = {}
-    if current_sub_idx ~= 0 and current_sub_name and current_sub_name ~= "Normal" then
+    if current_sub_name and current_sub_name ~= "" and current_sub_name ~= "Normal" then
       for part in current_sub_name:gmatch("[^,]+") do
         local atom = part:match("^%s*(.-)%s*$")
         if atom and atom ~= "" then active_atoms[atom] = true end
@@ -630,7 +649,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       local mode_dd_height = dropdown_btn_height + 6
 
       -- Current mode name
-      local current_mode_atom = "Default"
+      local current_mode_atom = cache.has_default and "Default" or mode_group[1]
       for _, atom in ipairs(mode_group) do
         if active_atoms[atom] then
           current_mode_atom = atom
@@ -705,12 +724,13 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
          and not state.warp_dropdown_open and not state.warp_submode_dropdown_open then
         local wheel = reaper.ImGui_GetMouseWheel(ctx)
         if wheel ~= 0 then
-          local cur_mi = 0  -- 0 = Default
+          local min_mi = cache.has_default and 0 or 1  -- 0 = Default (only if it exists)
+          local cur_mi = min_mi
           for mi, atom in ipairs(mode_group) do
             if active_atoms[atom] then cur_mi = mi; break end
           end
           local new_mi = cur_mi + (wheel > 0 and -1 or 1)
-          new_mi = math.max(0, math.min(#mode_group, new_mi))
+          new_mi = math.max(min_mi, math.min(#mode_group, new_mi))
           if new_mi ~= cur_mi then
             local new_atoms = {}
             for a, v in pairs(active_atoms) do new_atoms[a] = v end
@@ -726,7 +746,12 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
         local menu_dl = reaper.ImGui_GetForegroundDrawList(ctx)
         local mode_menu_y = mode_dd_y + dropdown_btn_height + 1
         local menu_item_height = 16
-        local mode_items = {"Default"}
+        local mode_items = {}
+        local default_offset = 0
+        if cache.has_default then
+          mode_items[1] = "Default"
+          default_offset = 1
+        end
         for _, atom in ipairs(mode_group) do mode_items[#mode_items + 1] = atom end
         local menu_height = #mode_items * menu_item_height + 4
 
@@ -749,7 +774,8 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
             reaper.ImGui_DrawList_AddRectFilled(menu_dl, dropdown_x + 1, iy, dropdown_x + mode_menu_width - 1, iy + menu_item_height, COLOR_BTN_OFF)
           end
 
-          local is_current = (i == 1 and current_mode_atom == "Default") or (i > 1 and name == current_mode_atom)
+          local is_default_entry = (default_offset == 1 and i == 1)
+          local is_current = (is_default_entry and current_mode_atom == "Default") or (not is_default_entry and name == current_mode_atom)
           local item_tc = is_current and config.COLOR_MARKER or config.COLOR_INFO_BAR_TEXT
           reaper.ImGui_DrawList_AddText(menu_dl, dropdown_x + 4, iy + 2, item_tc, name)
 
@@ -757,7 +783,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
             local new_atoms = {}
             for a, v in pairs(active_atoms) do new_atoms[a] = v end
             for _, g_atom in ipairs(mode_group) do new_atoms[g_atom] = nil end
-            if i > 1 then new_atoms[name] = true end
+            if not is_default_entry then new_atoms[name] = true end
             apply_submode(new_atoms)
             state.warp_mode_dropdown_open = false
           end
