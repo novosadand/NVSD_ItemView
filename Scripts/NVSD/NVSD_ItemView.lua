@@ -1698,6 +1698,12 @@ local function loop()
           start_px = actual_start_px
           end_px = actual_end_px
 
+          -- Draw loop boundary lines on waveform (before ruler so lines are under)
+          if is_loop_src then
+            drawing.draw_loop_boundaries(draw_list, wave_x, wave_y, waveform_width, waveform_height,
+              source_length, view_start, view_length, time_to_px, config)
+          end
+
           -- Draw ruler (ticks and labels, on top of waveform)
           drawing.draw_ruler_and_grid(draw_list, wave_x, ruler_y, wave_y, waveform_width, config.RULER_HEIGHT, waveform_height,
             grid_view_start, view_length, item_position, grid_offset, grid_playrate, config, utils)
