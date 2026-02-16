@@ -89,6 +89,14 @@ local ALGO_UI = {
       {"Window: Short", "Window: Long"},
       {"Channel Mode: Multi-stereo", "Channel Mode: Multi-mono"},
     },
+    -- Mode presets: named shortcuts for mutex flag combinations
+    -- (toggle flags like Preserve Formants are independent and preserved across presets)
+    presets = {
+      {name = "Balanced", atoms = {}},
+      {name = "Tonal-optimized", atoms = {"Transients: Smooth", "Detector: Soft", "Pitch Mode: HighQ", "Window: Long"}},
+      {name = "Transient-optimized", atoms = {"Detector: Percussive", "Window: Short"}},
+      {name = "No pre-echo reduction", atoms = {"Transients: Smooth"}},
+    },
   },
 }
 
@@ -301,6 +309,18 @@ local function parse_submode_flags(sub_modes, algo_id)
     end
   end
 
+  -- Presets and mutex atom set (for preset application)
+  local presets = def and def.presets or nil
+  local mutex_atoms = nil
+  if presets then
+    mutex_atoms = {}
+    for _, fg in ipairs(def.flags) do
+      if #fg > 1 then
+        for _, atom in ipairs(fg) do mutex_atoms[atom] = true end
+      end
+    end
+  end
+
   return {
     groups = groups,
     flagkey_to_id = flagkey_to_id,
@@ -309,6 +329,8 @@ local function parse_submode_flags(sub_modes, algo_id)
     has_default = has_default,
     use_structural = use_structural,
     skip_names = skip_names,
+    presets = presets,
+    mutex_atoms = mutex_atoms,
   }
 end
 
@@ -806,18 +828,62 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       state.warp_mode_dropdown_open = false
     end
 
-    -- ===== MODE DROPDOWN (mutually exclusive mode selection) =====
-    if mode_group and #mode_group > 0 then
+    -- ===== MODE DROPDOWN (mutually exclusive mode selection OR preset selection) =====
+    local has_mode_dropdown = (mode_group and #mode_group > 0) or (cache and cache.presets)
+    if has_mode_dropdown then
+      local use_presets = cache.presets and not (mode_group and #mode_group > 0)
       local mode_dd_y = warp_btn_y + btn_height + 4 + dropdown_height
       local mode_dd_height = dropdown_btn_height + 6
 
       -- Current mode name
       local default_label = is_project_default and "Project default" or "Default"
-      local current_mode_atom = cache.has_default and default_label or mode_group[1]
-      for _, atom in ipairs(mode_group) do
-        if active_atoms[atom] then
-          current_mode_atom = atom
-          break
+      local current_mode_atom
+
+      if use_presets then
+        -- Detect current preset from active mutex atoms
+        local active_mutex = {}
+        for atom, _ in pairs(active_atoms) do
+          if cache.mutex_atoms and cache.mutex_atoms[atom] then
+            active_mutex[atom] = true
+          end
+        end
+
+        current_mode_atom = nil
+        for _, preset in ipairs(cache.presets) do
+          -- Check if all preset atoms are active and no extra mutex atoms are active
+          local match = true
+          for _, pa in ipairs(preset.atoms) do
+            if not active_mutex[pa] then match = false; break end
+          end
+          if match then
+            -- Also check no extra mutex atoms beyond preset
+            local preset_set = {}
+            for _, pa in ipairs(preset.atoms) do preset_set[pa] = true end
+            for a, _ in pairs(active_mutex) do
+              if not preset_set[a] then match = false; break end
+            end
+          end
+          if match then
+            current_mode_atom = preset.name
+            break
+          end
+        end
+        -- Fallback: first preset if has_default, else show "Custom"
+        if not current_mode_atom then
+          current_mode_atom = "Custom"
+        end
+        -- Map "Balanced" (first preset with empty atoms) to default label
+        if current_mode_atom == cache.presets[1].name and #cache.presets[1].atoms == 0 and cache.has_default then
+          current_mode_atom = default_label
+        end
+      else
+        -- Original mode_group path
+        current_mode_atom = cache.has_default and default_label or mode_group[1]
+        for _, atom in ipairs(mode_group) do
+          if active_atoms[atom] then
+            current_mode_atom = atom
+            break
+          end
         end
       end
 
@@ -871,7 +937,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
       if mouse_in_mode_dd and dropdown_enabled and not state.warp_mode_dropdown_open
          and not state.warp_dropdown_open and not state.warp_submode_dropdown_open then
-        drawing.tooltip(ctx, "pitch_mode_sel", "Pitch shift mode")
+        drawing.tooltip(ctx, "pitch_mode_sel", use_presets and "Pitch shift preset" or "Pitch shift mode")
       end
 
       if dropdown_enabled and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_mode_dd
@@ -883,45 +949,84 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
         end
       end
 
-      -- Mouse wheel on mode button: cycle through modes
+      -- Mouse wheel on mode button: cycle through modes/presets
       if dropdown_enabled and mouse_in_mode_dd and take
          and not state.warp_dropdown_open and not state.warp_submode_dropdown_open then
         local wheel = reaper.ImGui_GetMouseWheel(ctx)
         if wheel ~= 0 then
-          local min_mi = cache.has_default and 0 or 1  -- 0 = Default (only if it exists)
-          local cur_mi = min_mi
-          for mi, atom in ipairs(mode_group) do
-            if active_atoms[atom] then cur_mi = mi; break end
-          end
-          local new_mi = cur_mi + (wheel > 0 and -1 or 1)
-          new_mi = math.max(min_mi, math.min(#mode_group, new_mi))
-          if new_mi ~= cur_mi then
-            local new_atoms = {}
-            for a, v in pairs(active_atoms) do new_atoms[a] = v end
-            for _, g_atom in ipairs(mode_group) do new_atoms[g_atom] = nil end
-            if new_mi > 0 then new_atoms[mode_group[new_mi]] = true end
-            apply_submode(new_atoms)
+          if use_presets then
+            -- Cycle through presets
+            local cur_pi = 1  -- default to first preset (Balanced)
+            for pi, preset in ipairs(cache.presets) do
+              if preset.name == current_mode_atom or
+                 (current_mode_atom == default_label and pi == 1 and #preset.atoms == 0) then
+                cur_pi = pi
+                break
+              end
+            end
+            local new_pi = cur_pi + (wheel > 0 and -1 or 1)
+            new_pi = math.max(1, math.min(#cache.presets, new_pi))
+            if new_pi ~= cur_pi then
+              local new_atoms = {}
+              for a, v in pairs(active_atoms) do new_atoms[a] = v end
+              -- Clear all mutex atoms
+              for a, _ in pairs(cache.mutex_atoms) do new_atoms[a] = nil end
+              -- Set preset atoms
+              for _, pa in ipairs(cache.presets[new_pi].atoms) do new_atoms[pa] = true end
+              apply_submode(new_atoms)
+            end
+          else
+            -- Original mode_group cycling
+            local min_mi = cache.has_default and 0 or 1
+            local cur_mi = min_mi
+            for mi, atom in ipairs(mode_group) do
+              if active_atoms[atom] then cur_mi = mi; break end
+            end
+            local new_mi = cur_mi + (wheel > 0 and -1 or 1)
+            new_mi = math.max(min_mi, math.min(#mode_group, new_mi))
+            if new_mi ~= cur_mi then
+              local new_atoms = {}
+              for a, v in pairs(active_atoms) do new_atoms[a] = v end
+              for _, g_atom in ipairs(mode_group) do new_atoms[g_atom] = nil end
+              if new_mi > 0 then new_atoms[mode_group[new_mi]] = true end
+              apply_submode(new_atoms)
+            end
           end
         end
       end
 
-      -- Mode dropdown menu (simple selection)
+      -- Mode dropdown menu
       if state.warp_mode_dropdown_open then
         local menu_dl = reaper.ImGui_GetForegroundDrawList(ctx)
         local mode_menu_y = mode_dd_y + dropdown_btn_height + 1
         local menu_item_height = 16
         local mode_items = {}
-        local default_offset = 0
-        if cache.has_default then
-          mode_items[1] = default_label
-          default_offset = 1
+
+        if use_presets then
+          -- Build items from presets
+          for pi, preset in ipairs(cache.presets) do
+            local label = preset.name
+            -- First preset with empty atoms uses default label
+            if pi == 1 and #preset.atoms == 0 and cache.has_default then
+              label = default_label
+            end
+            mode_items[#mode_items + 1] = {name = label, preset_idx = pi}
+          end
+        else
+          -- Original mode_group items
+          if cache.has_default then
+            mode_items[#mode_items + 1] = {name = default_label, is_default = true}
+          end
+          for _, atom in ipairs(mode_group) do
+            mode_items[#mode_items + 1] = {name = atom}
+          end
         end
-        for _, atom in ipairs(mode_group) do mode_items[#mode_items + 1] = atom end
+
         local menu_height = #mode_items * menu_item_height + 4
 
         local mode_max_menu_tw = 0
-        for _, name in ipairs(mode_items) do
-          local tw = reaper.ImGui_CalcTextSize(ctx, name)
+        for _, item in ipairs(mode_items) do
+          local tw = reaper.ImGui_CalcTextSize(ctx, item.name)
           if tw > mode_max_menu_tw then mode_max_menu_tw = tw end
         end
         local mode_menu_width = math.max(dropdown_width, mode_max_menu_tw + 12)
@@ -929,7 +1034,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
         reaper.ImGui_DrawList_AddRectFilled(menu_dl, dropdown_x, mode_menu_y, dropdown_x + mode_menu_width, mode_menu_y + menu_height, config.COLOR_INFO_BAR_BG, 2)
         reaper.ImGui_DrawList_AddRect(menu_dl, dropdown_x, mode_menu_y, dropdown_x + mode_menu_width, mode_menu_y + menu_height, config.COLOR_RULER_TICK, 2)
 
-        for i, name in ipairs(mode_items) do
+        for i, item in ipairs(mode_items) do
           local iy = mode_menu_y + 2 + (i - 1) * menu_item_height
           local mouse_in_item = mouse_x >= dropdown_x and mouse_x <= dropdown_x + mode_menu_width
                                 and mouse_y >= iy and mouse_y <= iy + menu_item_height
@@ -938,17 +1043,27 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
             reaper.ImGui_DrawList_AddRectFilled(menu_dl, dropdown_x + 1, iy, dropdown_x + mode_menu_width - 1, iy + menu_item_height, COLOR_BTN_OFF)
           end
 
-          local is_default_entry = (default_offset == 1 and i == 1)
-          local is_current = (is_default_entry and current_mode_atom == default_label) or (not is_default_entry and name == current_mode_atom)
+          local is_current = item.name == current_mode_atom
           local item_tc = is_current and config.COLOR_MARKER or config.COLOR_INFO_BAR_TEXT
-          reaper.ImGui_DrawList_AddText(menu_dl, dropdown_x + 4, iy + 2, item_tc, name)
+          reaper.ImGui_DrawList_AddText(menu_dl, dropdown_x + 4, iy + 2, item_tc, item.name)
 
           if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_item and take then
-            local new_atoms = {}
-            for a, v in pairs(active_atoms) do new_atoms[a] = v end
-            for _, g_atom in ipairs(mode_group) do new_atoms[g_atom] = nil end
-            if not is_default_entry then new_atoms[name] = true end
-            apply_submode(new_atoms)
+            if use_presets then
+              -- Apply preset: keep toggle flags, clear mutex, set preset atoms
+              local new_atoms = {}
+              for a, v in pairs(active_atoms) do new_atoms[a] = v end
+              for a, _ in pairs(cache.mutex_atoms) do new_atoms[a] = nil end
+              local preset = cache.presets[item.preset_idx]
+              for _, pa in ipairs(preset.atoms) do new_atoms[pa] = true end
+              apply_submode(new_atoms)
+            else
+              -- Original mode_group selection
+              local new_atoms = {}
+              for a, v in pairs(active_atoms) do new_atoms[a] = v end
+              for _, g_atom in ipairs(mode_group) do new_atoms[g_atom] = nil end
+              if not item.is_default then new_atoms[item.name] = true end
+              apply_submode(new_atoms)
+            end
             state.warp_mode_dropdown_open = false
           end
         end
