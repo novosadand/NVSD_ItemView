@@ -87,6 +87,7 @@ local ALGO_UI = {
       {"Detector: Percussive", "Detector: Soft"},
       {"Pitch Mode: HighQ", "Pitch Mode: Consistent"},
       {"Window: Short", "Window: Long"},
+      {"Channel Mode: Multi-stereo", "Channel Mode: Multi-mono"},
     },
   },
 }
