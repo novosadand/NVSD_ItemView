@@ -1502,13 +1502,14 @@ local function loop()
               or num_view_samples ~= state.view_num_samples
               or (is_warped_view and state.view_warp_hash ~= state.warp_hash)
               or (is_warped_view ~= (state.view_warped or false))
+              or (state.is_loop_src ~= state.view_loop_src)
 
           if need_reload and view_length > 0 then
             local peaks_result, num_ch
             if is_warped_view then
               peaks_result, num_ch = utils.get_peaks_for_range_warped(
                   source, view_start, view_length, num_view_samples, state.warp_map, playrate)
-            elseif is_extended_view and not is_reversed then
+            elseif is_extended_view and not is_reversed and state.is_loop_src then
               peaks_result, num_ch = utils.get_peaks_for_range_looped(source, view_start, view_length, num_view_samples, source_length)
             else
               -- For reversed display, load peaks from the mirrored source range
@@ -1525,6 +1526,7 @@ local function loop()
               state.view_num_samples = num_view_samples
               state.view_warp_hash = state.warp_hash
               state.view_warped = is_warped_view
+              state.view_loop_src = state.is_loop_src
               -- Bust waveform draw cache since peak data changed
               drawing.invalidate_wf_cache()
             end
