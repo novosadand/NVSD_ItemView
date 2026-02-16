@@ -384,6 +384,15 @@ local function loop()
       end
     end
 
+    -- Flush waveform zoom scroll gesture to undo history after 0.6s of no scrolling
+    if state.wf_zoom_scroll_anchor
+        and reaper.time_precise() - state.wf_zoom_scroll_time > 0.6 then
+      if state.wf_zoom_scroll_anchor ~= state.waveform_zoom then
+        table.insert(state.wf_zoom_history, state.wf_zoom_scroll_anchor)
+      end
+      state.wf_zoom_scroll_anchor = nil
+    end
+
     -- Zoom shortcuts
     if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "zoom_in") then
       state.zoom_level = math.min(500.0, state.zoom_level * 1.5)
@@ -531,6 +540,7 @@ local function loop()
         end
         state.waveform_zoom = state.wf_zoom_per_item[selected_item] or 1.0
         state.wf_zoom_history = {}
+        state.wf_zoom_scroll_anchor = nil
         -- Switched to a different item: clear sticky, preview, region, auto-switch envelopes
         state.sticky_item = nil
         state.sticky_item_valid = false
@@ -2844,8 +2854,11 @@ local function loop()
           local wheel = reaper.ImGui_GetMouseWheel(ctx)
           if wheel ~= 0 and mouse_in_view then
             if ctrl_held and shift_held then
-              -- Vertical waveform zoom (display-only)
-              table.insert(state.wf_zoom_history, state.waveform_zoom)
+              -- Vertical waveform zoom (display-only, debounced undo)
+              if not state.wf_zoom_scroll_anchor then
+                state.wf_zoom_scroll_anchor = state.waveform_zoom
+              end
+              state.wf_zoom_scroll_time = reaper.time_precise()
               local wf_zoom_factor = 1.15
               local new_wf_zoom = wheel > 0
                 and (state.waveform_zoom * wf_zoom_factor)
