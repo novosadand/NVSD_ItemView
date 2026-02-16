@@ -136,6 +136,7 @@ state.warp_submode_flag_cache_algo = -1   -- algo ID the cache was built for
 state.warp_submode_flag_cache = nil       -- parsed flag groups + lookup table
 state.warp_mode_dropdown_open = false     -- mode selection dropdown (mutually exclusive modes)
 state._dropdown_menu_open = false         -- any pitch dropdown menu open (blocks FX clicks)
+state._resolved_default_algo = nil        -- cached resolved algo ID for "Project default" (-1)
 state.envelope_lock = false  -- Lock envelopes in place when dragging markers
 state.warp_map = nil             -- computed warp map from build_warp_map()
 state.warp_hash = nil            -- hash for cache invalidation of warp view peaks

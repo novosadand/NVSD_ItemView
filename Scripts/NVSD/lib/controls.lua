@@ -586,6 +586,24 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   local current_sub_idx = current_mode >= 0 and (current_mode & 0xFFFF) or 0
   local current_sub_name = nil
 
+  -- Resolve "Project default" (-1) to the best available algorithm
+  if take and current_algo_id == -1 and reaper.EnumPitchShiftSubModes then
+    -- Find the algorithm with the most sub-modes (usually Elastique 3 Pro)
+    if not state._resolved_default_algo then
+      local best_id, best_count = nil, 0
+      for _, mode in ipairs(config.PITCH_MODES) do
+        if mode.value >= 0 then
+          local test_id = mode.value >> 16
+          local count = 0
+          while reaper.EnumPitchShiftSubModes(test_id, count) do count = count + 1 end
+          if count > best_count then best_count = count; best_id = test_id end
+        end
+      end
+      state._resolved_default_algo = best_id or -1
+    end
+    current_algo_id = state._resolved_default_algo
+  end
+
   if take and current_algo_id >= 0 and reaper.EnumPitchShiftSubModes then
     local idx = 0
     while true do
@@ -610,6 +628,11 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       local c = state.warp_submode_flag_cache
       if c then
         reaper.ShowConsoleMsg("[SubMode] Algo=" .. current_algo_id .. " SubModes=" .. #sub_modes .. "\n")
+        -- Print first 15 raw sub-mode names to see the actual data
+        for i = 1, math.min(15, #sub_modes) do
+          reaper.ShowConsoleMsg("  [" .. sub_modes[i].id .. "] " .. sub_modes[i].name .. "\n")
+        end
+        if #sub_modes > 15 then reaper.ShowConsoleMsg("  ... (" .. (#sub_modes - 15) .. " more)\n") end
         reaper.ShowConsoleMsg("  Atoms: " .. table.concat(c.all_atoms, " | ") .. "\n")
         reaper.ShowConsoleMsg("  Groups:\n")
         for gi, g in ipairs(c.groups) do
