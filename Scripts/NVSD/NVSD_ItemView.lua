@@ -1702,6 +1702,35 @@ local function loop()
           drawing.draw_ruler_and_grid(draw_list, wave_x, ruler_y, wave_y, waveform_width, config.RULER_HEIGHT, waveform_height,
             grid_view_start, view_length, item_position, grid_offset, grid_playrate, config, utils)
 
+          -- Draw loop bar (only when loop source is active)
+          local loop_hovered = nil
+          local loop_start_time = start_offset
+          local loop_end_time = start_offset + source_length
+          if is_loop_src then
+            -- Hit detection for loop handles
+            local mouse_in_loop_bar = mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
+              and mouse_y >= loop_bar_y and mouse_y <= loop_bar_y + loop_bar_height
+            if mouse_in_loop_bar and not state.any_drag_active() then
+              local lp = time_to_px(loop_start_time)
+              local rp = time_to_px(loop_end_time)
+              local hit_radius = 6
+              if math.abs(mouse_x - lp) <= hit_radius then
+                loop_hovered = "start"
+              elseif math.abs(mouse_x - rp) <= hit_radius then
+                loop_hovered = "end"
+              elseif mouse_x > lp + hit_radius and mouse_x < rp - hit_radius then
+                loop_hovered = "body"
+              end
+            end
+            -- Override hover during active drag
+            if state.loop_bar_dragging then
+              loop_hovered = state.loop_bar_dragging
+            end
+            drawing.draw_loop_bar(draw_list, wave_x, loop_bar_y, waveform_width, loop_bar_height,
+              time_to_px(loop_start_time), time_to_px(loop_end_time),
+              loop_hovered, state.loop_bar_dragging, config)
+          end
+
           -- Draw warp bar (only when WARP mode is active)
           state.warp_marker_hovered_idx = -1
           state.transient_hovered_idx = -1

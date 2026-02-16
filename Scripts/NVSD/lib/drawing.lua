@@ -3390,6 +3390,64 @@ function drawing.draw_warp_bar(draw_list, x, y, width, height, config)
   reaper.ImGui_DrawList_AddLine(draw_list, x, y + height, x + width, y + height, config.COLOR_WARP_BAR_BORDER, 1)
 end
 
+-- Draw loop bar with bracket handles (Ableton-style)
+function drawing.draw_loop_bar(draw_list, x, y, width, height, left_px, right_px,
+                                hovered, dragging, config)
+  -- Background
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, config.COLOR_LOOP_BAR_BG)
+
+  -- Clamp to visible area
+  local lp = math.max(x, left_px)
+  local rp = math.min(x + width, right_px)
+  if rp <= lp then return end
+
+  -- Connecting lines (top and bottom edges of loop region)
+  reaper.ImGui_DrawList_AddLine(draw_list, lp, y, rp, y, config.COLOR_LOOP_CONNECTOR, 1)
+  reaper.ImGui_DrawList_AddLine(draw_list, lp, y + height - 1, rp, y + height - 1, config.COLOR_LOOP_CONNECTOR, 1)
+
+  -- Left bracket (right-facing triangle)
+  local tri_w = 6
+  local tri_h = height - 4
+  local tri_top = y + 2
+  local left_color = (dragging == "start") and config.COLOR_LOOP_BRACKET_ACTIVE
+    or (hovered == "start") and config.COLOR_LOOP_BRACKET_HOVER
+    or config.COLOR_LOOP_BRACKET
+  reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
+    lp, tri_top,
+    lp, tri_top + tri_h,
+    lp + tri_w, tri_top + tri_h / 2,
+    left_color)
+  reaper.ImGui_DrawList_AddLine(draw_list, lp, y, lp, y + height, left_color, 1)
+
+  -- Right bracket (left-facing triangle)
+  local right_color = (dragging == "end") and config.COLOR_LOOP_BRACKET_ACTIVE
+    or (hovered == "end") and config.COLOR_LOOP_BRACKET_HOVER
+    or config.COLOR_LOOP_BRACKET
+  reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
+    rp, tri_top,
+    rp, tri_top + tri_h,
+    rp - tri_w, tri_top + tri_h / 2,
+    right_color)
+  reaper.ImGui_DrawList_AddLine(draw_list, rp, y, rp, y + height, right_color, 1)
+end
+
+-- Draw vertical loop boundary lines on the waveform
+function drawing.draw_loop_boundaries(draw_list, wave_x, wave_y, waveform_width, waveform_height,
+                                       source_length, view_start, view_length, time_to_px, config)
+  if source_length <= 0 then return end
+  local view_end = view_start + view_length
+  local first_boundary = math.ceil(view_start / source_length) * source_length
+
+  for boundary = first_boundary, view_end, source_length do
+    if boundary > view_start and boundary < view_end then
+      local px = time_to_px(boundary)
+      if px >= wave_x and px <= wave_x + waveform_width then
+        reaper.ImGui_DrawList_AddLine(draw_list, px, wave_y, px, wave_y + waveform_height, config.COLOR_LOOP_REGION, 1)
+      end
+    end
+  end
+end
+
 -- Draw a stretch marker ("house" shape: rectangle top + downward triangle bottom + vertical line through waveform)
 -- color_override: use this color instead of normal orange (for ghost preview), or nil for normal
 -- is_selected: when true, draw 1px teal outline
