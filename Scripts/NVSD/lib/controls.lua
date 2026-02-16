@@ -37,28 +37,30 @@ local function tip_with_key(text, settings, shortcut_name)
 end
 
 -- Parse a single sub-mode name into atoms.
--- Handles both structural ("Prefix: Core1, Core2 [Suffix]") and
--- plain comma-separated ("Atom1, Atom2") formats.
-local function parse_name_atoms(name)
+-- use_structural=true: "Prefix: Core1, Core2 [Suffix]" format (Elastique)
+-- use_structural=false: pure comma-separated "Atom1, Atom2" (Rubber Band)
+local function parse_name_atoms(name, use_structural)
   local atoms = {}
 
-  -- Extract "Prefix: " (first colon-space separator)
-  local pf, rest = name:match("^([^:]+):%s(.+)$")
-  if pf then
-    atoms[#atoms + 1] = pf
-    name = rest
+  if use_structural then
+    -- Extract "Prefix: " (first colon-space separator)
+    local pf, rest = name:match("^([^:]+):%s(.+)$")
+    if pf then
+      atoms[#atoms + 1] = pf
+      name = rest
+    end
+
+    -- Extract " [Suffix]" from end
+    local before, sf = name:match("^(.-)%s+%[(.-)%]%s*$")
+    if before and sf then
+      atoms[#atoms + 1] = sf
+      name = before
+    end
   end
 
-  -- Extract " [Suffix]" from end
-  local before, sf = name:match("^(.-)%s+%[(.-)%]%s*$")
-  if before and sf then
-    atoms[#atoms + 1] = sf
-    name = before
-  end
-
-  -- Core: comma-split, skip "Normal"
+  -- Core: comma-split, skip "Normal" and "Default"
   local core = name:match("^%s*(.-)%s*$") or ""
-  if core ~= "" and core ~= "Normal" then
+  if core ~= "" and core ~= "Normal" and core ~= "Default" then
     for part in core:gmatch("[^,]+") do
       local atom = part:match("^%s*(.-)%s*$")
       if atom and atom ~= "" then
@@ -71,9 +73,19 @@ local function parse_name_atoms(name)
 end
 
 -- Parse sub-mode names into flag groups for checkbox-style menu.
--- Unified parser: extracts structural prefix/suffix, comma-splits core,
--- then uses co-occurrence analysis to group mutually exclusive atoms.
+-- Detects format: structural (Elastique, no commas) vs comma-separated (Rubber Band).
+-- Uses co-occurrence analysis to group mutually exclusive atoms.
 local function parse_submode_flags(sub_modes)
+  -- Format detection: if ANY non-default name contains commas, use plain comma split
+  local use_structural = true
+  for _, sm in ipairs(sub_modes) do
+    local n = sm.name or ""
+    if n ~= "" and n ~= "Normal" and n ~= "Default" and n:find(",") then
+      use_structural = false
+      break
+    end
+  end
+
   local all_atoms = {}
   local atom_set = {}
   local submode_atoms = {}
@@ -83,8 +95,8 @@ local function parse_submode_flags(sub_modes)
     local name = sm.name or ""
     local atoms = {}
 
-    if name ~= "" and name ~= "Normal" then
-      atoms = parse_name_atoms(name)
+    if name ~= "" and name ~= "Normal" and name ~= "Default" then
+      atoms = parse_name_atoms(name, use_structural)
     end
 
     -- Track unique atoms in discovery order
@@ -188,12 +200,26 @@ local function parse_submode_flags(sub_modes)
     mode_group_idx = nil
   end
 
+  -- Check if sub-mode 0 has a default/empty name
+  local has_default = flagkey_to_id[""] ~= nil
+  if not has_default then
+    -- Also check if sub-mode 0 is "Normal" or "Default" (skipped during atom extraction)
+    for _, sm in ipairs(sub_modes) do
+      if sm.id == 0 and (sm.name == "Normal" or sm.name == "Default" or sm.name == "") then
+        has_default = true
+        flagkey_to_id[""] = 0  -- ensure empty key maps to id 0
+        break
+      end
+    end
+  end
+
   return {
     groups = groups,
     flagkey_to_id = flagkey_to_id,
     all_atoms = all_atoms,
     mode_group_idx = mode_group_idx,
-    has_default = flagkey_to_id[""] ~= nil,
+    has_default = has_default,
+    use_structural = use_structural,
   }
 end
 
@@ -627,7 +653,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       -- Debug: log parsed sub-mode structure
       local c = state.warp_submode_flag_cache
       if c then
-        reaper.ShowConsoleMsg("[SubMode] Algo=" .. current_algo_id .. " SubModes=" .. #sub_modes .. "\n")
+        reaper.ShowConsoleMsg("[SubMode] Algo=" .. current_algo_id .. " SubModes=" .. #sub_modes .. " structural=" .. tostring(c.use_structural) .. "\n")
         -- Print first 15 raw sub-mode names to see the actual data
         for i = 1, math.min(15, #sub_modes) do
           reaper.ShowConsoleMsg("  [" .. sub_modes[i].id .. "] " .. sub_modes[i].name .. "\n")
@@ -661,8 +687,8 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
     -- Parse currently active atoms from sub-mode name
     local active_atoms = {}
-    if current_sub_name and current_sub_name ~= "" and current_sub_name ~= "Normal" then
-      local atoms = parse_name_atoms(current_sub_name)
+    if current_sub_name and current_sub_name ~= "" and current_sub_name ~= "Normal" and current_sub_name ~= "Default" then
+      local atoms = parse_name_atoms(current_sub_name, cache and cache.use_structural)
       for _, atom in ipairs(atoms) do active_atoms[atom] = true end
     end
 
