@@ -36,8 +36,121 @@ local function tip_with_key(text, settings, shortcut_name)
   return text
 end
 
--- Parse sub-mode names into flag groups for checkbox-style menu
+-- Parse a single sub-mode name into atoms using structural format:
+--   "Prefix: CoreMode [Suffix]"
+-- e.g., "Synchronized: Preserve Formants (Low Pitches) [Multi-Stereo]"
+--   -> {"Synchronized", "Preserve Formants (Low Pitches)", "Multi-Stereo"}
+local function parse_name_structural(name)
+  local atoms = {}
+
+  -- Extract "Prefix: " (first colon-space separator)
+  local pf, rest = name:match("^([^:]+):%s(.+)$")
+  if pf then
+    atoms[#atoms + 1] = pf
+    name = rest
+  end
+
+  -- Extract " [Suffix]" from end
+  local before, sf = name:match("^(.-)%s+%[(.-)%]%s*$")
+  if before and sf then
+    atoms[#atoms + 1] = sf
+    name = before
+  end
+
+  -- Core (skip "Normal" = default/empty)
+  local core = name:match("^%s*(.-)%s*$") or ""
+  if core ~= "" and core ~= "Normal" then
+    atoms[#atoms + 1] = core
+  end
+
+  return atoms
+end
+
+-- Parse sub-mode names into flag groups for checkbox-style menu.
+-- Detects format automatically:
+--   Structural: "Prefix: Core [Suffix]" (Rubber Band, etc.)
+--   Comma-separated: "Atom1, Atom2" (Elastique, etc.)
 local function parse_submode_flags(sub_modes)
+  -- Detect structural format (colon-prefix or bracket-suffix)
+  local has_colon = false
+  local has_bracket = false
+  for _, sm in ipairs(sub_modes) do
+    local name = sm.name or ""
+    if name:match("^[^:]+:%s.+$") then has_colon = true end
+    if name:match("%[.-%]%s*$") then has_bracket = true end
+  end
+
+  if has_colon or has_bracket then
+    -- === STRUCTURAL PARSING ===
+    -- Parse each name into prefix, core, suffix dimensions
+    local core_set, core_list = {}, {}
+    local prefix_set, prefix_list = {}, {}
+    local suffix_set, suffix_list = {}, {}
+    local flagkey_to_id = {}
+
+    for i, sm in ipairs(sub_modes) do
+      local name = sm.name or ""
+      local prefixes, suffixes = {}, {}
+
+      -- Extract prefix
+      local pf, rest = name:match("^([^:]+):%s(.+)$")
+      if pf then
+        prefixes[1] = pf
+        name = rest
+        if not prefix_set[pf] then prefix_set[pf] = true; prefix_list[#prefix_list + 1] = pf end
+      end
+
+      -- Extract bracket suffix
+      local before, sf = name:match("^(.-)%s+%[(.-)%]%s*$")
+      if before and sf then
+        suffixes[1] = sf
+        name = before
+        if not suffix_set[sf] then suffix_set[sf] = true; suffix_list[#suffix_list + 1] = sf end
+      end
+
+      -- Core mode
+      local core = name:match("^%s*(.-)%s*$") or ""
+      if core ~= "" and core ~= "Normal" then
+        if not core_set[core] then core_set[core] = true; core_list[#core_list + 1] = core end
+      end
+
+      -- Build key from all atoms (sorted)
+      local atoms = {}
+      for _, p in ipairs(prefixes) do atoms[#atoms + 1] = p end
+      if core ~= "" and core ~= "Normal" then atoms[#atoms + 1] = core end
+      for _, s in ipairs(suffixes) do atoms[#atoms + 1] = s end
+      table.sort(atoms)
+      flagkey_to_id[table.concat(atoms, ",")] = sm.id
+    end
+
+    -- Build groups: core modes (mutex), prefix flags (toggles), suffix modes (mutex)
+    local groups = {}
+    local all_atoms = {}
+
+    if #core_list > 0 then
+      groups[#groups + 1] = core_list
+      for _, c in ipairs(core_list) do all_atoms[#all_atoms + 1] = c end
+    end
+    for _, pf in ipairs(prefix_list) do
+      groups[#groups + 1] = {pf}
+      all_atoms[#all_atoms + 1] = pf
+    end
+    if #suffix_list > 0 then
+      groups[#groups + 1] = suffix_list
+      for _, sf in ipairs(suffix_list) do all_atoms[#all_atoms + 1] = sf end
+    end
+
+    return {
+      groups = groups,
+      flagkey_to_id = flagkey_to_id,
+      all_atoms = all_atoms,
+      mode_group_idx = nil,  -- no separate mode dropdown for structural format
+      has_default = flagkey_to_id[""] ~= nil,
+      structural = true,
+    }
+  end
+
+  -- === COMMA-SEPARATED PARSING ===
   local all_atoms = {}
   local atom_set = {}
   local submode_atoms = {}
@@ -62,8 +175,7 @@ local function parse_submode_flags(sub_modes)
     local sorted = {}
     for _, a in ipairs(atoms) do sorted[#sorted + 1] = a end
     table.sort(sorted)
-    local key = table.concat(sorted, ",")
-    flagkey_to_id[key] = sm.id
+    flagkey_to_id[table.concat(sorted, ",")] = sm.id
   end
 
   -- Co-occurrence analysis: atoms that never appear together are mutually exclusive
@@ -126,17 +238,13 @@ local function parse_submode_flags(sub_modes)
 
   for gi, group in ipairs(groups) do
     if #group > 1 then
-      -- Compute longest common prefix length
       local lcp_len = #group[1]
       for i = 2, #group do
         local a, b = group[1], group[i]
         local match_len = 0
         for c = 1, math.min(#a, #b) do
-          if a:sub(c, c) == b:sub(c, c) then
-            match_len = match_len + 1
-          else
-            break
-          end
+          if a:sub(c, c) == b:sub(c, c) then match_len = match_len + 1
+          else break end
         end
         lcp_len = math.min(lcp_len, match_len)
       end
@@ -152,20 +260,17 @@ local function parse_submode_flags(sub_modes)
     end
   end
 
-  -- Only use mode group if names are sufficiently diverse
   if min_lcp_fraction > 0.3 then
     mode_group_idx = nil
   end
-
-  -- Check if an "empty" sub-mode exists (all atoms off = "Normal")
-  local has_default = flagkey_to_id[""] ~= nil
 
   return {
     groups = groups,
     flagkey_to_id = flagkey_to_id,
     all_atoms = all_atoms,
     mode_group_idx = mode_group_idx,
-    has_default = has_default,
+    has_default = flagkey_to_id[""] ~= nil,
+    structural = false,
   }
 end
 
@@ -581,10 +686,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       -- Debug: log parsed sub-mode structure
       local c = state.warp_submode_flag_cache
       if c then
-        reaper.ShowConsoleMsg("[SubMode] Algo=" .. current_algo_id .. " SubModes=" .. #sub_modes .. "\n")
-        for i, sm in ipairs(sub_modes) do
-          reaper.ShowConsoleMsg("  [" .. sm.id .. "] " .. sm.name .. "\n")
-        end
+        reaper.ShowConsoleMsg("[SubMode] Algo=" .. current_algo_id .. " structural=" .. tostring(c.structural) .. " SubModes=" .. #sub_modes .. "\n")
         reaper.ShowConsoleMsg("  Atoms: " .. table.concat(c.all_atoms, " | ") .. "\n")
         reaper.ShowConsoleMsg("  Groups:\n")
         for gi, g in ipairs(c.groups) do
@@ -614,9 +716,16 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     -- Parse currently active atoms from sub-mode name
     local active_atoms = {}
     if current_sub_name and current_sub_name ~= "" and current_sub_name ~= "Normal" then
-      for part in current_sub_name:gmatch("[^,]+") do
-        local atom = part:match("^%s*(.-)%s*$")
-        if atom and atom ~= "" then active_atoms[atom] = true end
+      if cache and cache.structural then
+        -- Structural format: "Prefix: Core [Suffix]"
+        local atoms = parse_name_structural(current_sub_name)
+        for _, atom in ipairs(atoms) do active_atoms[atom] = true end
+      else
+        -- Comma-separated format
+        for part in current_sub_name:gmatch("[^,]+") do
+          local atom = part:match("^%s*(.-)%s*$")
+          if atom and atom ~= "" then active_atoms[atom] = true end
+        end
       end
     end
 
