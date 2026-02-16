@@ -1511,6 +1511,9 @@ local function loop()
                   source, view_start, view_length, num_view_samples, state.warp_map, playrate)
             elseif is_extended_view and not is_reversed and state.is_loop_src then
               peaks_result, num_ch = utils.get_peaks_for_range_looped(source, view_start, view_length, num_view_samples, source_length)
+            elseif is_extended_view and not is_reversed then
+              -- Non-looped: clip waveform at source boundary, silence beyond
+              peaks_result, num_ch = utils.get_peaks_for_range_clipped(source, view_start, view_length, num_view_samples, source_length)
             else
               -- For reversed display, load peaks from the mirrored source range
               local peak_start = is_reversed and math.max(0, source_length - view_start - view_length) or view_start

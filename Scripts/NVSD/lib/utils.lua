@@ -236,6 +236,87 @@ function utils.get_peaks_for_range(source, start_time, duration, num_samples)
   return { mins = mins, maxs = maxs, count = actual_samples, channels = num_channels, output_mode = output_mode }, num_channels
 end
 
+-- Get peaks for a view range, clipping to source_length (non-looped items).
+-- Samples beyond source_length are zero-filled (silence).
+function utils.get_peaks_for_range_clipped(source, view_start, view_length, num_samples, source_length)
+  if not source then return nil, "no source" end
+  if source_length <= 0 then return nil, "source_length <= 0" end
+  if view_length <= 0 then return nil, "view_length <= 0" end
+  if num_samples <= 0 then return nil, "num_samples <= 0" end
+
+  local num_channels = reaper.GetMediaSourceNumChannels(source)
+  if num_channels <= 0 then return nil, "num_channels <= 0" end
+
+  local view_end = view_start + view_length
+  local time_per_sample = view_length / num_samples
+
+  -- How many samples fall within the source range?
+  local valid_end = math.min(view_end, source_length)
+  local valid_start = math.max(view_start, 0)
+  if valid_start >= valid_end then
+    -- Entire view is outside source: return all zeros
+    local zeros = {}
+    for i = 1, num_samples * num_channels do zeros[i] = 0 end
+    return { mins = zeros, maxs = zeros, count = num_samples, channels = num_channels, output_mode = 0 }, num_channels
+  end
+
+  -- Compute sample indices for the valid portion
+  local first_valid = math.floor((valid_start - view_start) / time_per_sample) + 1
+  local last_valid = math.min(num_samples, math.ceil((valid_end - view_start) / time_per_sample))
+  local valid_samples = last_valid - first_valid + 1
+
+  if valid_samples <= 0 then
+    local zeros = {}
+    for i = 1, num_samples * num_channels do zeros[i] = 0 end
+    return { mins = zeros, maxs = zeros, count = num_samples, channels = num_channels, output_mode = 0 }, num_channels
+  end
+
+  -- Load peaks only for the valid source portion
+  local valid_duration = valid_samples * time_per_sample
+  local peakrate = valid_samples / valid_duration
+  local buf_size = valid_samples * num_channels * 2
+  local buf = reaper.new_array(buf_size)
+  if not buf then return nil, "failed to allocate peak buffer" end
+
+  local ret = reaper.PCM_Source_GetPeaks(source, peakrate, valid_start, num_channels, valid_samples, 0, buf)
+  if ret == 0 then return nil, "GetPeaks returned 0" end
+
+  local actual = math.min(ret & 0xFFFFF, valid_samples)
+  local output_mode = (ret >> 20) & 0xF
+
+  -- Build full-size output with zeros for out-of-range samples
+  local mins = {}
+  local maxs = {}
+  local total = num_samples * num_channels
+  for i = 1, total do mins[i] = 0; maxs[i] = 0 end
+
+  -- Copy valid peaks into the right position
+  local min_block_offset = actual * num_channels
+  if num_channels == 1 then
+    for i = 1, actual do
+      local out_i = first_valid + i - 1
+      if out_i <= num_samples then
+        mins[out_i] = buf[min_block_offset + i] or 0
+        maxs[out_i] = buf[i] or 0
+      end
+    end
+  else
+    for i = 1, actual do
+      local out_i = first_valid + i - 1
+      if out_i <= num_samples then
+        local buf_base = (i - 1) * num_channels + 1
+        local out_base = (out_i - 1) * num_channels
+        for ch = 1, num_channels do
+          maxs[out_base + ch] = buf[buf_base + ch - 1] or 0
+          mins[out_base + ch] = buf[min_block_offset + buf_base + ch - 1] or 0
+        end
+      end
+    end
+  end
+
+  return { mins = mins, maxs = maxs, count = num_samples, channels = num_channels, output_mode = output_mode }, num_channels
+end
+
 -- Get peaks for a view range that may extend beyond [0, source_length] (looped items).
 -- Splits the range into segments at source boundary crossings, loads each from the
 -- wrapped source position, and assembles one contiguous peaks array.
