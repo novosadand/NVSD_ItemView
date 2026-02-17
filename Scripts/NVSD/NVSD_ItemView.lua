@@ -724,6 +724,21 @@ local function loop()
           utils.reverse_item(item, state)
         end
 
+        -- Clear pitch/speed (Shift+C)
+        if settings.check_shortcut(ctx, "clear") then
+          reaper.Undo_BeginBlock()
+          local cur_pr = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
+          local cur_len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+          local orig_len = cur_len * cur_pr
+          reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", 0)
+          reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", 1.0)
+          reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 0)
+          reaper.SetMediaItemInfo_Value(item, "D_LENGTH", orig_len)
+          utils.clamp_fades_to_length(item, orig_len)
+          reaper.UpdateArrange()
+          reaper.Undo_EndBlock("NVSD_ItemView: Clear pitch/speed", -1)
+        end
+
         -- Open in external editor (or Item Properties if no editor configured)
         if settings.check_shortcut(ctx, "open_editor") then
           utils.open_editor(item, controls.has_external_editor)
