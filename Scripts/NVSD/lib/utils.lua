@@ -539,29 +539,55 @@ function utils.warp_src_to_pos(warp_map, srcpos, playrate)
 end
 
 -- Load peaks with warp mapping applied (pos-space view into source-space peaks)
-function utils.get_peaks_for_range_warped(source, pos_start, pos_length, num_samples, warp_map, playrate)
+function utils.get_peaks_for_range_warped(source, pos_start, pos_length, num_samples, warp_map, playrate, loop_src_len, actual_src_len)
   if not source or pos_length <= 0 or num_samples < 1 then return nil end
+
+  local is_looped = loop_src_len and loop_src_len > 0
+  -- Use caller-provided source length (cached/validated) to avoid REAPER's
+  -- GetMediaSourceLength returning inflated values for looped sources.
+  local source_length = is_looped and loop_src_len
+      or actual_src_len
+      or reaper.GetMediaSourceLength(source)
 
   -- Compute source-time positions for each pixel boundary
   local src_positions = {}
   for i = 0, num_samples do
     local pos = pos_start + i * (pos_length / num_samples)
-    src_positions[i] = utils.warp_pos_to_src(warp_map, pos, playrate)
+    local src = utils.warp_pos_to_src(warp_map, pos, playrate)
+    -- Wrap looped source positions into [0, source_length)
+    if is_looped and src >= loop_src_len then
+      src = src % loop_src_len
+    elseif is_looped and src < 0 then
+      src = src % loop_src_len
+      if src < 0 then src = src + loop_src_len end
+    end
+    src_positions[i] = src
   end
 
-  -- Find the source-time range needed
-  local src_min = math.huge
-  local src_max = -math.huge
-  for i = 0, num_samples do
-    if src_positions[i] < src_min then src_min = src_positions[i] end
-    if src_positions[i] > src_max then src_max = src_positions[i] end
-  end
+  -- For looped sources: load the FULL source range (wrapping means any position is valid)
+  local src_min, src_max, src_duration
 
-  -- Clamp to source bounds
-  local source_length = reaper.GetMediaSourceLength(source)
-  src_min = math.max(0, src_min)
-  src_max = math.min(source_length, src_max)
-  local src_duration = src_max - src_min
+  if is_looped then
+    src_min = 0
+    src_max = source_length
+    src_duration = source_length
+  else
+    -- Only include positions within [0, source_length] for peak loading.
+    -- Pixels mapping outside this range will output silence.
+    src_min = math.huge
+    src_max = -math.huge
+    for i = 0, num_samples do
+      local s = src_positions[i]
+      if s >= 0 and s <= source_length then
+        if s < src_min then src_min = s end
+        if s > src_max then src_max = s end
+      end
+    end
+    if src_min == math.huge then src_min = 0; src_max = 0 end
+    src_min = math.max(0, src_min)
+    src_max = math.min(source_length, src_max)
+    src_duration = src_max - src_min
+  end
   if src_duration <= 0.0001 then return nil end
 
   -- Load source peaks at resolution proportional to the stretch ratio.
@@ -582,8 +608,20 @@ function utils.get_peaks_for_range_warped(source, pos_start, pos_length, num_sam
   local maxs = {}
 
   for i = 0, num_samples - 1 do
-    local src0 = math.max(src_min, math.min(src_max, src_positions[i]))
-    local src1 = math.max(src_min, math.min(src_max, src_positions[i + 1]))
+    -- Non-looped: pixels mapping outside [0, source_length] are silence
+    local raw0 = src_positions[i]
+    local raw1 = src_positions[i + 1]
+    local out_of_range = not is_looped
+        and ((raw0 < 0 and raw1 < 0) or (raw0 > source_length and raw1 > source_length))
+
+    local src0 = math.max(src_min, math.min(src_max, raw0))
+    local src1 = math.max(src_min, math.min(src_max, raw1))
+
+    -- For looped items, pixel spans that cross the loop boundary:
+    -- just use the single-sample at each boundary (avoids scanning the entire buffer)
+    if is_looped and math.abs(src1 - src0) > source_length * 0.5 then
+      src1 = src0
+    end
 
     -- Map to peak buffer indices (0-based)
     local idx0 = math.floor((src0 - src_min) / src_duration * (src_count - 1) + 0.5)
@@ -593,17 +631,23 @@ function utils.get_peaks_for_range_warped(source, pos_start, pos_length, num_sam
     if idx0 > idx1 then idx0, idx1 = idx1, idx0 end
 
     for ch = 1, num_ch do
-      local ch_min = math.huge
-      local ch_max = -math.huge
-      for j = idx0, idx1 do
-        local flat_idx = j * num_ch + ch
-        local pmin = src_peaks.mins[flat_idx]
-        local pmax = src_peaks.maxs[flat_idx]
-        if pmin and pmin < ch_min then ch_min = pmin end
-        if pmax and pmax > ch_max then ch_max = pmax end
+      local ch_min, ch_max
+      if out_of_range then
+        ch_min = 0
+        ch_max = 0
+      else
+        ch_min = math.huge
+        ch_max = -math.huge
+        for j = idx0, idx1 do
+          local flat_idx = j * num_ch + ch
+          local pmin = src_peaks.mins[flat_idx]
+          local pmax = src_peaks.maxs[flat_idx]
+          if pmin and pmin < ch_min then ch_min = pmin end
+          if pmax and pmax > ch_max then ch_max = pmax end
+        end
+        if ch_min == math.huge then ch_min = 0 end
+        if ch_max == -math.huge then ch_max = 0 end
       end
-      if ch_min == math.huge then ch_min = 0 end
-      if ch_max == -math.huge then ch_max = 0 end
       local flat_out = i * num_ch + ch
       mins[flat_out] = ch_min
       maxs[flat_out] = ch_max

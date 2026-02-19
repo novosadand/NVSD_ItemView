@@ -802,6 +802,24 @@ local function loop()
           end
           if source_length <= 0 then source_length = 0.001 end  -- Prevent division by zero
 
+          -- Guard against REAPER's GetMediaSourceLength returning inflated values
+          -- for looped/section sources.  The real file length never changes for a
+          -- given source object, but the API can sporadically return a larger value
+          -- (typically matching the looped item length).  Cache the minimum value
+          -- ever seen per source -- this converges to the true file length.
+          if source ~= state._src_len_source then
+            state._src_len_cache = nil
+            state._src_len_source = source
+          end
+          if state._src_len_cache then
+            if source_length < state._src_len_cache - 0.001 then
+              state._src_len_cache = source_length
+            end
+            source_length = state._src_len_cache
+          else
+            state._src_len_cache = source_length
+          end
+
           -- Cache WAV cue markers (re-enumerate when source changes)
           if source ~= state.cached_cue_source then
             state.cached_cue_source = source
@@ -983,8 +1001,13 @@ local function loop()
               and mouse_y >= warp_bar_y and mouse_y <= warp_bar_y + warp_bar_height
           local source_item_length = item_length * playrate
 
-          -- Detect looped item and track start_offset wrapping
-          local is_looped_item = source_item_length > source_length and source_length > 0
+          -- Detect looped item and track start_offset wrapping.
+          -- Two cases: (1) item physically longer than source, or
+          -- (2) loop on + start_offset causes playback to wrap past source end.
+          local is_looped_item = source_length > 0 and (
+              source_item_length > source_length
+              or (state.is_loop_src and start_offset + source_item_length > source_length + 0.01)
+          )
 
           -- Warped view: when WARP mode is active, switch to item-time (pos) coordinates
           local is_warped_view = state.warp_mode and state.warp_map ~= nil
@@ -1092,36 +1115,19 @@ local function loop()
             ext_end = state.slope_drag_start_ext_end
             ext_length = ext_end - ext_start
           elseif is_warped_view then
-            -- In warped view, the axis is item-time (pos-space).
-            -- Map full source extent into pos-time so the user can zoom out
-            -- to see the entire source audio, with start/end markers showing the crop.
-            local src_pos_start, src_pos_end
-            if (state.dragging_start or state.dragging_end)
-                and state.drag_start_src_pos_start then
-              -- Use saved positions for stable coordinates during drag
-              src_pos_start = state.drag_start_src_pos_start
-              src_pos_end = state.drag_start_src_pos_end
-            else
-              src_pos_start = utils.warp_src_to_pos(state.warp_map, 0, playrate)
-              src_pos_end = utils.warp_src_to_pos(state.warp_map, source_length, playrate)
-            end
-            -- During marker drag, include the dragged range (already in pos-time)
+            -- In warped view (pos-time), always show [0, item_length] to match
+            -- REAPER's item display. The source-extent mapping used in non-warped
+            -- mode doesn't translate well to pos-time: when the item has a large
+            -- take offset, warp_src_to_pos(0) can map to wildly negative values,
+            -- compressing the actual item content into a tiny sliver.
+            -- During marker drag, expand to include the dragged region so the
+            -- user can see/adjust the crop beyond the current item edges.
             if (state.dragging_start or state.dragging_end) and state.drag_current_start then
-              ext_start = math.min(src_pos_start, state.drag_current_start)
-              ext_end = math.max(src_pos_end, state.drag_current_end)
+              ext_start = math.min(0, state.drag_current_start)
+              ext_end = math.max(item_length, state.drag_current_end)
             else
-              -- Only include source extent and item range (not markers outside item edges)
-              ext_start = math.min(src_pos_start, 0)
-              ext_end = math.max(src_pos_end, item_length)
-            end
-            -- Ensure ext covers at least the full source duration (in pos-time),
-            -- mirroring non-warp mode where ext = [0, source_length].
-            -- This gives zoom/pan the same freedom in both modes.
-            local source_pos_len = source_length / playrate
-            if (ext_end - ext_start) < source_pos_len then
-              local center = (ext_start + ext_end) / 2
-              ext_start = math.min(ext_start, center - source_pos_len / 2)
-              ext_end = math.max(ext_end, center + source_pos_len / 2)
+              ext_start = 0
+              ext_end = item_length
             end
             ext_length = ext_end - ext_start
           elseif (state.dragging_start or state.dragging_end) then
@@ -1523,7 +1529,8 @@ local function loop()
             local peaks_result, num_ch
             if is_warped_view then
               peaks_result, num_ch = utils.get_peaks_for_range_warped(
-                  source, view_start, view_length, num_view_samples, state.warp_map, playrate)
+                  source, view_start, view_length, num_view_samples, state.warp_map, playrate,
+                  state.is_loop_src and source_length or nil, source_length)
             elseif is_extended_view and not is_reversed and state.is_loop_src then
               peaks_result, num_ch = utils.get_peaks_for_range_looped(source, view_start, view_length, num_view_samples, source_length)
             elseif is_extended_view and not is_reversed then
@@ -2061,8 +2068,8 @@ local function loop()
 
             -- Draw envelope overlay on waveform
             local env_colors = config.ENV_COLORS[state.envelope_type] or config.ENV_COLORS.Volume
-            local env_anchor_end = is_looped_item and ext_end or source_length
-            local env_anchor_start = is_looped_item and ext_start or nil
+            local env_anchor_end = (is_warped_view and state.is_loop_src or is_looped_item) and ext_end or source_length
+            local env_anchor_start = (is_warped_view and state.is_loop_src or is_looped_item) and ext_start or nil
             local pitch_view_min = is_pitch and (-24 + state.pitch_view_offset) or nil
             local pitch_view_max = is_pitch and (24 + state.pitch_view_offset) or nil
             drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_env_points,
@@ -5344,15 +5351,14 @@ local function loop()
                 end
               end
 
-              -- Adjust D_POSITION so the right edge stays fixed (item extends/contracts from left)
+              -- Keep item left edge fixed, only adjust where sound starts within the item
               local source_delta = new_start - state.drag_start_offset
               local pos_delta = source_delta / state.drag_start_playrate
-              reaper.SetMediaItemInfo_Value(item, "D_POSITION", state.drag_start_item_position + pos_delta)
               reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
               reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_item_length)
               reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
               reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
-              -- Shift stretch markers so audio mapping is preserved (pure trim, no warping)
+              -- Shift stretch markers to match the new start offset
               if state.drag_start_stretch_markers then
                 local sm_count = reaper.GetTakeNumStretchMarkers(take)
                 for si = sm_count - 1, 0, -1 do
