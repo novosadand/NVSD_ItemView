@@ -726,6 +726,36 @@ local function loop()
           end
           if source_length <= 0 then source_length = 0.001 end  -- Prevent division by zero
 
+          -- Guard against REAPER's GetMediaSourceLength returning inflated values
+          -- for looped/section sources.  The real file length never changes for a
+          -- given source object, but the API can sporadically return a larger value
+          -- (typically matching the looped item length).  Cache the value per source
+          -- and only accept increases that look like genuine source changes (not
+          -- the inflated looped-item-length glitch).
+          local take_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
+          if take_playrate == 0 then take_playrate = 1 end
+          if source ~= state._src_len_source then
+            state._src_len_cache = nil
+            state._src_len_source = source
+          end
+          if state._src_len_cache then
+            if source_length < state._src_len_cache - 0.001 then
+              -- API returned a smaller value: always accept (could be correcting
+              -- an inflated initial read, or source genuinely changed).
+              state._src_len_cache = source_length
+            elseif source_length > state._src_len_cache + 0.001 then
+              -- API returned a larger value: accept unless it suspiciously matches
+              -- the looped item length (the known REAPER API glitch).
+              local looped_length = item_length * take_playrate
+              if math.abs(source_length - looped_length) > 0.01 then
+                state._src_len_cache = source_length
+              end
+            end
+            source_length = state._src_len_cache
+          else
+            state._src_len_cache = source_length
+          end
+
           -- Cache WAV cue markers (re-enumerate when source changes)
           if source ~= state.cached_cue_source then
             state.cached_cue_source = source
@@ -1698,6 +1728,19 @@ local function loop()
                 -- Verified working: teleport cursor and track from lock position.
                 reaper.JS_Mouse_SetPosition(state.drag_lock_screen_x, state.drag_lock_screen_y)
                 state.drag_last_screen_y = state.drag_lock_screen_y
+                -- Runtime check: if cumulative delta stays at 0 for several frames
+                -- while actively dragging, the teleport is eating mouse events (macOS).
+                -- The verify test passes on Mac (teleport position matches) but
+                -- CGWarpMouseCursorPosition suppresses all subsequent mouse deltas.
+                if state.drag_cumulative_delta_y == 0 then
+                  state.cursor_lock_zero_frames = state.cursor_lock_zero_frames + 1
+                  if state.cursor_lock_zero_frames > 4 then
+                    state.cursor_lock_works = false
+                    state.drag_last_screen_y = cur_screen_y
+                  end
+                else
+                  state.cursor_lock_zero_frames = 0
+                end
               elseif state.cursor_lock_works == nil then
                 -- First drag ever: test if JS_Mouse_SetPosition actually works.
                 -- Safe because get_drag_delta uses ImGui path until cursor_lock_works == true.
@@ -1705,6 +1748,7 @@ local function loop()
                 local vx, vy = reaper.GetMousePosition()
                 if math.abs(vy - state.drag_lock_screen_y) <= 2 then
                   state.cursor_lock_works = true
+                  state.cursor_lock_zero_frames = 0
                   state.drag_last_screen_y = state.drag_lock_screen_y
                 else
                   -- Teleport failed. Disable permanently, fall back to ImGui path.
