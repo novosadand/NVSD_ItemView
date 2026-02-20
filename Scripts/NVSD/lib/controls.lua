@@ -1764,7 +1764,7 @@ function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, pa
     local new_db = utils.slider_to_db(new_pos)
     local new_gain = utils.db_to_gain(new_db)
     reaper.SetMediaItemInfo_Value(item, "D_VOL", new_gain)
-    reaper.UpdateArrange()
+    reaper.UpdateItemInProject(item)
   end
 
   local slider_center_x = slider_x + config.GAIN_SLIDER_WIDTH / 2
@@ -1921,7 +1921,7 @@ function controls.draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, pan
     local new_pitch = math.max(config.PITCH_MIN, math.min(config.PITCH_MAX, start_semitones + delta_semitones))
     if take then
       set_take_pitch(take, new_pitch, state, utils)
-      reaper.UpdateArrange()
+      reaper.UpdateItemInProject(reaper.GetMediaItemTake_Item(take))
     end
   end
 
@@ -1995,7 +1995,7 @@ function controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, p
     local new_pitch = math.max(config.PITCH_MIN, math.min(config.PITCH_MAX, utils.semitones_cents_to_pitch(state.drag_controls.semitones.start_value + delta_semitones, frozen_cents)))
     if take then
       set_take_pitch(take, new_pitch, state, utils)
-      reaper.UpdateArrange()
+      reaper.UpdateItemInProject(reaper.GetMediaItemTake_Item(take))
     end
   end
 
@@ -2033,7 +2033,7 @@ function controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, p
       utils.semitones_cents_to_pitch(final_semitones, final_cents)))
     if take then
       set_take_pitch(take, new_pitch, state, utils)
-      reaper.UpdateArrange()
+      reaper.UpdateItemInProject(reaper.GetMediaItemTake_Item(take))
     end
   end
 end
