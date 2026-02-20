@@ -353,6 +353,17 @@ local function loop()
     local shift_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
     local alt_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
 
+    -- Raw VKey rising-edge detection for Ctrl/Cmd+C (macOS: REAPER may consume
+    -- Cmd+C before ImGui sees it, so ImGui_IsKeyPressed(Key_C) never fires).
+    -- VK_CONTROL (0x11) maps to Cmd on macOS SWELL, Ctrl on Windows.
+    local vkey_copy_pressed = false
+    if state.has_js_extension then
+      local vks = reaper.JS_VKeys_GetState(-1)
+      local combo_now = vks:byte(0x44) ~= 0 and vks:byte(0x12) ~= 0  -- VK_C + VK_CONTROL
+      vkey_copy_pressed = combo_now and not state._copy_combo_prev
+      state._copy_combo_prev = combo_now
+    end
+
     -- Skip all keyboard shortcuts when a popup modal is open (e.g. toolbar edit, icon picker, settings)
     -- IsPopupOpen checks the popup stack from the previous frame, so it works before widgets are drawn
     local text_input_active = reaper.ImGui_IsPopupOpen(ctx, "Edit Toolbar Button##tb_edit")
@@ -3899,8 +3910,9 @@ local function loop()
             end
           end
 
-          -- Ctrl+C: copy selected region to REAPER clipboard
-          if ctrl_held and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_C())
+          -- Ctrl+C / Cmd+C: copy selected region to REAPER clipboard
+          -- Uses both ImGui key detection and raw VKey fallback (macOS compatibility)
+          if (vkey_copy_pressed or (ctrl_held and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_C())))
               and state.region_selected and state.region_sel_item == item then
             local sel_s = state.region_sel_start
             local sel_e = state.region_sel_end
