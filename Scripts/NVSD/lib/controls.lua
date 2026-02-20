@@ -1720,6 +1720,7 @@ function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, pa
   local handle_height = 8
   local mouse_in_slider = mouse_x >= slider_x - 5 and mouse_x <= slider_x + config.GAIN_SLIDER_WIDTH + 5
                           and mouse_y >= slider_top - handle_height and mouse_y <= slider_bottom + handle_height
+                          and not (state.is_any_control_dragging() and not state.is_dragging("gain"))
   local handle_color = (mouse_in_slider or state.is_dragging("gain")) and COLOR_SLIDER_HANDLE_HOVER or COLOR_SLIDER_HANDLE
   reaper.ImGui_DrawList_AddRectFilled(draw_list, slider_x - 2, handle_y - handle_height/2, slider_x + config.GAIN_SLIDER_WIDTH + 2, handle_y + handle_height/2, handle_color, 3)
 
@@ -1792,6 +1793,7 @@ function controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel
   local knob_dy = mouse_y - knob_cy
   local knob_dist = math.sqrt(knob_dx * knob_dx + knob_dy * knob_dy)
   local mouse_in_knob = knob_dist <= config.PITCH_KNOB_RADIUS + 8
+                        and not (state.is_any_control_dragging() and not state.is_dragging("pan"))
 
   drawing.draw_knob(draw_list, knob_cx, knob_cy, config.PITCH_KNOB_RADIUS, knob_angle,
     mouse_in_knob, state.is_dragging("pan"), "Pan", nil, config)
@@ -1890,6 +1892,7 @@ function controls.draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, pan
   local knob_dy = mouse_y - knob_cy
   local knob_dist = math.sqrt(knob_dx * knob_dx + knob_dy * knob_dy)
   local mouse_in_knob = knob_dist <= config.PITCH_KNOB_RADIUS + 8
+                        and not (state.is_any_control_dragging() and not state.is_dragging("pitch"))
 
   drawing.draw_knob(draw_list, knob_cx, knob_cy, config.PITCH_KNOB_RADIUS, knob_angle, mouse_in_knob, state.is_dragging("pitch"), "Pitch", "st", config)
 
@@ -1947,8 +1950,10 @@ function controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, p
 
   local mouse_in_semitones_box = mouse_x >= box_left_x and mouse_x <= box_left_x + box_width
                                  and mouse_y >= box_y and mouse_y <= box_y + box_height
+                                 and not (state.is_any_control_dragging() and not state.is_dragging("semitones"))
   local mouse_in_cents_box = mouse_x >= box_right_x and mouse_x <= box_right_x + box_width
                              and mouse_y >= box_y and mouse_y <= box_y + box_height
+                             and not (state.is_any_control_dragging() and not state.is_dragging("cents"))
 
   if mouse_in_semitones_box and not state.is_dragging("semitones") and drawing then
     drawing.tooltip(ctx, "semitones_box", "Pitch semitones")
