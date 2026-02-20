@@ -1078,6 +1078,19 @@ Built-in gain, pitch, WARP, reverse, customizable shortcuts, and 8 color themes.
         <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/2d70dfd/Scripts/NVSD/lib/settings.lua</source>
         <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/2d70dfd/Scripts/NVSD/lib/settings_ui.lua</source>
       </version>
+      <version name="1.0.83" author="NVSD" time="2026-02-20T00:00:00Z">
+        <changelog><![CDATA[Fix Mac knob/slider drag (runtime mouse event suppression detection), fix non-looped item display and alt-drag, real-time item visual updates during drag, improved source length caching]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/8b2a4a4/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/8b2a4a4/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/8b2a4a4/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/8b2a4a4/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/8b2a4a4/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/8b2a4a4/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/8b2a4a4/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/8b2a4a4/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/8b2a4a4/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/8b2a4a4/Scripts/NVSD/lib/settings_ui.lua</source>
+      </version>
     </reapack>
   </category>
 </index>
