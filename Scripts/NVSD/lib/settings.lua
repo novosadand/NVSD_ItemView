@@ -36,6 +36,9 @@ settings.DEFAULT_SHORTCUTS = {
   unzoom_all = {ctrl = false, shift = false, alt = true, key = "Z"},
   toggle_cue_markers = {ctrl = false, shift = false, alt = false, key = "M"},
   show_in_explorer = {ctrl = true, shift = false, alt = false, key = "F"},
+  quantize_transients = {ctrl = true, shift = false, alt = false, key = "U"},
+  insert_warp_marker = {ctrl = true, shift = false, alt = false, key = "I"},
+  add_transient = {ctrl = true, shift = true, alt = false, key = "I"},
 }
 
 -- Map key names to ImGui key getter function names (created once at module load)
@@ -659,6 +662,7 @@ settings.colors_dirty = true  -- Start dirty so initial load applies colors
 settings.current = {
   theme_id = "default",
   shortcuts = {},
+  toolbar_buttons = {},  -- {label, cmd} entries for custom info bar buttons
 }
 
 -- Save custom theme colors to ExtState
@@ -857,6 +861,9 @@ function settings.load()
     end
   end
 
+  -- Load toolbar buttons
+  settings.load_toolbar()
+
   -- Load shortcuts
   settings.current.shortcuts = {}
   for name, default in pairs(settings.DEFAULT_SHORTCUTS) do
@@ -884,6 +891,9 @@ function settings.save()
   for name, shortcut in pairs(settings.current.shortcuts) do
     reaper.SetExtState(EXT_SECTION, "shortcut_" .. name, shortcut_to_string(shortcut), true)
   end
+
+  -- Save toolbar buttons
+  settings.save_toolbar()
 end
 
 -- Apply settings (update current and save)
@@ -934,6 +944,13 @@ function settings.format_shortcut(shortcut)
   return table.concat(parts, "+")
 end
 
+-- Format shortcut by name (looks up from current settings)
+function settings.format_shortcut_by_name(name)
+  local sc = settings.current.shortcuts[name]
+  if sc and sc.key ~= "" then return settings.format_shortcut(sc) end
+  return ""
+end
+
 -- Mouse button index map (ImGui button indices: 3=X2/Mouse5, 4=X1/Mouse4 on this hardware)
 local MOUSE_BUTTON_MAP = { Mouse4 = 4, Mouse5 = 3 }
 
@@ -965,6 +982,177 @@ function settings.check_shortcut(ctx, name)
   if not imgui_key then return false end
 
   return reaper.ImGui_IsKeyPressed(ctx, imgui_key)
+end
+
+-- Scan REAPER's toolbar_icons directory for available icon PNGs
+function settings.scan_toolbar_icons()
+  local dir = reaper.GetResourcePath() .. "/Data/toolbar_icons/"
+  local icons = {}
+  local i = 0
+  while true do
+    local file = reaper.EnumerateFiles(dir, i)
+    if not file then break end
+    if file:lower():match("%.png$") then
+      icons[#icons + 1] = file
+    end
+    i = i + 1
+  end
+  table.sort(icons)
+  return icons
+end
+
+-- Load toolbar buttons from ExtState
+function settings.load_toolbar()
+  settings.current.toolbar_buttons = {}
+  -- New format: single serialized key
+  local data = reaper.GetExtState(EXT_SECTION, "toolbar_data")
+  if data ~= "" then
+    for line in data:gmatch("[^\n]+") do
+      if line == "S" then
+        settings.current.toolbar_buttons[#settings.current.toolbar_buttons + 1] = {type = "separator"}
+      elseif line:sub(1, 2) == "B\t" then
+        local fields = {}
+        for f in (line:sub(3) .. "\t"):gmatch("(.-)\t") do fields[#fields + 1] = f end
+        local label = fields[1] or ""
+        local cmd = fields[2] or ""
+        local icon = fields[3]
+        if label ~= "" and cmd ~= "" then
+          settings.current.toolbar_buttons[#settings.current.toolbar_buttons + 1] = {
+            label = label, cmd = cmd, icon = (icon and icon ~= "") and icon or nil
+          }
+        end
+      end
+    end
+    return
+  end
+  -- Legacy format: per-item keys (migrate on first save)
+  local count = tonumber(reaper.GetExtState(EXT_SECTION, "toolbar_count")) or 0
+  if count > 0 then
+    for i = 1, count do
+      local item_type = reaper.GetExtState(EXT_SECTION, "toolbar_" .. i .. "_type")
+      if item_type == "separator" then
+        settings.current.toolbar_buttons[#settings.current.toolbar_buttons + 1] = {type = "separator"}
+      else
+        local label = reaper.GetExtState(EXT_SECTION, "toolbar_" .. i .. "_label")
+        local cmd = reaper.GetExtState(EXT_SECTION, "toolbar_" .. i .. "_cmd")
+        local icon = reaper.GetExtState(EXT_SECTION, "toolbar_" .. i .. "_icon")
+        if label ~= "" and cmd ~= "" then
+          settings.current.toolbar_buttons[#settings.current.toolbar_buttons + 1] = {
+            label = label, cmd = cmd, icon = (icon and icon ~= "") and icon or nil
+          }
+        end
+      end
+    end
+    -- Migrate: save in new format and clean up old keys
+    settings.save_toolbar()
+    reaper.DeleteExtState(EXT_SECTION, "toolbar_count", true)
+    for i = 1, count + 5 do
+      reaper.DeleteExtState(EXT_SECTION, "toolbar_" .. i .. "_label", true)
+      reaper.DeleteExtState(EXT_SECTION, "toolbar_" .. i .. "_cmd", true)
+      reaper.DeleteExtState(EXT_SECTION, "toolbar_" .. i .. "_icon", true)
+      reaper.DeleteExtState(EXT_SECTION, "toolbar_" .. i .. "_type", true)
+    end
+    return
+  end
+  -- No saved data at all: add a default button so users discover the toolbar
+  settings.current.toolbar_buttons = {
+    {label = "Item properties", cmd = "40009"},
+  }
+end
+
+-- Save toolbar to a single ExtState key (tab-delimited, one item per line)
+function settings.save_toolbar()
+  local btns = settings.current.toolbar_buttons or {}
+  local lines = {}
+  for i, btn in ipairs(btns) do
+    if btn.type == "separator" then
+      lines[i] = "S"
+    else
+      lines[i] = "B\t" .. (btn.label or "") .. "\t" .. (btn.cmd or "") .. "\t" .. (btn.icon or "")
+    end
+  end
+  reaper.SetExtState(EXT_SECTION, "toolbar_data", table.concat(lines, "\n"), true)
+end
+
+-- Toolbar undo/redo stack
+local tb_undo_stack = {}
+local tb_redo_stack = {}
+local TB_UNDO_MAX = 30
+
+local function tb_deep_copy(btns)
+  local copy = {}
+  for i, btn in ipairs(btns) do
+    copy[i] = {type = btn.type, label = btn.label, cmd = btn.cmd, icon = btn.icon}
+  end
+  return copy
+end
+
+local function tb_push_undo()
+  tb_undo_stack[#tb_undo_stack + 1] = tb_deep_copy(settings.current.toolbar_buttons)
+  if #tb_undo_stack > TB_UNDO_MAX then table.remove(tb_undo_stack, 1) end
+  tb_redo_stack = {}
+end
+
+function settings.toolbar_undo()
+  if #tb_undo_stack == 0 then return false end
+  tb_redo_stack[#tb_redo_stack + 1] = tb_deep_copy(settings.current.toolbar_buttons)
+  settings.current.toolbar_buttons = table.remove(tb_undo_stack)
+  settings.save_toolbar()
+  return true
+end
+
+function settings.toolbar_redo()
+  if #tb_redo_stack == 0 then return false end
+  tb_undo_stack[#tb_undo_stack + 1] = tb_deep_copy(settings.current.toolbar_buttons)
+  settings.current.toolbar_buttons = table.remove(tb_redo_stack)
+  settings.save_toolbar()
+  return true
+end
+
+function settings.toolbar_can_undo() return #tb_undo_stack > 0 end
+function settings.toolbar_can_redo() return #tb_redo_stack > 0 end
+
+-- Add a toolbar button (after_idx: insert after this index, nil = append)
+function settings.add_toolbar_button(label, cmd, icon, after_idx)
+  tb_push_undo()
+  local btns = settings.current.toolbar_buttons
+  local entry = {label = label, cmd = cmd, icon = icon or nil}
+  if after_idx and after_idx >= 1 and after_idx <= #btns then
+    table.insert(btns, after_idx + 1, entry)
+  else
+    btns[#btns + 1] = entry
+  end
+  settings.save_toolbar()
+end
+
+-- Add a toolbar separator (after_idx: insert after this index, nil = append)
+function settings.add_toolbar_separator(after_idx)
+  tb_push_undo()
+  local btns = settings.current.toolbar_buttons
+  local entry = {type = "separator"}
+  if after_idx and after_idx >= 1 and after_idx <= #btns then
+    table.insert(btns, after_idx + 1, entry)
+  else
+    btns[#btns + 1] = entry
+  end
+  settings.save_toolbar()
+end
+
+-- Remove a toolbar button by index
+function settings.remove_toolbar_button(index)
+  tb_push_undo()
+  table.remove(settings.current.toolbar_buttons, index)
+  settings.save_toolbar()
+end
+
+-- Move a toolbar button from one index to another
+function settings.move_toolbar_button(from, to)
+  tb_push_undo()
+  local btns = settings.current.toolbar_buttons
+  if from < 1 or from > #btns or to < 1 or to > #btns then return end
+  local btn = table.remove(btns, from)
+  table.insert(btns, to, btn)
+  settings.save_toolbar()
 end
 
 return settings

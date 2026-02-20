@@ -3,12 +3,18 @@
 
 local settings_ui = {}
 
+-- Drawing module reference (set via set_drawing, needed for shared icon picker)
+local drawing = nil
+
+function settings_ui.set_drawing(drawing_module)
+  drawing = drawing_module
+end
+
 -- Editable keyboard shortcuts (order matches display)
 local EDITABLE_SHORTCUTS = {
   {name = "toggle_warp",  label = "Toggle WARP mode"},
   {name = "toggle_mute",  label = "Toggle mute"},
   {name = "reverse",      label = "Reverse item"},
-  {name = "clear",        label = "Clear pitch/speed"},
   {name = "crop_to_selection", label = "Crop markers to selection"},
   {name = "open_editor",  label = "Open in external editor"},
   {name = "reset_zoom",   label = "Reset zoom to fit"},
@@ -30,6 +36,7 @@ local EDITABLE_SHORTCUTS = {
   {name = "unzoom_all", label = "Unzoom completely"},
   {name = "toggle_cue_markers", label = "Toggle WAV cue markers"},
   {name = "show_in_explorer", label = "Show in Media Explorer"},
+  {name = "quantize_transients", label = "Add markers at all transients"},
 }
 
 -- Reference shortcuts (not editable)
@@ -77,21 +84,48 @@ local ui_state = {
   hovered_theme_id = nil,    -- Theme ID currently hovered (for delete button)
   -- Shortcut conflict modal state
   conflict_pending = nil,    -- {target = name, binding = {}, conflict_name = name} or nil
+  -- Toolbar tab state
+  tb_edit_idx = -1,          -- index being edited (nil = adding new, >0 = editing, -1 = none)
+  tb_edit_label = "",        -- label input
+  tb_edit_cmd = "",          -- command input
+  tb_edit_icon = nil,        -- icon filename
+  tb_edit_auto_label = nil,  -- tracks auto-filled label
+  tb_search_text = "",       -- action search input
+  tb_search_results = {},    -- filtered results
+  tb_search_sel_idx = 0,     -- keyboard nav index
+  tb_search_confirmed = "",  -- confirmed selection name
+  tb_search_refocus = false,  -- re-focus InputText after Enter confirmation
+  tb_drag_idx = nil,         -- button index being dragged
+  tb_drag_start_y = nil,     -- mouse Y when drag started
+  tb_drag_active = false,    -- true after drag threshold exceeded
+  tb_drag_target = nil,      -- drop target position
+  -- Icon picker state
+  icon_picker_for = nil,     -- index of button whose icon is being picked (nil = closed)
+  icon_picker_open = false,  -- true when popup should open this frame
+  icon_list = nil,           -- cached list of icon filenames from scan
+  icon_images = {},          -- {filename -> ImGui_Image or false}
 }
 
--- Colors matching main window dark theme
+-- Colors matching modal dark theme
 local COLORS = {
-  window_bg = 0x1E1E1EFF,
+  window_bg = 0x2A2A2AFF,
   child_bg = 0x252525FF,
   text = 0xDDDDDDFF,
   text_dim = 0x888888FF,
   accent = 0x4A90D9FF,
   accent_hover = 0x5AA0E9FF,
+  accent_active = 0x3A80C9FF,
   btn_default = 0x404040FF,
   btn_hover = 0x505050FF,
-  separator = 0x404040FF,
+  btn_active = 0x606060FF,
+  separator = 0x444444FF,
   warning = 0xFF4444FF,
   unbound = 0x666666FF,
+  border = 0x555555FF,
+  tab_bg = 0x333333FF,
+  tab_hover = 0x4A4A4AFF,
+  tab_selected = 0x4A90D9FF,
+  header_text = 0xFFFFFFFF,
 }
 
 -- Deep-copy a shortcuts table
@@ -254,9 +288,12 @@ local function draw_custom_color_editor(ctx, settings)
   local custom_theme = settings.get_theme("custom")
   if not custom_theme then return end
 
-  reaper.ImGui_Spacing(ctx)
-  reaper.ImGui_Separator(ctx)
-  reaper.ImGui_Spacing(ctx)
+  reaper.ImGui_Dummy(ctx, 0, 4)
+  local dl = reaper.ImGui_GetWindowDrawList(ctx)
+  local lx, ly = reaper.ImGui_GetCursorScreenPos(ctx)
+  local lw = reaper.ImGui_GetContentRegionAvail(ctx)
+  reaper.ImGui_DrawList_AddLine(dl, lx, ly, lx + lw, ly, COLORS.separator, 1)
+  reaper.ImGui_Dummy(ctx, 0, 6)
 
   -- "Initialize from" combo
   reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Start from:")
@@ -363,7 +400,7 @@ local function draw_appearance_tab(ctx, settings)
   end
 
   local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
-  if not reaper.ImGui_BeginChild(ctx, "appearance_scroll", avail_w, avail_h - 40) then return end
+  if not reaper.ImGui_BeginChild(ctx, "appearance_scroll", avail_w, avail_h - 54) then return end
 
   local bar_w = 84
   local bar_h = 14
@@ -378,8 +415,10 @@ local function draw_appearance_tab(ctx, settings)
 
   -- User-saved themes section
   if has_user_themes then
-    reaper.ImGui_TextColored(ctx, COLORS.text_dim, "SAVED")
-    reaper.ImGui_Spacing(ctx)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), COLORS.header_text)
+    reaper.ImGui_Text(ctx, "Saved Themes")
+    reaper.ImGui_PopStyleColor(ctx)
+    reaper.ImGui_Dummy(ctx, 0, 2)
     if reaper.ImGui_BeginTable(ctx, "user_themes", 3, tbl_flags) then
       setup_theme_columns(ctx, bar_w)
       for _, theme in ipairs(settings.THEMES) do
@@ -390,12 +429,19 @@ local function draw_appearance_tab(ctx, settings)
       end
       reaper.ImGui_EndTable(ctx)
     end
-    reaper.ImGui_Spacing(ctx)
-    reaper.ImGui_Separator(ctx)
-    reaper.ImGui_Spacing(ctx)
+    reaper.ImGui_Dummy(ctx, 0, 4)
+    local dl = reaper.ImGui_GetWindowDrawList(ctx)
+    local lx, ly = reaper.ImGui_GetCursorScreenPos(ctx)
+    local lw = reaper.ImGui_GetContentRegionAvail(ctx)
+    reaper.ImGui_DrawList_AddLine(dl, lx, ly, lx + lw, ly, COLORS.separator, 1)
+    reaper.ImGui_Dummy(ctx, 0, 6)
   end
 
   -- Built-in themes
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), COLORS.header_text)
+  reaper.ImGui_Text(ctx, "Built-in Themes")
+  reaper.ImGui_PopStyleColor(ctx)
+  reaper.ImGui_Dummy(ctx, 0, 2)
   if reaper.ImGui_BeginTable(ctx, "preset_themes", 3, tbl_flags) then
     setup_theme_columns(ctx, bar_w)
     for _, theme in ipairs(settings.THEMES) do
@@ -406,16 +452,66 @@ local function draw_appearance_tab(ctx, settings)
     reaper.ImGui_EndTable(ctx)
   end
 
-  -- Delete confirmation modal (must be at same ID scope, outside tables)
+  -- Delete confirmation modal (styled like warp restore modal)
   if open_delete_popup then
-    reaper.ImGui_OpenPopup(ctx, "Delete Theme?##confirm")
+    reaper.ImGui_OpenPopup(ctx, "##delete_theme_confirm")
   end
-  if reaper.ImGui_BeginPopupModal(ctx, "Delete Theme?##confirm", nil, reaper.ImGui_WindowFlags_AlwaysAutoResize()) then
+  -- Center modal on screen
+  local del_vp = reaper.ImGui_GetMainViewport(ctx)
+  local del_cx, del_cy = reaper.ImGui_Viewport_GetCenter(del_vp)
+  reaper.ImGui_SetNextWindowPos(ctx, del_cx, del_cy, reaper.ImGui_Cond_Appearing(), 0.5, 0.5)
+  reaper.ImGui_SetNextWindowSize(ctx, 300, 0, reaper.ImGui_Cond_Appearing())
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowPadding(), 20, 16)
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowRounding(), 8)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_PopupBg(), 0x2A2A2AFF)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Border(), COLORS.border)
+  local del_flags = reaper.ImGui_WindowFlags_NoTitleBar()
+                  + reaper.ImGui_WindowFlags_AlwaysAutoResize()
+                  + reaper.ImGui_WindowFlags_NoMove()
+  if reaper.ImGui_BeginPopupModal(ctx, "##delete_theme_confirm", nil, del_flags) then
+
     local del_theme = ui_state.delete_confirm_id and settings.get_theme(ui_state.delete_confirm_id)
     local del_name = del_theme and del_theme.name or "this theme"
-    reaper.ImGui_Text(ctx, "Delete \"" .. del_name .. "\"?")
+
+    -- Centered title
+    local dtitle = "Delete Theme"
+    local dtitle_w = reaper.ImGui_CalcTextSize(ctx, dtitle)
+    local dcontent_w = reaper.ImGui_GetContentRegionAvail(ctx)
+    reaper.ImGui_SetCursorPosX(ctx, reaper.ImGui_GetCursorPosX(ctx) + (dcontent_w - dtitle_w) / 2)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), COLORS.header_text)
+    reaper.ImGui_Text(ctx, dtitle)
+    reaper.ImGui_PopStyleColor(ctx)
+
     reaper.ImGui_Spacing(ctx)
-    if reaper.ImGui_Button(ctx, "Delete", 80, 0) then
+    local ddl = reaper.ImGui_GetWindowDrawList(ctx)
+    local dsx, dsy = reaper.ImGui_GetCursorScreenPos(ctx)
+    reaper.ImGui_DrawList_AddLine(ddl, dsx, dsy, dsx + dcontent_w, dsy, COLORS.separator, 1)
+    reaper.ImGui_Dummy(ctx, 0, 4)
+
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xBBBBBBFF)
+    reaper.ImGui_TextWrapped(ctx, "Delete \"" .. del_name .. "\"? This cannot be undone.")
+    reaper.ImGui_PopStyleColor(ctx)
+    reaper.ImGui_Dummy(ctx, 0, 4)
+
+    local dbtn_w = (dcontent_w - 8) / 2
+
+    -- "Cancel" button (subtle)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), COLORS.btn_default)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), COLORS.btn_hover)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), COLORS.btn_active)
+    if reaper.ImGui_Button(ctx, "Cancel##del_cancel", dbtn_w, 30) then
+      ui_state.delete_confirm_id = nil
+      reaper.ImGui_CloseCurrentPopup(ctx)
+    end
+    reaper.ImGui_PopStyleColor(ctx, 3)
+
+    reaper.ImGui_SameLine(ctx)
+
+    -- "Delete" button (warning red)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0xCC3333FF)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0xDD4444FF)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0xBB2222FF)
+    if reaper.ImGui_Button(ctx, "Delete##del_confirm", dbtn_w, 30) then
       if ui_state.delete_confirm_id then
         if ui_state.pending_theme_id == ui_state.delete_confirm_id then
           ui_state.pending_theme_id = "default"
@@ -427,22 +523,24 @@ local function draw_appearance_tab(ctx, settings)
       ui_state.delete_confirm_id = nil
       reaper.ImGui_CloseCurrentPopup(ctx)
     end
-    reaper.ImGui_SameLine(ctx)
-    if reaper.ImGui_Button(ctx, "Cancel", 80, 0) then
-      ui_state.delete_confirm_id = nil
-      reaper.ImGui_CloseCurrentPopup(ctx)
-    end
+    reaper.ImGui_PopStyleColor(ctx, 3)
+
     reaper.ImGui_EndPopup(ctx)
   end
+  reaper.ImGui_PopStyleColor(ctx, 2)
+  reaper.ImGui_PopStyleVar(ctx, 2)
 
   -- Custom theme editor + save (only when Custom is selected)
   if ui_state.pending_theme_id == "custom" then
     draw_custom_color_editor(ctx, settings)
 
     -- Save as new theme
-    reaper.ImGui_Spacing(ctx)
-    reaper.ImGui_Separator(ctx)
-    reaper.ImGui_Spacing(ctx)
+    reaper.ImGui_Dummy(ctx, 0, 4)
+    local dl2 = reaper.ImGui_GetWindowDrawList(ctx)
+    local lx2, ly2 = reaper.ImGui_GetCursorScreenPos(ctx)
+    local lw2 = reaper.ImGui_GetContentRegionAvail(ctx)
+    reaper.ImGui_DrawList_AddLine(dl2, lx2, ly2, lx2 + lw2, ly2, COLORS.separator, 1)
+    reaper.ImGui_Dummy(ctx, 0, 6)
 
     if ui_state.show_save_input then
       reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Name:")
@@ -451,11 +549,15 @@ local function draw_appearance_tab(ctx, settings)
         reaper.ImGui_SetKeyboardFocusHere(ctx, 0)
         ui_state.save_input_focused = true
       end
-      reaper.ImGui_SetNextItemWidth(ctx, 140)
+      reaper.ImGui_SetNextItemWidth(ctx, 160)
       local _, new_name = reaper.ImGui_InputText(ctx, "##save_theme_name", ui_state.save_theme_name)
       ui_state.save_theme_name = new_name
       reaper.ImGui_SameLine(ctx)
       local name_ok = ui_state.save_theme_name ~= ""
+      -- Save button (accent)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), COLORS.accent)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), COLORS.accent_hover)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), COLORS.accent_active)
       if reaper.ImGui_Button(ctx, "Save##save_confirm") and name_ok then
         local source_theme = settings.get_theme("custom")
         if source_theme then
@@ -468,6 +570,7 @@ local function draw_appearance_tab(ctx, settings)
         ui_state.save_theme_name = ""
         ui_state.save_input_focused = nil
       end
+      reaper.ImGui_PopStyleColor(ctx, 3)
       reaper.ImGui_SameLine(ctx)
       if reaper.ImGui_Button(ctx, "Cancel##save_cancel") then
         ui_state.show_save_input = false
@@ -475,11 +578,16 @@ local function draw_appearance_tab(ctx, settings)
         ui_state.save_input_focused = nil
       end
     else
+      -- "Save current as new theme" button (accent)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), COLORS.accent)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), COLORS.accent_hover)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), COLORS.accent_active)
       if reaper.ImGui_Button(ctx, "Save current as new theme") then
         ui_state.show_save_input = true
         ui_state.save_theme_name = ""
         ui_state.save_input_focused = nil
       end
+      reaper.ImGui_PopStyleColor(ctx, 3)
     end
   end
 
@@ -548,8 +656,10 @@ local function draw_shortcuts_tab(ctx, settings)
   end
 
   -- Editable shortcuts header
-  reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Keyboard Shortcuts")
-  reaper.ImGui_Spacing(ctx)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), COLORS.header_text)
+  reaper.ImGui_Text(ctx, "Keyboard Shortcuts")
+  reaper.ImGui_PopStyleColor(ctx)
+  reaper.ImGui_Dummy(ctx, 0, 2)
 
   -- Track which shortcut was just cleared by conflict resolution (highlight it)
   local just_cleared_name = ui_state.conflict_just_cleared
@@ -671,20 +781,65 @@ local function draw_shortcuts_tab(ctx, settings)
     reaper.ImGui_EndTable(ctx)
   end
 
-  -- Shortcut conflict confirmation modal
-  if reaper.ImGui_BeginPopupModal(ctx, "Shortcut Conflict##confirm", nil, reaper.ImGui_WindowFlags_AlwaysAutoResize()) then
+  -- Shortcut conflict confirmation modal (styled)
+  local sc_vp = reaper.ImGui_GetMainViewport(ctx)
+  local sc_cx, sc_cy = reaper.ImGui_Viewport_GetCenter(sc_vp)
+  reaper.ImGui_SetNextWindowPos(ctx, sc_cx, sc_cy, reaper.ImGui_Cond_Appearing(), 0.5, 0.5)
+  reaper.ImGui_SetNextWindowSize(ctx, 320, 0, reaper.ImGui_Cond_Appearing())
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowPadding(), 20, 16)
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowRounding(), 8)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_PopupBg(), 0x2A2A2AFF)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Border(), COLORS.border)
+  local sc_flags = reaper.ImGui_WindowFlags_NoTitleBar()
+                 + reaper.ImGui_WindowFlags_AlwaysAutoResize()
+                 + reaper.ImGui_WindowFlags_NoMove()
+  if reaper.ImGui_BeginPopupModal(ctx, "Shortcut Conflict##confirm", nil, sc_flags) then
+
     local cp = ui_state.conflict_pending
     if cp then
+      -- Centered title
+      local sc_title = "Shortcut Conflict"
+      local sc_title_w = reaper.ImGui_CalcTextSize(ctx, sc_title)
+      local sc_content_w = reaper.ImGui_GetContentRegionAvail(ctx)
+      reaper.ImGui_SetCursorPosX(ctx, reaper.ImGui_GetCursorPosX(ctx) + (sc_content_w - sc_title_w) / 2)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), COLORS.header_text)
+      reaper.ImGui_Text(ctx, sc_title)
+      reaper.ImGui_PopStyleColor(ctx)
+
+      reaper.ImGui_Spacing(ctx)
+      local sc_dl = reaper.ImGui_GetWindowDrawList(ctx)
+      local sc_sx, sc_sy = reaper.ImGui_GetCursorScreenPos(ctx)
+      reaper.ImGui_DrawList_AddLine(sc_dl, sc_sx, sc_sy, sc_sx + sc_content_w, sc_sy, COLORS.separator, 1)
+      reaper.ImGui_Dummy(ctx, 0, 4)
+
       local key_text = settings.format_shortcut(cp.binding)
       local conflict_label = get_shortcut_label(cp.conflict_name)
-      reaper.ImGui_Text(ctx, key_text .. " is already used for:")
-      reaper.ImGui_Spacing(ctx)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xBBBBBBFF)
+      reaper.ImGui_TextWrapped(ctx, key_text .. " is already used for:")
+      reaper.ImGui_PopStyleColor(ctx)
+      reaper.ImGui_Dummy(ctx, 0, 2)
       reaper.ImGui_TextColored(ctx, COLORS.accent, "  " .. conflict_label)
-      reaper.ImGui_Spacing(ctx)
-      reaper.ImGui_Text(ctx, "Reassign it?")
-      reaper.ImGui_Spacing(ctx)
+      reaper.ImGui_Dummy(ctx, 0, 4)
 
-      if reaper.ImGui_Button(ctx, "Reassign", 90, 0) then
+      local sc_btn_w = (sc_content_w - 8) / 2
+
+      -- "Cancel" button (subtle)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), COLORS.btn_default)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), COLORS.btn_hover)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), COLORS.btn_active)
+      if reaper.ImGui_Button(ctx, "Cancel##sc_cancel", sc_btn_w, 30) then
+        ui_state.conflict_pending = nil
+        reaper.ImGui_CloseCurrentPopup(ctx)
+      end
+      reaper.ImGui_PopStyleColor(ctx, 3)
+
+      reaper.ImGui_SameLine(ctx)
+
+      -- "Reassign" button (accent)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), COLORS.accent)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), COLORS.accent_hover)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), COLORS.accent_active)
+      if reaper.ImGui_Button(ctx, "Reassign##sc_confirm", sc_btn_w, 30) then
         -- Clear the conflicting shortcut first, then apply the new binding
         apply_shortcut(settings, cp.conflict_name,
           {ctrl = false, shift = false, alt = false, key = ""})
@@ -694,27 +849,32 @@ local function draw_shortcuts_tab(ctx, settings)
         ui_state.conflict_pending = nil
         reaper.ImGui_CloseCurrentPopup(ctx)
       end
-      reaper.ImGui_SameLine(ctx)
-      if reaper.ImGui_Button(ctx, "Cancel", 90, 0) then
-        ui_state.conflict_pending = nil
-        reaper.ImGui_CloseCurrentPopup(ctx)
-      end
+      reaper.ImGui_PopStyleColor(ctx, 3)
     else
       reaper.ImGui_CloseCurrentPopup(ctx)
     end
     reaper.ImGui_EndPopup(ctx)
   end
+  reaper.ImGui_PopStyleColor(ctx, 2)
+  reaper.ImGui_PopStyleVar(ctx, 2)
 
   -- Helper text
   reaper.ImGui_Spacing(ctx)
   reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Escape to cancel  /  Backspace to clear")
 
   -- Mouse reference section
-  reaper.ImGui_Spacing(ctx)
-  reaper.ImGui_Separator(ctx)
-  reaper.ImGui_Spacing(ctx)
-  reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Reference (not rebindable)")
-  reaper.ImGui_Spacing(ctx)
+  reaper.ImGui_Dummy(ctx, 0, 4)
+  local dl = reaper.ImGui_GetWindowDrawList(ctx)
+  local lx, ly = reaper.ImGui_GetCursorScreenPos(ctx)
+  local lw = reaper.ImGui_GetContentRegionAvail(ctx)
+  reaper.ImGui_DrawList_AddLine(dl, lx, ly, lx + lw, ly, COLORS.separator, 1)
+  reaper.ImGui_Dummy(ctx, 0, 6)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), COLORS.header_text)
+  reaper.ImGui_Text(ctx, "Reference")
+  reaper.ImGui_PopStyleColor(ctx)
+  reaper.ImGui_SameLine(ctx)
+  reaper.ImGui_TextColored(ctx, COLORS.text_dim, "(not rebindable)")
+  reaper.ImGui_Dummy(ctx, 0, 2)
 
   if reaper.ImGui_BeginTable(ctx, "reference_shortcuts", 2, reaper.ImGui_TableFlags_None()) then
     reaper.ImGui_TableSetupColumn(ctx, "Key", reaper.ImGui_TableColumnFlags_WidthFixed(), 120)
@@ -732,61 +892,1118 @@ local function draw_shortcuts_tab(ctx, settings)
   end
 end
 
+-- Draw Toolbar tab content
+-- Load an icon image for the settings UI icon picker (separate cache from drawing.lua)
+local settings_icon_cache = {}  -- {filename -> {img=ImGui_Image, uv_u1=number} or false}
+local settings_icons_dir = nil
+
+function settings_ui.clear_icon_cache()
+  settings_icon_cache = {}
+  settings_icons_dir = nil
+end
+
+-- Returns img, uv_u1 (first sprite state UV, horizontal strip) or nil, nil
+local function get_settings_icon(ctx, filename)
+  if not filename or filename == "" then return nil, nil end
+  local cached = settings_icon_cache[filename]
+  if cached == false then return nil, nil end
+  if cached then return cached.img, cached.uv_u1 end
+  if not settings_icons_dir then
+    settings_icons_dir = reaper.GetResourcePath() .. "/Data/toolbar_icons/"
+  end
+  local ok, img = pcall(reaper.ImGui_CreateImage, settings_icons_dir .. filename)
+  if ok and img then
+    pcall(reaper.ImGui_Attach, ctx, img)
+    local ok2, w, h = pcall(reaper.ImGui_Image_GetSize, img)
+    if not ok2 or not w or not h or w <= 0 or h <= 0 then
+      settings_icon_cache[filename] = false
+      return nil, nil
+    end
+    local states = math.max(1, math.floor(w / h))
+    local uv_u1 = 1 / states
+    settings_icon_cache[filename] = {img = img, uv_u1 = uv_u1}
+    return img, uv_u1
+  end
+  settings_icon_cache[filename] = false
+  return nil, nil
+end
+
+-- Local action cache for toolbar tab (same pattern as drawing.lua, avoids coupling)
+local tb_action_cache = nil
+
+local function get_tb_action_cache()
+  if tb_action_cache then return tb_action_cache end
+  tb_action_cache = {}
+  local has_shortcuts = reaper.GetActionShortcutDesc ~= nil
+  local idx = 0
+  while true do
+    local retval, name = reaper.kbd_enumerateActions(0, idx)
+    if retval == 0 then break end
+    local cmd_str
+    local named = reaper.ReverseNamedCommandLookup and reaper.ReverseNamedCommandLookup(retval) or ""
+    if named and named ~= "" then
+      cmd_str = "_" .. named
+    else
+      cmd_str = tostring(retval)
+    end
+    if name and name ~= "" then
+      local shortcut = ""
+      if has_shortcuts then
+        local ok, rv, desc = pcall(reaper.GetActionShortcutDesc, 0, retval, 0, "")
+        if ok and rv and desc and desc ~= "" then shortcut = desc end
+      end
+      tb_action_cache[#tb_action_cache + 1] = {name = name, cmd = cmd_str, shortcut = shortcut}
+    end
+    idx = idx + 1
+  end
+  table.sort(tb_action_cache, function(a, b) return a.name:lower() < b.name:lower() end)
+  return tb_action_cache
+end
+
+-- Look up resolved action name from a command ID string
+local function resolve_action_name(cmd)
+  if not cmd or cmd == "" then return nil end
+  local cache = get_tb_action_cache()
+  for _, entry in ipairs(cache) do
+    if entry.cmd == cmd then return entry.name end
+  end
+  return nil
+end
+
+-- Clear edit form state
+local function clear_tb_edit()
+  ui_state.tb_edit_idx = -1
+  ui_state.tb_edit_label = ""
+  ui_state.tb_edit_cmd = ""
+  ui_state.tb_edit_icon = nil
+  ui_state.tb_edit_auto_label = nil
+  ui_state.tb_search_text = ""
+  ui_state.tb_search_results = {}
+  ui_state.tb_search_sel_idx = 0
+  ui_state.tb_search_confirmed = ""
+end
+
+-- Open edit form for an existing button
+local function open_tb_edit(idx, btn)
+  ui_state.tb_edit_idx = idx
+  ui_state.tb_edit_label = btn.label
+  ui_state.tb_edit_cmd = btn.cmd
+  ui_state.tb_edit_icon = btn.icon
+  ui_state.tb_edit_auto_label = nil
+  local action_name = resolve_action_name(btn.cmd) or ""
+  ui_state.tb_search_text = action_name
+  ui_state.tb_search_results = {}
+  ui_state.tb_search_sel_idx = 0
+  ui_state.tb_search_confirmed = action_name
+end
+
+-- Open edit form for adding a new button
+local function open_tb_add()
+  ui_state.tb_edit_idx = nil
+  ui_state.tb_edit_label = ""
+  ui_state.tb_edit_cmd = ""
+  ui_state.tb_edit_icon = nil
+  ui_state.tb_edit_auto_label = nil
+  ui_state.tb_search_text = ""
+  ui_state.tb_search_results = {}
+  ui_state.tb_search_sel_idx = 0
+  ui_state.tb_search_confirmed = ""
+  ui_state.tb_edit_focus_label = true
+end
+
+-- Draw the inline edit/add form (below button list)
+local function draw_tb_edit_form(ctx, settings)
+  -- Capture keyboard so REAPER doesn't intercept Ctrl+V etc.
+  reaper.ImGui_SetNextFrameWantCaptureKeyboard(ctx, true)
+
+  local is_editing = ui_state.tb_edit_idx ~= nil
+  local header = is_editing
+    and ("Editing: " .. ui_state.tb_edit_label)
+    or "Add Toolbar Button"
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), COLORS.header_text)
+  reaper.ImGui_Text(ctx, header)
+  reaper.ImGui_PopStyleColor(ctx)
+  reaper.ImGui_Dummy(ctx, 0, 2)
+
+  -- Label input
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xBBBBBBFF)
+  reaper.ImGui_Text(ctx, "Label")
+  reaper.ImGui_PopStyleColor(ctx)
+  reaper.ImGui_SetNextItemWidth(ctx, -1)
+  if ui_state.tb_edit_focus_label then
+    reaper.ImGui_SetKeyboardFocusHere(ctx)
+    ui_state.tb_edit_focus_label = false
+  end
+  local _, new_label = reaper.ImGui_InputText(ctx, "##tb_ed_label", ui_state.tb_edit_label)
+  ui_state.tb_edit_label = new_label
+
+  -- Action search autocomplete
+  reaper.ImGui_Spacing(ctx)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xBBBBBBFF)
+  reaper.ImGui_Text(ctx, "Search Actions")
+  reaper.ImGui_PopStyleColor(ctx)
+  reaper.ImGui_SetNextItemWidth(ctx, -1)
+  local search_flags = reaper.ImGui_InputTextFlags_AutoSelectAll()
+  -- Re-focus InputText after Enter confirmation (one-shot)
+  if ui_state.tb_search_refocus then
+    reaper.ImGui_SetKeyboardFocusHere(ctx)
+    ui_state.tb_search_refocus = false
+  end
+  local _, new_search = reaper.ImGui_InputText(ctx, "##tb_ed_search", ui_state.tb_search_text, search_flags)
+  -- Detect Enter on the search field: InputText deactivates on Enter, so check both
+  local search_deactivated = reaper.ImGui_IsItemDeactivated(ctx)
+  local enter_pressed = reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Enter())
+      or reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_KeypadEnter())
+  local search_enter = search_deactivated and enter_pressed
+
+  -- Filter results on text change
+  if new_search ~= ui_state.tb_search_text then
+    ui_state.tb_search_text = new_search
+    ui_state.tb_search_sel_idx = 0
+    ui_state.tb_search_results = {}
+    if ui_state.tb_search_confirmed ~= "" and new_search ~= ui_state.tb_search_confirmed then
+      ui_state.tb_search_confirmed = ""
+    end
+    if new_search ~= "" then
+      local words = {}
+      for w in new_search:lower():gmatch("%S+") do
+        words[#words + 1] = w
+      end
+      local cache = get_tb_action_cache()
+      local count = 0
+      for _, entry in ipairs(cache) do
+        local lower_name = entry.name:lower()
+        local match = true
+        for _, w in ipairs(words) do
+          if not lower_name:find(w, 1, true) then
+            match = false
+            break
+          end
+        end
+        if match then
+          count = count + 1
+          ui_state.tb_search_results[count] = entry
+          if count >= 50 then break end
+        end
+      end
+    end
+  end
+
+  -- Keyboard navigation
+  local confirmed_entry = nil
+  local kb_navigated = false
+  local dropdown_active = #ui_state.tb_search_results > 0 and ui_state.tb_search_confirmed == ""
+  if dropdown_active then
+    if reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_DownArrow()) then
+      ui_state.tb_search_sel_idx = math.min(ui_state.tb_search_sel_idx + 1, #ui_state.tb_search_results)
+      kb_navigated = true
+    elseif reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_UpArrow()) then
+      ui_state.tb_search_sel_idx = math.max(ui_state.tb_search_sel_idx - 1, 0)
+      kb_navigated = true
+    end
+  end
+  if search_enter and ui_state.tb_search_sel_idx > 0
+      and ui_state.tb_search_sel_idx <= #ui_state.tb_search_results then
+    confirmed_entry = ui_state.tb_search_results[ui_state.tb_search_sel_idx]
+  end
+
+  -- Dropdown results
+  local show_dropdown = #ui_state.tb_search_results > 0 and ui_state.tb_search_text ~= ""
+      and ui_state.tb_search_confirmed == ""
+  if show_dropdown then
+    local dropdown_h = math.min(math.max(#ui_state.tb_search_results * 22 + 30, 120), 300)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ChildBg(), 0x1E1E1EFF)
+    if reaper.ImGui_BeginChild(ctx, "##tb_action_results", -1, dropdown_h,
+        reaper.ImGui_ChildFlags_Borders()) then
+      local tbl_flags = reaper.ImGui_TableFlags_RowBg()
+                      + reaper.ImGui_TableFlags_ScrollY()
+                      + reaper.ImGui_TableFlags_BordersInnerV()
+      if reaper.ImGui_BeginTable(ctx, "##tb_action_tbl", 3, tbl_flags) then
+        reaper.ImGui_TableSetupColumn(ctx, "Shortcut",
+          reaper.ImGui_TableColumnFlags_WidthFixed(), 130)
+        reaper.ImGui_TableSetupColumn(ctx, "Description",
+          reaper.ImGui_TableColumnFlags_WidthStretch())
+        reaper.ImGui_TableSetupColumn(ctx, "Command ID",
+          reaper.ImGui_TableColumnFlags_WidthFixed(), 120)
+        reaper.ImGui_TableSetupScrollFreeze(ctx, 0, 1)
+        reaper.ImGui_TableHeadersRow(ctx)
+        for i, entry in ipairs(ui_state.tb_search_results) do
+          reaper.ImGui_TableNextRow(ctx)
+          local is_sel = (i == ui_state.tb_search_sel_idx)
+          reaper.ImGui_TableNextColumn(ctx)
+          if reaper.ImGui_Selectable(ctx, (entry.shortcut or "") .. "##asr" .. i, is_sel,
+              reaper.ImGui_SelectableFlags_SpanAllColumns()) then
+            confirmed_entry = entry
+          end
+          if is_sel and kb_navigated then
+            reaper.ImGui_SetScrollHereY(ctx, 0.5)
+          end
+          reaper.ImGui_TableNextColumn(ctx)
+          reaper.ImGui_Text(ctx, entry.name)
+          reaper.ImGui_TableNextColumn(ctx)
+          reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0x999999FF)
+          reaper.ImGui_Text(ctx, entry.cmd)
+          reaper.ImGui_PopStyleColor(ctx)
+        end
+        reaper.ImGui_EndTable(ctx)
+      end
+      reaper.ImGui_EndChild(ctx)
+    end
+    reaper.ImGui_PopStyleColor(ctx)
+  end
+
+  -- Apply confirmed selection
+  if confirmed_entry then
+    ui_state.tb_edit_cmd = confirmed_entry.cmd
+    if ui_state.tb_edit_label == "" or ui_state.tb_edit_label == (ui_state.tb_edit_auto_label or "") then
+      ui_state.tb_edit_label = confirmed_entry.name
+      ui_state.tb_edit_auto_label = confirmed_entry.name
+    end
+    ui_state.tb_search_text = confirmed_entry.name
+    ui_state.tb_search_confirmed = confirmed_entry.name
+    ui_state.tb_search_results = {}
+    ui_state.tb_search_sel_idx = 0
+    -- Re-focus the search InputText next frame so Enter doesn't propagate to Nav
+    ui_state.tb_search_refocus = true
+  end
+
+  -- Action Command ID input
+  reaper.ImGui_Spacing(ctx)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xBBBBBBFF)
+  reaper.ImGui_Text(ctx, "Action Command ID")
+  reaper.ImGui_PopStyleColor(ctx)
+  reaper.ImGui_SetNextItemWidth(ctx, -1)
+  local _, new_cmd = reaper.ImGui_InputText(ctx, "##tb_ed_cmd", ui_state.tb_edit_cmd)
+  -- Auto-fill label when command ID changes
+  if new_cmd ~= ui_state.tb_edit_cmd and new_cmd ~= "" then
+    local cmd_id = tonumber(new_cmd) or reaper.NamedCommandLookup(new_cmd)
+    if cmd_id and cmd_id > 0 then
+      local name
+      if reaper.kbd_getTextFromCmd then
+        name = reaper.kbd_getTextFromCmd(cmd_id, 0)
+      elseif reaper.CF_GetCommandText then
+        name = reaper.CF_GetCommandText(0, cmd_id)
+      end
+      if name and name ~= "" then
+        if ui_state.tb_edit_label == "" or ui_state.tb_edit_label == (ui_state.tb_edit_auto_label or "") then
+          ui_state.tb_edit_label = name
+          ui_state.tb_edit_auto_label = name
+        end
+      end
+    end
+  end
+  ui_state.tb_edit_cmd = new_cmd
+
+  reaper.ImGui_Dummy(ctx, 0, 2)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0x888888FF)
+  reaper.ImGui_TextWrapped(ctx, "Paste ID directly, or use Search Actions above.")
+  reaper.ImGui_PopStyleColor(ctx)
+
+  -- Icon row
+  reaper.ImGui_Dummy(ctx, 0, 6)
+
+  local icon_row_h = 30
+  local text_h = reaper.ImGui_GetTextLineHeight(ctx)
+  local icon_label_y = reaper.ImGui_GetCursorPosY(ctx)
+  local label_offset = math.floor((icon_row_h - text_h) / 2)
+  reaper.ImGui_SetCursorPosY(ctx, icon_label_y + label_offset)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xBBBBBBFF)
+  reaper.ImGui_Text(ctx, "Icon")
+  reaper.ImGui_PopStyleColor(ctx)
+  reaper.ImGui_SameLine(ctx)
+  reaper.ImGui_SetCursorPosY(ctx, icon_label_y)
+
+  local icon_clicked = false
+  local icon_dl = reaper.ImGui_GetWindowDrawList(ctx)
+  if ui_state.tb_edit_icon and ui_state.tb_edit_icon ~= "" then
+    local icon_img, icon_uv = get_settings_icon(ctx, ui_state.tb_edit_icon)
+    if icon_img then
+      local cx, cy = reaper.ImGui_GetCursorScreenPos(ctx)
+      reaper.ImGui_InvisibleButton(ctx, "##tb_ed_icon_btn", icon_row_h, icon_row_h)
+      local icon_hovered = reaper.ImGui_IsItemHovered(ctx)
+      icon_clicked = reaper.ImGui_IsItemClicked(ctx, 0)
+      if icon_hovered then
+        reaper.ImGui_DrawList_AddRectFilled(icon_dl, cx - 2, cy - 2, cx + 32, cy + 32, 0xFFFFFF25, 4)
+      end
+      local img_ok = pcall(reaper.ImGui_DrawList_AddImage, icon_dl, icon_img, cx, cy, cx + icon_row_h, cy + icon_row_h, 0, 0, icon_uv or 1, 1, 0xFFFFFFFF)
+      if not img_ok then settings_icon_cache[ui_state.tb_edit_icon] = false end
+      if icon_hovered then
+        reaper.ImGui_SetTooltip(ctx, "Click to change icon")
+      end
+    else
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), COLORS.btn_default)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), COLORS.btn_hover)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), COLORS.btn_active)
+      if reaper.ImGui_SmallButton(ctx, "Change...##tb_ed_icon_change") then
+        icon_clicked = true
+      end
+      reaper.ImGui_PopStyleColor(ctx, 3)
+    end
+  else
+    -- "Set icon" placeholder button: 30x30 dashed outline + label
+    local cx, cy = reaper.ImGui_GetCursorScreenPos(ctx)
+    local hit_w = icon_row_h + 6 + reaper.ImGui_CalcTextSize(ctx, "Set icon...")
+    reaper.ImGui_InvisibleButton(ctx, "##tb_ed_icon_none", hit_w, icon_row_h)
+    local none_hovered = reaper.ImGui_IsItemHovered(ctx)
+    icon_clicked = reaper.ImGui_IsItemClicked(ctx, 0)
+    -- Dashed-style outline box
+    local box_col = none_hovered and 0xAAAAAAFF or 0x666666FF
+    reaper.ImGui_DrawList_AddRect(icon_dl, cx, cy, cx + icon_row_h, cy + icon_row_h, box_col, 4)
+    -- "+" inside the box
+    local plus_col = none_hovered and 0xCCCCCCFF or 0x888888FF
+    local plus_cx = cx + icon_row_h / 2
+    local plus_cy = cy + icon_row_h / 2
+    reaper.ImGui_DrawList_AddLine(icon_dl, plus_cx - 5, plus_cy, plus_cx + 5, plus_cy, plus_col, 1.5)
+    reaper.ImGui_DrawList_AddLine(icon_dl, plus_cx, plus_cy - 5, plus_cx, plus_cy + 5, plus_col, 1.5)
+    -- Label next to box
+    local lbl_y = cy + math.floor((icon_row_h - text_h) / 2)
+    local lbl_col = none_hovered and 0xCCCCCCFF or 0x999999FF
+    reaper.ImGui_DrawList_AddText(icon_dl, cx + icon_row_h + 6, lbl_y, lbl_col, "Set icon...")
+    if none_hovered then
+      reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
+    end
+  end
+  if icon_clicked then
+    ui_state.icon_picker_for = "edit"
+    ui_state.icon_picker_open = true
+    if not ui_state.icon_list then
+      ui_state.icon_list = settings.scan_toolbar_icons()
+    end
+  end
+
+  -- Auto-save for editing existing buttons
+  local btns = settings.current.toolbar_buttons
+  if ui_state.tb_edit_idx and ui_state.tb_edit_idx >= 1 and ui_state.tb_edit_idx <= #btns then
+    local btn = btns[ui_state.tb_edit_idx]
+    if btn and (btn.label ~= ui_state.tb_edit_label
+        or btn.cmd ~= ui_state.tb_edit_cmd
+        or btn.icon ~= ui_state.tb_edit_icon) then
+      if ui_state.tb_edit_label ~= "" then
+        btn.label = ui_state.tb_edit_label
+        btn.cmd = ui_state.tb_edit_cmd
+        btn.icon = ui_state.tb_edit_icon
+        settings.save_toolbar()
+      end
+    end
+  end
+
+  -- Cancel / Add Button (right-aligned) for adding new button
+  if ui_state.tb_edit_idx == nil then
+    reaper.ImGui_Dummy(ctx, 0, 4)
+    local can_confirm = ui_state.tb_edit_label ~= "" and ui_state.tb_edit_cmd ~= ""
+    local cancel_w = 70
+    local add_w = 100
+    local btn_gap = 8
+    local btn_h = 26
+    local avail_w = reaper.ImGui_GetContentRegionAvail(ctx)
+
+    reaper.ImGui_SetCursorPosX(ctx, reaper.ImGui_GetCursorPosX(ctx) + avail_w - cancel_w - btn_gap - add_w)
+
+    -- Cancel (grey, left of the pair)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), COLORS.btn_default)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), COLORS.btn_hover)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), COLORS.btn_active)
+    if reaper.ImGui_Button(ctx, "Cancel##tb_add_cancel", cancel_w, btn_h) then
+      clear_tb_edit()
+    end
+    reaper.ImGui_PopStyleColor(ctx, 3)
+
+    reaper.ImGui_SameLine(ctx, 0, btn_gap)
+
+    -- Add Button (accent, right of the pair)
+    if not can_confirm then
+      reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_Alpha(), 0.4)
+    end
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), COLORS.accent)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), can_confirm and COLORS.accent_hover or COLORS.accent)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), can_confirm and COLORS.accent_active or COLORS.accent)
+    if reaper.ImGui_Button(ctx, "Add Button", add_w, btn_h) and can_confirm then
+      settings.add_toolbar_button(ui_state.tb_edit_label, ui_state.tb_edit_cmd, ui_state.tb_edit_icon)
+      clear_tb_edit()
+    end
+    reaper.ImGui_PopStyleColor(ctx, 3)
+    if not can_confirm then
+      reaper.ImGui_PopStyleVar(ctx)
+    end
+  end
+end
+
+local function draw_toolbar_tab(ctx, settings)
+  -- Cancel shortcut listening when switching to Toolbar tab
+  if ui_state.listening_for then
+    stop_listening(settings)
+  end
+
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), COLORS.header_text)
+  reaper.ImGui_Text(ctx, "Toolbar")
+  reaper.ImGui_PopStyleColor(ctx)
+  reaper.ImGui_Dummy(ctx, 0, 2)
+  reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Custom buttons and separators in the info bar. Drag and drop to reorder.")
+  reaper.ImGui_Dummy(ctx, 0, 4)
+
+  local btns = settings.current.toolbar_buttons or {}
+  local remove_idx = nil
+  local row_metrics = {}
+  local mouse_x, mouse_y = reaper.ImGui_GetMousePos(ctx)
+  local win_hovered = reaper.ImGui_IsWindowHovered(ctx)
+
+  if #btns > 0 then
+    local tbl_flags = reaper.ImGui_TableFlags_None()
+    if reaper.ImGui_BeginTable(ctx, "toolbar_btns", 3, tbl_flags) then
+      reaper.ImGui_TableSetupColumn(ctx, "Icon", reaper.ImGui_TableColumnFlags_WidthFixed(), 50)
+      reaper.ImGui_TableSetupColumn(ctx, "LabelAction", reaper.ImGui_TableColumnFlags_WidthStretch())
+      reaper.ImGui_TableSetupColumn(ctx, "Del", reaper.ImGui_TableColumnFlags_WidthFixed(), 32)
+
+      local icon_size = 30  -- match info bar icon size
+      -- Fixed row height for all rows so delete button stays in same position
+      local row_h_est = math.max(reaper.ImGui_GetTextLineHeightWithSpacing(ctx) * 2 + 2, icon_size + 8)
+
+      for i, btn in ipairs(btns) do
+        local is_sep = btn.type == "separator"
+        reaper.ImGui_TableNextRow(ctx)
+        reaper.ImGui_PushID(ctx, i)
+
+        -- Column 1: Grip + icon preview
+        reaper.ImGui_TableNextColumn(ctx)
+        local cx, cy = reaper.ImGui_GetCursorScreenPos(ctx)
+        row_metrics[i] = {y = cy}
+
+        -- Row hover detection
+        local is_row_hovered = win_hovered
+            and mouse_y >= cy and mouse_y < cy + row_h_est
+            and not ui_state.tb_drag_active
+        local is_editing = (ui_state.tb_edit_idx == i)
+
+        if is_row_hovered and not ui_state.tb_drag_idx then
+          reaper.ImGui_TableSetBgColor(ctx, reaper.ImGui_TableBgTarget_RowBg1(), 0xFFFFFF12)
+          reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
+        elseif is_editing then
+          reaper.ImGui_TableSetBgColor(ctx, reaper.ImGui_TableBgTarget_RowBg1(), (COLORS.accent & 0xFFFFFF00) | 0x18)
+        end
+
+        -- InvisibleButton captures click to prevent window drag
+        reaper.ImGui_InvisibleButton(ctx, "##tb_grip", 50, row_h_est)
+
+        local row_dl = reaper.ImGui_GetWindowDrawList(ctx)
+
+        -- Draw drag grip lines (3 horizontal lines)
+        local grip_x = cx + 8
+        local grip_cy = cy + row_h_est / 2
+        local is_being_dragged = ui_state.tb_drag_active and ui_state.tb_drag_idx == i
+        local grip_col = is_being_dragged and COLORS.accent
+            or (is_row_hovered and COLORS.text or COLORS.text_dim)
+        for li = -1, 1 do
+          local ly = grip_cy + li * 4
+          reaper.ImGui_DrawList_AddLine(row_dl, grip_x, ly, grip_x + 8, ly, grip_col, 1)
+        end
+
+        if is_sep then
+          -- Separator: draw vertical line matching real toolbar size (20px, centered)
+          local sep_icon_x = cx + 20 + math.floor(icon_size / 2)
+          local sep_line_h = 20
+          local sep_top = cy + math.floor((row_h_est - sep_line_h) / 2)
+          reaper.ImGui_DrawList_AddLine(row_dl, sep_icon_x, sep_top, sep_icon_x, sep_top + sep_line_h, 0x888888FF, 1.5)
+        else
+          -- Icon preview next to grip (30x30 to match info bar, vertically centered)
+          local icon_img, icon_uv_u1
+          if btn.icon then icon_img, icon_uv_u1 = get_settings_icon(ctx, btn.icon) end
+          local icon_x = cx + 20
+          local icon_y = cy + math.floor((row_h_est - icon_size) / 2)
+          if icon_img then
+            local img_ok = pcall(reaper.ImGui_DrawList_AddImage, row_dl, icon_img,
+              icon_x, icon_y, icon_x + icon_size, icon_y + icon_size, 0, 0, icon_uv_u1, 1, 0xFFFFFFFF)
+            if not img_ok then settings_icon_cache[btn.icon] = false end
+          else
+            local ph_size = 18
+            local ph_x = icon_x + math.floor((icon_size - ph_size) / 2)
+            local ph_y = cy + math.floor((row_h_est - ph_size) / 2)
+            reaper.ImGui_DrawList_AddRect(row_dl, ph_x, ph_y, ph_x + ph_size, ph_y + ph_size, COLORS.text_dim, 2)
+          end
+        end
+
+        -- Column 2: Label + resolved action name (or "Separator" for separators)
+        reaper.ImGui_TableNextColumn(ctx)
+        local c2x, c2y = reaper.ImGui_GetCursorScreenPos(ctx)
+        local c2_avail = reaper.ImGui_GetContentRegionAvail(ctx)
+        reaper.ImGui_InvisibleButton(ctx, "##tb_row_hit", c2_avail, row_h_est)
+        reaper.ImGui_SetCursorScreenPos(ctx, c2x, c2y)
+
+        if is_sep then
+          local sep_text_y = c2y + math.floor((row_h_est - reaper.ImGui_GetTextLineHeight(ctx)) / 2)
+          reaper.ImGui_SetCursorScreenPos(ctx, c2x, sep_text_y)
+          reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Separator")
+        else
+          reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), COLORS.header_text)
+          reaper.ImGui_Text(ctx, btn.label)
+          reaper.ImGui_PopStyleColor(ctx)
+          local action_name = resolve_action_name(btn.cmd)
+          if action_name then
+            reaper.ImGui_TextColored(ctx, COLORS.text_dim, action_name)
+          else
+            reaper.ImGui_TextColored(ctx, 0x666666FF, btn.cmd)
+          end
+        end
+
+        -- Column 3: Delete button (vertically centered, breathing room from edge)
+        reaper.ImGui_TableNextColumn(ctx)
+        local del_cx, del_cy = reaper.ImGui_GetCursorScreenPos(ctx)
+        local del_btn_h = reaper.ImGui_GetTextLineHeightWithSpacing(ctx)
+        local del_offset_y = math.floor((row_h_est - del_btn_h) / 2)
+        reaper.ImGui_SetCursorScreenPos(ctx, del_cx + 4, del_cy + del_offset_y)
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x00000000)
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x66333399)
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0xCC444499)
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0x666666FF)
+        if reaper.ImGui_SmallButton(ctx, "x##tb_del") then
+          remove_idx = i
+        end
+        reaper.ImGui_PopStyleColor(ctx, 4)
+
+        reaper.ImGui_PopID(ctx)
+      end
+
+      reaper.ImGui_EndTable(ctx)
+    end
+  else
+    reaper.ImGui_TextColored(ctx, COLORS.text_dim, "No toolbar items configured.")
+    reaper.ImGui_Dummy(ctx, 0, 4)
+  end
+
+  -- Compute actual row heights from consecutive Y positions
+  for i = 1, #row_metrics do
+    if i < #row_metrics then
+      row_metrics[i].h = row_metrics[i + 1].y - row_metrics[i].y
+    else
+      row_metrics[i].h = reaper.ImGui_GetTextLineHeightWithSpacing(ctx) * 2 + 2
+    end
+  end
+
+  -- Process delete first (before click/drag to avoid conflicts)
+  if remove_idx then
+    if ui_state.tb_drag_idx == remove_idx then
+      ui_state.tb_drag_idx = nil
+      ui_state.tb_drag_active = false
+    end
+    settings.remove_toolbar_button(remove_idx)
+    if ui_state.tb_edit_idx == remove_idx then
+      clear_tb_edit()
+    elseif ui_state.tb_edit_idx and ui_state.tb_edit_idx > remove_idx then
+      ui_state.tb_edit_idx = ui_state.tb_edit_idx - 1
+    end
+  end
+
+  -- Click/drag initiation: mouse clicked on a row (but not on delete button)
+  if not remove_idx and not ui_state.tb_drag_idx
+      and reaper.ImGui_IsMouseClicked(ctx, 0) and win_hovered then
+    for i, rm in ipairs(row_metrics) do
+      if mouse_y >= rm.y and mouse_y < rm.y + rm.h then
+        ui_state.tb_drag_idx = i
+        ui_state.tb_drag_start_y = mouse_y
+        ui_state.tb_drag_active = false
+        ui_state.tb_drag_target = nil
+        break
+      end
+    end
+  end
+
+  -- Drag processing (mouse held after click on a row)
+  local drag_threshold = 4
+  if ui_state.tb_drag_idx and reaper.ImGui_IsMouseDown(ctx, 0) then
+    local dy = math.abs(mouse_y - (ui_state.tb_drag_start_y or mouse_y))
+    if not ui_state.tb_drag_active and dy >= drag_threshold then
+      ui_state.tb_drag_active = true
+    end
+    if ui_state.tb_drag_active and #row_metrics > 0 then
+      reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
+      -- Find drop target based on mouse Y vs row midpoints
+      local drop_idx = nil
+      for ri = 1, #row_metrics do
+        local rm = row_metrics[ri]
+        local mid = rm.y + rm.h / 2
+        if mouse_y < mid then
+          drop_idx = ri
+          break
+        end
+      end
+      if not drop_idx then drop_idx = #btns + 1 end
+      ui_state.tb_drag_target = drop_idx
+
+      -- Draw insertion line
+      local draw_list = reaper.ImGui_GetWindowDrawList(ctx)
+      local line_y
+      if drop_idx <= #row_metrics then
+        line_y = row_metrics[drop_idx].y - 1
+      else
+        local last = row_metrics[#row_metrics]
+        line_y = last.y + last.h + 1
+      end
+      local win_x, _ = reaper.ImGui_GetWindowPos(ctx)
+      local win_w = reaper.ImGui_GetWindowWidth(ctx)
+      reaper.ImGui_DrawList_AddLine(draw_list, win_x + 20, line_y, win_x + win_w - 20, line_y, COLORS.accent, 2)
+    end
+  elseif ui_state.tb_drag_idx then
+    -- Mouse released
+    if ui_state.tb_drag_active and ui_state.tb_drag_target then
+      -- Drag completed: reorder
+      local from = ui_state.tb_drag_idx
+      local to = ui_state.tb_drag_target
+      if to > from then to = to - 1 end
+      if to ~= from and to >= 1 and to <= #btns then
+        settings.move_toolbar_button(from, to)
+        if ui_state.tb_edit_idx and ui_state.tb_edit_idx > 0 then
+          if ui_state.tb_edit_idx == from then
+            ui_state.tb_edit_idx = to
+          elseif from < to and ui_state.tb_edit_idx > from and ui_state.tb_edit_idx <= to then
+            ui_state.tb_edit_idx = ui_state.tb_edit_idx - 1
+          elseif from > to and ui_state.tb_edit_idx >= to and ui_state.tb_edit_idx < from then
+            ui_state.tb_edit_idx = ui_state.tb_edit_idx + 1
+          end
+        end
+      end
+    elseif not ui_state.tb_drag_active then
+      -- Click (no drag): toggle edit form (skip separators)
+      local idx = ui_state.tb_drag_idx
+      if idx >= 1 and idx <= #btns and btns[idx].type ~= "separator" then
+        if ui_state.tb_edit_idx == idx then
+          clear_tb_edit()
+        else
+          open_tb_edit(idx, btns[idx])
+        end
+      end
+    end
+    ui_state.tb_drag_idx = nil
+    ui_state.tb_drag_start_y = nil
+    ui_state.tb_drag_active = false
+    ui_state.tb_drag_target = nil
+  end
+
+  -- "+ Add Button" and "+ Add Separator" in one row
+  reaper.ImGui_Dummy(ctx, 0, 2)
+  local add_form_open = ui_state.tb_edit_idx == nil
+  local avail_w = reaper.ImGui_GetContentRegionAvail(ctx)
+  local btn_gap = 6
+  local add_btn_w = math.floor((avail_w - btn_gap) * 0.65)
+  local add_sep_w = avail_w - add_btn_w - btn_gap
+
+  -- "+ Add Button" (disabled while add form is open)
+  if add_form_open then
+    reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_Alpha(), 0.35)
+  end
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), COLORS.accent)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), add_form_open and COLORS.accent or COLORS.accent_hover)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), add_form_open and COLORS.accent or COLORS.accent_active)
+  if reaper.ImGui_Button(ctx, "+ Add Button", add_btn_w, 28) and not add_form_open then
+    open_tb_add()
+  end
+  reaper.ImGui_PopStyleColor(ctx, 3)
+  if add_form_open then
+    reaper.ImGui_PopStyleVar(ctx)
+  end
+
+  reaper.ImGui_SameLine(ctx, 0, btn_gap)
+
+  -- "+ Add Separator"
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), COLORS.btn_default)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), COLORS.btn_hover)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), COLORS.btn_active)
+  if reaper.ImGui_Button(ctx, "+ Add Separator", add_sep_w, 28) then
+    settings.add_toolbar_separator()
+  end
+  reaper.ImGui_PopStyleColor(ctx, 3)
+
+  -- Edit form (inline, below button list, NoNav prevents arrow/Enter from moving widget focus)
+  if ui_state.tb_edit_idx ~= -1 then
+    reaper.ImGui_Dummy(ctx, 0, 4)
+    local form_dl = reaper.ImGui_GetWindowDrawList(ctx)
+    local form_x, form_y = reaper.ImGui_GetCursorScreenPos(ctx)
+    local form_w = reaper.ImGui_GetContentRegionAvail(ctx)
+    reaper.ImGui_DrawList_AddLine(form_dl, form_x, form_y, form_x + form_w, form_y, COLORS.separator, 1)
+    reaper.ImGui_Dummy(ctx, 0, 6)
+
+    local child_flags = reaper.ImGui_ChildFlags_AutoResizeY()
+    -- Only block Nav (arrows/Enter) while the action dropdown is visible
+    local dropdown_showing = #ui_state.tb_search_results > 0
+        and ui_state.tb_search_text ~= ""
+        and ui_state.tb_search_confirmed == ""
+    local win_flags = dropdown_showing and reaper.ImGui_WindowFlags_NoNav() or reaper.ImGui_WindowFlags_None()
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ChildBg(), 0x00000000)
+    if reaper.ImGui_BeginChild(ctx, "##tb_edit_form", -1, 0, child_flags, win_flags) then
+      draw_tb_edit_form(ctx, settings)
+      reaper.ImGui_EndChild(ctx)
+    end
+    reaper.ImGui_PopStyleColor(ctx)
+  end
+
+  -- Icon picker popup (shared between edit form and any future use)
+  if ui_state.icon_picker_open then
+    reaper.ImGui_OpenPopup(ctx, "Choose Icon##tb_icon_picker")
+    ui_state.icon_picker_open = false
+    drawing.reset_icon_picker_state()
+  end
+
+  reaper.ImGui_SetNextWindowSize(ctx, 900, 800, reaper.ImGui_Cond_Appearing())
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowPadding(), 16, 14)
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowRounding(), 8)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_PopupBg(), 0x2A2A2AFF)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Border(), COLORS.border)
+  local settings_icon_flags = reaper.ImGui_WindowFlags_NoTitleBar()
+                            + reaper.ImGui_WindowFlags_NoScrollbar()
+  if reaper.ImGui_BeginPopup(ctx, "Choose Icon##tb_icon_picker", settings_icon_flags) then
+    reaper.ImGui_SetNextFrameWantCaptureKeyboard(ctx, true)
+    local icons = ui_state.icon_list or {}
+    if #icons == 0 then
+      reaper.ImGui_TextColored(ctx, COLORS.text_dim, "No toolbar icons found.")
+      reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Install icon packs in REAPER's")
+      reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Data/toolbar_icons/ directory.")
+    else
+      local picked = drawing.draw_icon_picker_content(ctx, icons, "icon_grid", get_settings_icon)
+      if picked == false then
+        reaper.ImGui_CloseCurrentPopup(ctx)
+      elseif picked == "" then
+        ui_state.tb_edit_icon = nil
+        ui_state.icon_picker_for = nil
+        reaper.ImGui_CloseCurrentPopup(ctx)
+      elseif picked then
+        ui_state.tb_edit_icon = picked
+        ui_state.icon_picker_for = nil
+        reaper.ImGui_CloseCurrentPopup(ctx)
+      end
+    end
+    reaper.ImGui_EndPopup(ctx)
+  else
+    if ui_state.icon_picker_for then
+      ui_state.icon_picker_for = nil
+    end
+  end
+  reaper.ImGui_PopStyleColor(ctx, 2)
+  reaper.ImGui_PopStyleVar(ctx, 2)
+end
+
 -- Help content sections (header + body pairs)
+-- Help content with lightweight markup:
+--   Lines with "KEY: description" render as shortcut entries (key highlighted)
+--   Lines starting with "## " render as sub-headers
+--   Lines starting with "- " render as bullet items
+--   Lines starting with "  - " render as indented bullet items
+--   Lines starting with "1. " (etc.) render as numbered steps
+--   Empty lines add paragraph spacing
+--   Other lines render as normal wrapped text
 local HELP_SECTIONS = {
   {
     header = "NVSD ItemView",
-    body = "Ableton-style clip view for REAPER audio items.\nSelect an audio item, run the script, and edit start/end points, gain, pitch, envelopes, and more.",
+    lines = {
+      "Ableton-style clip view for REAPER audio items.",
+      "Select an audio item, run the script, and edit start/end points,",
+      "gain, pitch, envelopes, warp markers, and more.",
+      "All changes are non-destructive and create undo points.",
+    },
   },
   {
-    header = "QUICK START",
-    body = "1. Select an audio item in REAPER\n2. Run the script (Actions > NVSD_ItemView)\n3. Drag the colored markers to adjust start/end points\n4. Use the left panel for gain, pitch, reverse, WARP, and FX\n5. Press Esc to close the script",
+    header = "Quick Start",
+    lines = {
+      "1. Select an audio item in REAPER",
+      "2. Run the script (Actions > NVSD_ItemView)",
+      "3. Drag the colored markers to adjust start/end points",
+      "4. Use the left panel for gain, pitch, reverse, WARP, and FX",
+      "5. Press S to open settings, Esc to close",
+    },
   },
   {
-    header = "WAVEFORM CONTROLS",
-    body = "Ctrl+Scroll: Zoom in/out\nMiddle-drag: Pan waveform\nRuler drag vertical: Zoom\nRuler drag horizontal: Pan\nSet start/end markers and fade positions via configurable shortcuts (see Shortcuts tab, default: Mouse 4/5)\nLeft-click+drag: Select time region\nC: Crop item to selected region (moves markers to selection bounds)\nZ: Zoom to selection or markers (press again to restore previous zoom)\nAlt+Z: Unzoom completely\nCtrl+C: Copy selected region to clipboard\nDrag markers past source boundaries to create loops.",
+    header = "Waveform & Navigation",
+    lines = {
+      "## Zoom & Pan",
+      {key = "Ctrl+Scroll", desc = "Zoom in/out horizontally"},
+      {key = "Middle-drag", desc = "Pan waveform left/right"},
+      {key = "Ruler drag", desc = "Vertical zooms, horizontal pans"},
+      {key = "F", desc = "Reset zoom to fit entire source"},
+      {key = "Z", desc = "Zoom to selection/markers (toggle)"},
+      {key = "Alt+Z", desc = "Unzoom completely"},
+      "",
+      "## Interaction",
+      {key = "Click", desc = "Place preview cursor"},
+      {key = "Left-click+drag", desc = "Select a time region"},
+      {key = "Ctrl+click", desc = "Set start marker (envelopes hidden)"},
+      {key = "Ctrl+Shift+click", desc = "Set end marker (envelopes hidden)"},
+      "",
+      "Auto-focuses when hovered with Ctrl held, so scroll-to-zoom",
+      "works without clicking the window first.",
+    },
   },
   {
-    header = "MARKERS",
-    body = "Drag the start/end markers to adjust playback region.\nAlt+drag either marker to slide both together.\nMarkers snap to grid when snap is enabled.\nDrag past source boundaries to extend into looped playback.",
+    header = "Markers & Regions",
+    lines = {
+      "## Markers",
+      "- Drag start/end markers to adjust playback region",
+      {key = "Alt+drag", desc = "Slide both markers together (preserve length)"},
+      "- Markers snap to grid when snap is on (Ctrl+4)",
+      "- Drag past source boundaries for looped playback",
+      {key = "Mouse4 / Mouse5", desc = "Jump start/end marker to cursor"},
+      {key = "Shift+Mouse4 / Shift+Mouse5", desc = "Set fade-in/fade-out at cursor"},
+      "",
+      "## Region Selection",
+      {key = "Left-click+drag", desc = "Select a time range on waveform"},
+      {key = "C", desc = "Crop item to selected region"},
+      {key = "Ctrl+C", desc = "Copy selected region as a new item"},
+      {key = "Escape", desc = "Clear current selection"},
+      "Selection can be used for zoom (Z) and warp marker insertion.",
+    },
   },
   {
-    header = "LEFT PANEL",
-    body = "Gain slider: Drag to adjust volume (+24dB to -inf). Ctrl+drag for fine control. Double-click to reset.\nPitch knob: Drag to adjust pitch (±48 semitones). Double-click to reset.\nPan knob: Drag to adjust pan. Double-click to reset.\nSemitones/Cents boxes: Click+drag to adjust. Double-click to reset.\nShift+drag any control for fine adjustment.\nWARP button: Toggle pitch preservation when stretching.\nAlgorithm dropdown: Select pitch shift algorithm (when WARP is on).\nReverse button: Reverse the audio.\nClear button: Reset pitch, rate, WARP to defaults.\nEdit button: Open in external editor (or Item Properties if none configured).\nMute checkbox: Toggle item mute.",
+    header = "Left Panel",
+    lines = {
+      "## Controls",
+      {key = "Gain slider", desc = "Volume (+24 dB to -inf). Ctrl+drag for fine control"},
+      {key = "Pitch knob", desc = "Pitch (+/-48 semitones). Shows value in semitones"},
+      {key = "Pan knob", desc = "Stereo pan (L100 to R100)"},
+      {key = "Semitones/Cents", desc = "Click+drag to fine-tune pitch"},
+      "- Double-click any knob/slider to reset to default",
+      "- Ctrl+drag on any control for fine adjustment",
+      "",
+      "## Buttons",
+      {key = "WARP", desc = "Toggle pitch-preserving stretch mode"},
+      {key = "Algorithm", desc = "Select pitch shift algorithm (scroll to cycle)"},
+      {key = "x2 / /2", desc = "Double or halve playback speed"},
+      {key = "Clear", desc = "Reset pitch, playrate, WARP, and stretch markers"},
+      {key = "Reverse", desc = "Reverse the audio"},
+      {key = "Edit", desc = "Open in external editor or REAPER Item Properties"},
+      {key = "Mute", desc = "Show/toggle item mute state"},
+    },
   },
   {
-    header = "ENVELOPES",
-    body = "Shift+V: Show Volume envelope\nShift+H: Show Pitch envelope\nShift+P: Show Pan envelope\nH: Hide envelopes\nL: Lock envelopes in place\n\nDrag nodes to move them. Alt+click to delete.\nDrag segments to move them vertically.\nAlt+drag segments to adjust curve tension.\nShift+click segment to add a node.\nCtrl+drag on empty area for freehand drawing.\nRight-drag to rectangle-select nodes.\nDelete key removes selected nodes.",
+    header = "WARP Mode",
+    lines = {
+      {key = "W", desc = "Toggle WARP mode (preserves pitch when stretching)"},
+      "When active, a bar above the waveform shows stretch markers and transients.",
+      "",
+      "## Warp Bar Elements",
+      "- Stretch markers (solid): drag horizontally to time-stretch audio",
+      "- Slope handles: drag vertically at top of marker for curve control",
+      "- Transients (dotted): auto-detected rhythmic hits",
+      "",
+      "## Shortcuts",
+      {key = "Ctrl+I", desc = "Insert warp marker at cursor (or at selection edges)"},
+      {key = "Ctrl+Shift+I", desc = "Insert manual transient at cursor"},
+      {key = "Ctrl+U", desc = "Add markers at all transients and quantize to grid"},
+      "",
+      "Right-click in the warp bar for a context menu.",
+      "Markers are saved when WARP is turned off and restored when turned back on.",
+    },
   },
   {
-    header = "FADES",
-    body = "Drag fade handles at item edges to adjust fade in/out length.\nSet fade positions via configurable shortcuts (see Shortcuts tab, default: Shift+Mouse 4/5).\nAlt+drag fade curve to adjust curve tension.\nRight-click fade handle to pick fade shape.\nFade shapes: Linear, Fast Start, Fast End, Fast Start Steep, Fast End Steep, Slow Start/End, Slow Start/End Steep.",
+    header = "Envelopes",
+    lines = {
+      "## Show/Hide",
+      {key = "Shift+V", desc = "Volume envelope"},
+      {key = "Shift+H", desc = "Pitch envelope"},
+      {key = "Shift+P", desc = "Pan envelope"},
+      {key = "H", desc = "Hide all envelopes"},
+      {key = "L", desc = "Lock envelopes (prevent edits)"},
+      {key = "Ctrl+4", desc = "Toggle snap to grid"},
+      "",
+      "## Editing",
+      "- Drag nodes to move them",
+      {key = "Alt+click", desc = "Delete a node"},
+      {key = "Shift+click", desc = "Insert new node on segment"},
+      "- Drag a segment vertically to move it",
+      {key = "Alt+drag segment", desc = "Adjust curve tension"},
+      {key = "Ctrl+drag (empty area)", desc = "Freehand drawing"},
+      {key = "Right-drag", desc = "Rectangle-select nodes"},
+      {key = "Delete", desc = "Remove selected nodes"},
+      "",
+      "Envelopes auto-show when switching to an item that has them.",
+      "Points are remapped when cropping (unless locked).",
+    },
   },
   {
-    header = "AUDIO PREVIEW",
-    body = "Ctrl+Space: Preview audio from cursor position.\nRequires SWS extension installed.",
+    header = "Fades",
+    lines = {
+      "- Drag fade handles at item edges to adjust length",
+      {key = "Shift+Mouse4", desc = "Set fade-in position at cursor"},
+      {key = "Shift+Mouse5", desc = "Set fade-out position at cursor"},
+      {key = "Alt+drag curve", desc = "Adjust tension/curvature"},
+      "",
+      "Right-click a fade handle to choose from 7 shapes:",
+      "  Linear, Fast Start, Fast End, Fast Start (Steep),",
+      "  Fast End (Steep), Slow Start/End, Slow Start/End (Steep)",
+      "Fades are clamped so they never overlap.",
+    },
   },
   {
-    header = "FX TOOLBAR",
-    body = "Left button: Toggle all FX bypass (when FX exist) / Add FX (when empty)\nRight button: Open FX chain window / Alt+click to remove all FX",
+    header = "Audio Preview",
+    lines = {
+      {key = "Ctrl+Space", desc = "Preview from cursor position"},
+      {key = "Space", desc = "Stop preview (while playing)"},
+      "Click on the waveform to place the preview cursor.",
+      "Requires the SWS extension (CF_CreatePreview).",
+    },
   },
   {
-    header = "FX LIST",
-    body = "Click: Open/close individual FX window\nShift+click: Toggle individual FX bypass\nAlt+click: Delete individual FX\nAlt+click FX button: Remove all FX\nCheckbox: Toggle individual FX bypass\nDrag up/down: Reorder FX chain\nRight-click: Context menu (Bypass/Enable, Set Offline/Online, Open Chain, Delete)\nScroll: Mouse wheel to scroll long FX lists",
+    header = "FX Toolbar",
+    lines = {
+      "The info bar shows FX controls when the take has FX.",
+      "",
+      "## FX Buttons",
+      {key = "Left FX button", desc = "Toggle all bypass / Add FX"},
+      {key = "Right FX button", desc = "Open FX chain. Alt+click to remove all"},
+      "",
+      "## FX List",
+      {key = "Click", desc = "Open/close individual FX window"},
+      {key = "Shift+click", desc = "Toggle individual FX bypass"},
+      {key = "Alt+click", desc = "Delete individual FX"},
+      "- Checkbox toggles bypass, drag to reorder",
+      "- Right-click for context menu",
+      "- Mouse wheel scrolls long lists",
+    },
   },
   {
-    header = "KEYBOARD SHORTCUTS",
-    body = "All keyboard shortcuts can be rebound in the Shortcuts tab.\nDefault shortcuts:\n  W: Toggle WARP mode\n  Num0: Toggle mute\n  M: Toggle WAV cue markers\n  R: Reverse item\n  C: Crop markers to selection\n  Shift+C: Clear pitch/speed\n  Ctrl+Alt+E: Open in external editor\n  F: Reset zoom to fit\n  Z: Zoom to selection / markers (toggle)\n  Alt+Z: Unzoom completely\n  +/-: Zoom in/out\n  Ctrl+4: Toggle envelope snap\n  L: Lock envelopes\n  Shift+V/H/P: Show Volume/Pitch/Pan envelope\n  H: Hide envelopes\n  Ctrl+Space: Audio preview\n  S: Open settings\n  Space: Play/Stop\n  Ctrl+Z/Y: Undo/Redo\n  Ctrl+C: Copy region",
+    header = "Custom Toolbar",
+    lines = {
+      "Add custom action buttons via the Toolbar tab in settings.",
+      "",
+      "## Adding",
+      "- Click a REAPER action from search, or paste a command ID",
+      "- Set a label and optionally pick an icon",
+      "",
+      "## Managing",
+      "- Drag rows to reorder, click to edit, x to remove",
+      "- Add separators to group buttons visually",
+      {key = "Ctrl+Z / Ctrl+Y", desc = "Undo/redo toolbar changes"},
+      "Right-click a toolbar button for its context menu.",
+    },
   },
   {
-    header = "WAV CUE MARKERS",
-    body = "M: Toggle display of embedded WAV cue markers\n\nSome WAV files contain embedded cue points (markers with labels). These appear as vertical dashed lines with text labels on the waveform.\nThe CUE button in the info bar appears when the current file has cue markers.\nRequires SWS extension.",
+    header = "Info Bar",
+    lines = {
+      "The bar at the top of the waveform area shows:",
+      "- Filename (click to open in Media Explorer)",
+      "- Sample rate, bit depth, BPM",
+      "- Playrate (when not 1x)",
+      "- CUE button (when file has WAV cue markers)",
+      "- FX controls and custom toolbar buttons",
+      "Track/item color appears as a strip above the bar.",
+    },
   },
   {
-    header = "TIPS",
-    body = "Map the script to a REAPER action shortcut (Actions > Show action list > search NVSD) for quick toggle on/off.\nRight-click the title bar to dock the window anywhere.\nGain changes are non-destructive and can be undone.\nWARP mode stretches audio to fit markers without pitch change.\nClick the filename in the info bar to show it in REAPER's Media Explorer.\nHover over any element for a tooltip with available actions.\nAll settings persist between sessions via ExtState.",
+    header = "WAV Cue Markers",
+    lines = {
+      {key = "M", desc = "Toggle display of embedded WAV cue markers"},
+      "Cue points appear as dashed lines with labels on the waveform.",
+      "The CUE button appears when the file has cue markers.",
+      "Requires the SWS extension.",
+    },
+  },
+  {
+    header = "Keyboard Shortcuts",
+    lines = {
+      "All shortcuts can be rebound in the Shortcuts tab.",
+      "",
+      "## Rebindable",
+      {key = "W", desc = "Toggle WARP mode"},
+      {key = "Num0", desc = "Toggle mute"},
+      {key = "R", desc = "Reverse item"},
+      {key = "C", desc = "Crop to selection"},
+      {key = "Shift+C", desc = "Clear pitch/speed/WARP"},
+      {key = "Ctrl+Alt+E", desc = "Open in external editor"},
+      {key = "F", desc = "Fit zoom"},
+      {key = "Z", desc = "Zoom to selection/markers"},
+      {key = "Alt+Z", desc = "Unzoom"},
+      {key = "Ctrl+4", desc = "Toggle envelope snap"},
+      {key = "L", desc = "Lock envelopes"},
+      {key = "Shift+V / H / P", desc = "Volume / Pitch / Pan envelope"},
+      {key = "H", desc = "Hide envelopes"},
+      {key = "M", desc = "Toggle cue markers"},
+      {key = "Ctrl+Space", desc = "Audio preview"},
+      {key = "Ctrl+F", desc = "Show in Media Explorer"},
+      {key = "S", desc = "Open settings"},
+      {key = "Mouse4 / Mouse5", desc = "Set start/end marker"},
+      {key = "Shift+Mouse4 / Mouse5", desc = "Set fade-in/fade-out"},
+      {key = "Ctrl+I", desc = "Insert warp marker"},
+      {key = "Ctrl+Shift+I", desc = "Insert transient"},
+      {key = "Ctrl+U", desc = "Quantize to transients"},
+      "",
+      "## Fixed (not rebindable)",
+      {key = "Space", desc = "Play/Stop transport (or stop preview)"},
+      {key = "Ctrl+Z", desc = "Undo (zoom > toolbar > REAPER)"},
+      {key = "Ctrl+Y", desc = "Redo (toolbar > REAPER)"},
+      {key = "Ctrl+C", desc = "Copy selected region"},
+      {key = "Escape", desc = "Clear selection, then close"},
+      {key = "Delete", desc = "Delete selected envelope nodes"},
+      {key = "Ctrl+Scroll", desc = "Zoom"},
+      {key = "Middle-drag", desc = "Pan"},
+      "Double-click any knob/slider to reset to default.",
+    },
+  },
+  {
+    header = "Tips",
+    lines = {
+      "- Map the script to a toolbar button or shortcut for quick toggle",
+      "- Running the script again while open will close it",
+      "- Right-click title bar to dock the window",
+      "- Deselecting an item doesn't clear the view",
+      "- WARP markers are remembered per-item and can be restored",
+      "- All settings persist between sessions",
+      "- JS_ReaScriptAPI extension improves knob/slider drag range",
+      "- Hover any element for a tooltip",
+    },
   },
 }
+
+-- Help rendering colors (extend base COLORS)
+local HELP_COLORS = {
+  key = 0x7BBDF7FF,        -- bright blue for shortcut keys
+  sub_header = 0xAAAAAAFF,  -- lighter gray for sub-headers
+  bullet = 0x666666FF,     -- dim bullet marker
+  step_num = 0x4A90D9FF,   -- accent for numbered steps
+}
+
+-- Render a single help line with smart formatting
+local function draw_help_line(ctx, line, content_w)
+  if type(line) == "table" then
+    -- Shortcut entry: {key = "...", desc = "..."}
+    reaper.ImGui_TextColored(ctx, HELP_COLORS.key, "  " .. line.key)
+    reaper.ImGui_SameLine(ctx)
+    reaper.ImGui_TextColored(ctx, COLORS.text_dim, " -")
+    reaper.ImGui_SameLine(ctx)
+    reaper.ImGui_PushTextWrapPos(ctx, content_w)
+    reaper.ImGui_TextWrapped(ctx, " " .. line.desc)
+    reaper.ImGui_PopTextWrapPos(ctx)
+  elseif line == "" then
+    -- Blank line: paragraph spacing
+    reaper.ImGui_Dummy(ctx, 0, 3)
+  elseif line:sub(1, 3) == "## " then
+    -- Sub-header
+    reaper.ImGui_Dummy(ctx, 0, 2)
+    reaper.ImGui_TextColored(ctx, HELP_COLORS.sub_header, "  " .. line:sub(4))
+    reaper.ImGui_Dummy(ctx, 0, 1)
+  elseif line:sub(1, 4) == "  - " then
+    -- Indented bullet
+    reaper.ImGui_TextColored(ctx, HELP_COLORS.bullet, "        -")
+    reaper.ImGui_SameLine(ctx)
+    reaper.ImGui_PushTextWrapPos(ctx, content_w)
+    reaper.ImGui_TextWrapped(ctx, " " .. line:sub(5))
+    reaper.ImGui_PopTextWrapPos(ctx)
+  elseif line:sub(1, 2) == "- " then
+    -- Bullet item
+    reaper.ImGui_TextColored(ctx, HELP_COLORS.bullet, "      -")
+    reaper.ImGui_SameLine(ctx)
+    reaper.ImGui_PushTextWrapPos(ctx, content_w)
+    reaper.ImGui_TextWrapped(ctx, " " .. line:sub(3))
+    reaper.ImGui_PopTextWrapPos(ctx)
+  elseif line:match("^%d+%. ") then
+    -- Numbered step
+    local num, rest = line:match("^(%d+%.) (.+)")
+    reaper.ImGui_TextColored(ctx, HELP_COLORS.step_num, "  " .. num)
+    reaper.ImGui_SameLine(ctx)
+    reaper.ImGui_PushTextWrapPos(ctx, content_w)
+    reaper.ImGui_TextWrapped(ctx, " " .. rest)
+    reaper.ImGui_PopTextWrapPos(ctx)
+  else
+    -- Normal text, indented
+    reaper.ImGui_PushTextWrapPos(ctx, content_w)
+    reaper.ImGui_TextWrapped(ctx, "    " .. line)
+    reaper.ImGui_PopTextWrapPos(ctx)
+  end
+end
 
 -- Draw Help tab content
 local function draw_help_tab(ctx, settings)
@@ -796,23 +2013,33 @@ local function draw_help_tab(ctx, settings)
   end
 
   local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
-  if reaper.ImGui_BeginChild(ctx, "help_scroll", avail_w, avail_h - 40) then
+  if reaper.ImGui_BeginChild(ctx, "help_scroll", avail_w, avail_h - 54) then
+    local content_w = avail_w - 16  -- margin for scrollbar
     for i, section in ipairs(HELP_SECTIONS) do
       if i == 1 then
-        -- Title section: use accent color
-        reaper.ImGui_TextColored(ctx, COLORS.accent, section.header)
+        -- Title: white, prominent, with extra spacing
+        reaper.ImGui_Dummy(ctx, 0, 2)
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), COLORS.header_text)
+        reaper.ImGui_Text(ctx, "  " .. section.header)
+        reaper.ImGui_PopStyleColor(ctx)
+        reaper.ImGui_Dummy(ctx, 0, 1)
       else
-        -- Section header: dim color
-        reaper.ImGui_TextColored(ctx, COLORS.text_dim, section.header)
+        -- Section header: accent color, uppercase
+        reaper.ImGui_Dummy(ctx, 0, 2)
+        local dl = reaper.ImGui_GetWindowDrawList(ctx)
+        local lx, ly = reaper.ImGui_GetCursorScreenPos(ctx)
+        reaper.ImGui_DrawList_AddLine(dl, lx + 4, ly, lx + content_w - 4, ly, COLORS.separator, 1)
+        reaper.ImGui_Dummy(ctx, 0, 6)
+        reaper.ImGui_TextColored(ctx, COLORS.accent, "  " .. section.header:upper())
+        reaper.ImGui_Dummy(ctx, 0, 3)
       end
-      reaper.ImGui_Spacing(ctx)
-      reaper.ImGui_TextWrapped(ctx, section.body)
-      reaper.ImGui_Spacing(ctx)
-      if i < #HELP_SECTIONS then
-        reaper.ImGui_Separator(ctx)
-        reaper.ImGui_Spacing(ctx)
+
+      -- Render body lines
+      for _, line in ipairs(section.lines) do
+        draw_help_line(ctx, line, content_w)
       end
     end
+    reaper.ImGui_Dummy(ctx, 0, 8)
     reaper.ImGui_EndChild(ctx)
   end
 end
@@ -834,18 +2061,35 @@ function settings_ui.draw(ctx, settings)
     end
   end
 
-  reaper.ImGui_SetNextWindowSize(ctx, 420, 600, reaper.ImGui_Cond_FirstUseEver())
+  -- Center on screen (like modal)
+  local viewport = reaper.ImGui_GetMainViewport(ctx)
+  local vp_cx, vp_cy = reaper.ImGui_Viewport_GetCenter(viewport)
+  reaper.ImGui_SetNextWindowPos(ctx, vp_cx, vp_cy, reaper.ImGui_Cond_Appearing(), 0.5, 0.5)
+  reaper.ImGui_SetNextWindowSize(ctx, 500, 680, reaper.ImGui_Cond_FirstUseEver())
 
-  -- Style: dark background matching main window
+  -- Style: dark theme matching modal aesthetic
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_WindowBg(), COLORS.window_bg)
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ChildBg(), COLORS.child_bg)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Border(), COLORS.border)
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), COLORS.btn_default)
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), COLORS.btn_hover)
-  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Tab(), COLORS.btn_default)
-  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_TabHovered(), COLORS.accent_hover)
-  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_TabSelected(), COLORS.accent)
-  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowPadding(), 12, 12)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), COLORS.btn_active)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Tab(), COLORS.tab_bg)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_TabHovered(), COLORS.tab_hover)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_TabSelected(), COLORS.tab_selected)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Separator(), COLORS.separator)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_FrameBg(), 0x333333FF)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_FrameBgHovered(), 0x3D3D3DFF)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_TitleBg(), 0x222222FF)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_TitleBgActive(), 0x2A2A2AFF)
+  local style_color_count = 14
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowPadding(), 20, 16)
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowRounding(), 8)
   reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_FrameRounding(), 4)
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_ItemSpacing(), 8, 8)
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_TabRounding(), 4)
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_FramePadding(), 8, 6)
+  local style_var_count = 6
 
   local flags = reaper.ImGui_WindowFlags_NoCollapse()
   local visible, open = reaper.ImGui_Begin(ctx, "NVSD ItemView Settings", true, flags)
@@ -853,13 +2097,14 @@ function settings_ui.draw(ctx, settings)
   if not open then
     settings_ui.close(settings, true)
     reaper.ImGui_End(ctx)
-    reaper.ImGui_PopStyleVar(ctx, 2)
-    reaper.ImGui_PopStyleColor(ctx, 7)
+    reaper.ImGui_PopStyleVar(ctx, style_var_count)
+    reaper.ImGui_PopStyleColor(ctx, style_color_count)
     return
   end
 
   if visible then
     -- Tab bar
+    local is_toolbar_tab = false
     if reaper.ImGui_BeginTabBar(ctx, "settings_tabs") then
       if reaper.ImGui_BeginTabItem(ctx, "Appearance") then
         reaper.ImGui_Spacing(ctx)
@@ -871,6 +2116,12 @@ function settings_ui.draw(ctx, settings)
         draw_shortcuts_tab(ctx, settings)
         reaper.ImGui_EndTabItem(ctx)
       end
+      if reaper.ImGui_BeginTabItem(ctx, "Toolbar") then
+        is_toolbar_tab = true
+        reaper.ImGui_Spacing(ctx)
+        draw_toolbar_tab(ctx, settings)
+        reaper.ImGui_EndTabItem(ctx)
+      end
       if reaper.ImGui_BeginTabItem(ctx, "Help") then
         reaper.ImGui_Spacing(ctx)
         draw_help_tab(ctx, settings)
@@ -879,53 +2130,74 @@ function settings_ui.draw(ctx, settings)
       reaper.ImGui_EndTabBar(ctx)
     end
 
-    -- Bottom buttons
-    reaper.ImGui_Spacing(ctx)
-    reaper.ImGui_Separator(ctx)
-    reaper.ImGui_Spacing(ctx)
+    -- Bottom buttons (hidden on Toolbar tab - toolbar auto-saves)
+    if not is_toolbar_tab then
+      reaper.ImGui_Spacing(ctx)
+      local draw_list = reaper.ImGui_GetWindowDrawList(ctx)
+      local sx, sy = reaper.ImGui_GetCursorScreenPos(ctx)
+      local content_w = reaper.ImGui_GetContentRegionAvail(ctx)
+      reaper.ImGui_DrawList_AddLine(draw_list, sx, sy, sx + content_w, sy, COLORS.separator, 1)
+      reaper.ImGui_Dummy(ctx, 0, 6)
 
-    -- Reset Defaults (left)
-    if reaper.ImGui_Button(ctx, "Reset Defaults") then
-      settings.reset_all()
-      ui_state.pending_theme_id = settings.current.theme_id
-      stop_listening(settings)
-      ui_state.conflict_pending = nil
-      ui_state.conflict_just_cleared = nil
+      -- Reset Defaults (subtle, left)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x00000000)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x00000000)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x00000000)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), COLORS.text_dim)
+      if reaper.ImGui_SmallButton(ctx, "Reset Defaults") then
+        settings.reset_all()
+        ui_state.pending_theme_id = settings.current.theme_id
+        stop_listening(settings)
+        ui_state.conflict_pending = nil
+        ui_state.conflict_just_cleared = nil
+      end
+      if reaper.ImGui_IsItemHovered(ctx) then
+        local ix, iy = reaper.ImGui_GetItemRectMin(ctx)
+        local ix2, iy2 = reaper.ImGui_GetItemRectMax(ctx)
+        reaper.ImGui_DrawList_AddLine(draw_list, ix, iy2, ix2, iy2, COLORS.text_dim, 1)
+      end
+      reaper.ImGui_PopStyleColor(ctx, 4)
+
+      -- Right-aligned Cancel + Save & Close
+      local cancel_w = 80
+      local save_w = 120
+      local btn_gap = 8
+      local btn_h = 30
+      local win_w = reaper.ImGui_GetWindowWidth(ctx)
+      local padding = 20
+      local buttons_width = cancel_w + btn_gap + save_w
+
+      reaper.ImGui_SameLine(ctx, win_w - padding - buttons_width)
+
+      -- Cancel (grey, subtle)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), COLORS.btn_default)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), COLORS.btn_hover)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), COLORS.btn_active)
+      if reaper.ImGui_Button(ctx, "Cancel", cancel_w, btn_h) then
+        settings_ui.close(settings, true)
+      end
+      reaper.ImGui_PopStyleColor(ctx, 3)
+
+      reaper.ImGui_SameLine(ctx, 0, btn_gap)
+
+      -- Save & Close (accent, primary)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), COLORS.accent)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), COLORS.accent_hover)
+      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), COLORS.accent_active)
+      if reaper.ImGui_Button(ctx, "Save & Close", save_w, btn_h) then
+        -- Theme still uses pending (live preview), shortcuts already applied
+        settings.current.theme_id = ui_state.pending_theme_id
+        settings.colors_dirty = true
+        settings.save()
+        settings_ui.close(settings, false)
+      end
+      reaper.ImGui_PopStyleColor(ctx, 3)
     end
-
-    -- Right-aligned Cancel + Save & Close
-    local cancel_w = 70
-    local save_w = 110
-    local btn_gap = 8
-    local win_w = reaper.ImGui_GetWindowWidth(ctx)
-    local padding = 12
-    local buttons_width = cancel_w + btn_gap + save_w
-
-    reaper.ImGui_SameLine(ctx, win_w - padding - buttons_width)
-
-    -- Cancel
-    if reaper.ImGui_Button(ctx, "Cancel", cancel_w) then
-      settings_ui.close(settings, true)
-    end
-
-    reaper.ImGui_SameLine(ctx, 0, btn_gap)
-
-    -- Save & Close (accent colored)
-    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), COLORS.accent)
-    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), COLORS.accent_hover)
-    if reaper.ImGui_Button(ctx, "Save & Close", save_w) then
-      -- Theme still uses pending (live preview), shortcuts already applied
-      settings.current.theme_id = ui_state.pending_theme_id
-      settings.colors_dirty = true
-      settings.save()
-      settings_ui.close(settings, false)
-    end
-    reaper.ImGui_PopStyleColor(ctx, 2)
   end
 
   reaper.ImGui_End(ctx)
-  reaper.ImGui_PopStyleVar(ctx, 2)
-  reaper.ImGui_PopStyleColor(ctx, 7)
+  reaper.ImGui_PopStyleVar(ctx, style_var_count)
+  reaper.ImGui_PopStyleColor(ctx, style_color_count)
 end
 
 return settings_ui

@@ -2906,9 +2906,12 @@ end
 function TestNVSDItemView:test_default_shortcuts_complete()
     local expected_names = {
         "zoom_in", "zoom_out", "reset_zoom", "toggle_warp", "toggle_mute",
-        "reverse", "clear", "open_editor", "toggle_snap", "audio_preview",
-        "envelope_lock", "show_volume_env", "show_pitch_env", "show_pan_env",
-        "hide_envelopes", "open_settings",
+        "reverse", "clear", "crop_to_selection", "open_editor", "toggle_snap",
+        "audio_preview", "envelope_lock", "show_volume_env", "show_pitch_env",
+        "show_pan_env", "hide_envelopes", "open_settings",
+        "set_start_marker", "set_end_marker", "set_fade_in", "set_fade_out",
+        "zoom_to_markers", "unzoom_all", "toggle_cue_markers", "show_in_explorer",
+        "quantize_transients", "insert_warp_marker", "add_transient",
     }
 
     for _, name in ipairs(expected_names) do

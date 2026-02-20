@@ -818,83 +818,265 @@ Built-in gain, pitch, WARP, reverse, customizable shortcuts, and 8 color themes.
         <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/d19e47ed768e6f064f3273a2935546b8f96ef00a/Scripts/NVSD/lib/settings.lua</source>
         <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/d19e47ed768e6f064f3273a2935546b8f96ef00a/Scripts/NVSD/lib/settings_ui.lua</source>
       </version>
-      <version name="1.0.63" author="NVSD" time="2026-02-20T00:00:00Z">
-        <changelog><![CDATA[Fix knob/slider drag on Mac (verify cursor teleport, fallback to frame-to-frame tracking)]]></changelog>
-        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/2b0622d/Scripts/NVSD/NVSD_ItemView.lua</source>
-        <source>https://github.com/novosadand/NVSD_ItemView/raw/2b0622d/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
-        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/2b0622d/Scripts/NVSD/lib/config.lua</source>
-        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/2b0622d/Scripts/NVSD/lib/state.lua</source>
-        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/2b0622d/Scripts/NVSD/lib/utils.lua</source>
-        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/2b0622d/Scripts/NVSD/lib/drawing.lua</source>
-        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/2b0622d/Scripts/NVSD/lib/fade_curves.lua</source>
-        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/2b0622d/Scripts/NVSD/lib/controls.lua</source>
-        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/2b0622d/Scripts/NVSD/lib/settings.lua</source>
-        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/2b0622d/Scripts/NVSD/lib/settings_ui.lua</source>
+      <version name="1.0.63" author="NVSD" time="2026-02-13T00:00:00Z">
+        <changelog><![CDATA[Warp mode: real-time start marker drag with stretch marker shifting, extend left to source start, mouse 4/5 quick-set, grid snap alignment]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/bab3738cf137af38746a59437286f44135b5050b/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/bab3738cf137af38746a59437286f44135b5050b/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/bab3738cf137af38746a59437286f44135b5050b/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/bab3738cf137af38746a59437286f44135b5050b/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/bab3738cf137af38746a59437286f44135b5050b/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/bab3738cf137af38746a59437286f44135b5050b/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/bab3738cf137af38746a59437286f44135b5050b/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/bab3738cf137af38746a59437286f44135b5050b/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/bab3738cf137af38746a59437286f44135b5050b/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/bab3738cf137af38746a59437286f44135b5050b/Scripts/NVSD/lib/settings_ui.lua</source>
       </version>
-      <version name="1.0.64" author="NVSD" time="2026-02-20T00:00:00Z">
-        <changelog><![CDATA[Fix knob/slider drag on Mac: disable cursor lock permanently when teleport fails]]></changelog>
-        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/cd6e49a/Scripts/NVSD/NVSD_ItemView.lua</source>
-        <source>https://github.com/novosadand/NVSD_ItemView/raw/cd6e49a/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
-        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/cd6e49a/Scripts/NVSD/lib/config.lua</source>
-        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/cd6e49a/Scripts/NVSD/lib/state.lua</source>
-        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/cd6e49a/Scripts/NVSD/lib/utils.lua</source>
-        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/cd6e49a/Scripts/NVSD/lib/drawing.lua</source>
-        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/cd6e49a/Scripts/NVSD/lib/fade_curves.lua</source>
-        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/cd6e49a/Scripts/NVSD/lib/controls.lua</source>
-        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/cd6e49a/Scripts/NVSD/lib/settings.lua</source>
-        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/cd6e49a/Scripts/NVSD/lib/settings_ui.lua</source>
+      <version name="1.0.64" author="NVSD" time="2026-02-14T00:00:00Z">
+        <changelog><![CDATA[Custom toolbar buttons in info bar: add REAPER action buttons via right-click or Settings, with icon support and popup positioning]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/a6a6d38d7c2374b3a0b4e2e6e55d8e3b7eb6ed34/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/a6a6d38d7c2374b3a0b4e2e6e55d8e3b7eb6ed34/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/a6a6d38d7c2374b3a0b4e2e6e55d8e3b7eb6ed34/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/a6a6d38d7c2374b3a0b4e2e6e55d8e3b7eb6ed34/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/a6a6d38d7c2374b3a0b4e2e6e55d8e3b7eb6ed34/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/a6a6d38d7c2374b3a0b4e2e6e55d8e3b7eb6ed34/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/a6a6d38d7c2374b3a0b4e2e6e55d8e3b7eb6ed34/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/a6a6d38d7c2374b3a0b4e2e6e55d8e3b7eb6ed34/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/a6a6d38d7c2374b3a0b4e2e6e55d8e3b7eb6ed34/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/a6a6d38d7c2374b3a0b4e2e6e55d8e3b7eb6ed34/Scripts/NVSD/lib/settings_ui.lua</source>
       </version>
-      <version name="1.0.65" author="NVSD" time="2026-02-20T00:00:00Z">
-        <changelog><![CDATA[Fix knob/slider drag on Mac: fall back to ImGui mouse delta when cursor lock broken]]></changelog>
-        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/9c94ff0/Scripts/NVSD/NVSD_ItemView.lua</source>
-        <source>https://github.com/novosadand/NVSD_ItemView/raw/9c94ff0/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
-        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/9c94ff0/Scripts/NVSD/lib/config.lua</source>
-        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/9c94ff0/Scripts/NVSD/lib/state.lua</source>
-        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/9c94ff0/Scripts/NVSD/lib/utils.lua</source>
-        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/9c94ff0/Scripts/NVSD/lib/drawing.lua</source>
-        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/9c94ff0/Scripts/NVSD/lib/fade_curves.lua</source>
-        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/9c94ff0/Scripts/NVSD/lib/controls.lua</source>
-        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/9c94ff0/Scripts/NVSD/lib/settings.lua</source>
-        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/9c94ff0/Scripts/NVSD/lib/settings_ui.lua</source>
+      <version name="1.0.65" author="NVSD" time="2026-02-14T00:00:00Z">
+        <changelog><![CDATA[Fix stuck toggle state during auto-reload with heartbeat mechanism]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/5cea95507b279f55d73b80312910f736d39fa06e/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/5cea95507b279f55d73b80312910f736d39fa06e/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/5cea95507b279f55d73b80312910f736d39fa06e/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/5cea95507b279f55d73b80312910f736d39fa06e/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/5cea95507b279f55d73b80312910f736d39fa06e/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/5cea95507b279f55d73b80312910f736d39fa06e/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/5cea95507b279f55d73b80312910f736d39fa06e/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/5cea95507b279f55d73b80312910f736d39fa06e/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/5cea95507b279f55d73b80312910f736d39fa06e/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/5cea95507b279f55d73b80312910f736d39fa06e/Scripts/NVSD/lib/settings_ui.lua</source>
       </version>
-      <version name="1.0.66" author="NVSD" time="2026-02-20T00:00:00Z">
-        <changelog><![CDATA[Fix first-frame cursor lock test: use ImGui delta until teleport is verified working]]></changelog>
-        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/9ff0e30/Scripts/NVSD/NVSD_ItemView.lua</source>
-        <source>https://github.com/novosadand/NVSD_ItemView/raw/9ff0e30/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
-        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/9ff0e30/Scripts/NVSD/lib/config.lua</source>
-        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/9ff0e30/Scripts/NVSD/lib/state.lua</source>
-        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/9ff0e30/Scripts/NVSD/lib/utils.lua</source>
-        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/9ff0e30/Scripts/NVSD/lib/drawing.lua</source>
-        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/9ff0e30/Scripts/NVSD/lib/fade_curves.lua</source>
-        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/9ff0e30/Scripts/NVSD/lib/controls.lua</source>
-        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/9ff0e30/Scripts/NVSD/lib/settings.lua</source>
-        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/9ff0e30/Scripts/NVSD/lib/settings_ui.lua</source>
+      <version name="1.0.66" author="NVSD" time="2026-02-14T00:00:00Z">
+        <changelog><![CDATA[Fix Change Icon from context menu, improve popup positioning for edit and icon picker windows]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/8c979fb43e0873da3654879c45ace87e2776b77b/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/8c979fb43e0873da3654879c45ace87e2776b77b/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/8c979fb43e0873da3654879c45ace87e2776b77b/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/8c979fb43e0873da3654879c45ace87e2776b77b/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/8c979fb43e0873da3654879c45ace87e2776b77b/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/8c979fb43e0873da3654879c45ace87e2776b77b/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/8c979fb43e0873da3654879c45ace87e2776b77b/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/8c979fb43e0873da3654879c45ace87e2776b77b/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/8c979fb43e0873da3654879c45ace87e2776b77b/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/8c979fb43e0873da3654879c45ace87e2776b77b/Scripts/NVSD/lib/settings_ui.lua</source>
       </version>
-      <version name="1.0.67" author="NVSD" time="2026-02-20T00:00:00Z">
-        <changelog><![CDATA[Debug: drag diagnostics overlay for Mac knob testing]]></changelog>
-        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/9d0fa4d/Scripts/NVSD/NVSD_ItemView.lua</source>
-        <source>https://github.com/novosadand/NVSD_ItemView/raw/9d0fa4d/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
-        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/9d0fa4d/Scripts/NVSD/lib/config.lua</source>
-        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/9d0fa4d/Scripts/NVSD/lib/state.lua</source>
-        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/9d0fa4d/Scripts/NVSD/lib/utils.lua</source>
-        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/9d0fa4d/Scripts/NVSD/lib/drawing.lua</source>
-        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/9d0fa4d/Scripts/NVSD/lib/fade_curves.lua</source>
-        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/9d0fa4d/Scripts/NVSD/lib/controls.lua</source>
-        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/9d0fa4d/Scripts/NVSD/lib/settings.lua</source>
-        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/9d0fa4d/Scripts/NVSD/lib/settings_ui.lua</source>
+      <version name="1.0.67" author="NVSD" time="2026-02-14T00:00:00Z">
+        <changelog><![CDATA[Direct icon picker opens above the button instead of below]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/f5fa32284f28997e99bca1550301cf4b32bb49a4/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/f5fa32284f28997e99bca1550301cf4b32bb49a4/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/f5fa32284f28997e99bca1550301cf4b32bb49a4/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/f5fa32284f28997e99bca1550301cf4b32bb49a4/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/f5fa32284f28997e99bca1550301cf4b32bb49a4/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/f5fa32284f28997e99bca1550301cf4b32bb49a4/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/f5fa32284f28997e99bca1550301cf4b32bb49a4/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/f5fa32284f28997e99bca1550301cf4b32bb49a4/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/f5fa32284f28997e99bca1550301cf4b32bb49a4/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/f5fa32284f28997e99bca1550301cf4b32bb49a4/Scripts/NVSD/lib/settings_ui.lua</source>
       </version>
-      <version name="1.0.68" author="NVSD" time="2026-02-20T00:00:00Z">
-        <changelog><![CDATA[Fix Mac knobs: detect macOS mouse event suppression at runtime, fall back to ImGui delta]]></changelog>
-        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/d0d6062/Scripts/NVSD/NVSD_ItemView.lua</source>
-        <source>https://github.com/novosadand/NVSD_ItemView/raw/d0d6062/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
-        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/d0d6062/Scripts/NVSD/lib/config.lua</source>
-        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/d0d6062/Scripts/NVSD/lib/state.lua</source>
-        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/d0d6062/Scripts/NVSD/lib/utils.lua</source>
-        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/d0d6062/Scripts/NVSD/lib/drawing.lua</source>
-        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/d0d6062/Scripts/NVSD/lib/fade_curves.lua</source>
-        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/d0d6062/Scripts/NVSD/lib/controls.lua</source>
-        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/d0d6062/Scripts/NVSD/lib/settings.lua</source>
-        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/d0d6062/Scripts/NVSD/lib/settings_ui.lua</source>
+      <version name="1.0.68" author="NVSD" time="2026-02-14T00:00:00Z">
+        <changelog><![CDATA[Fix popup modal dragging: skip cursor override when popup is open]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/1a338c9fadc1c4b838b62167f2fba776a54b1f70/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/1a338c9fadc1c4b838b62167f2fba776a54b1f70/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/1a338c9fadc1c4b838b62167f2fba776a54b1f70/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/1a338c9fadc1c4b838b62167f2fba776a54b1f70/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/1a338c9fadc1c4b838b62167f2fba776a54b1f70/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/1a338c9fadc1c4b838b62167f2fba776a54b1f70/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/1a338c9fadc1c4b838b62167f2fba776a54b1f70/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/1a338c9fadc1c4b838b62167f2fba776a54b1f70/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/1a338c9fadc1c4b838b62167f2fba776a54b1f70/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/1a338c9fadc1c4b838b62167f2fba776a54b1f70/Scripts/NVSD/lib/settings_ui.lua</source>
+      </version>
+      <version name="1.0.69" author="NVSD" time="2026-02-14T00:00:00Z">
+        <changelog><![CDATA[Fix ImGui_Attach overflow: stop clearing icon cache on every icon change]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/ac8d724f84fd276fb0b51d0342a5c1d9f1c48c14/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/ac8d724f84fd276fb0b51d0342a5c1d9f1c48c14/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/ac8d724f84fd276fb0b51d0342a5c1d9f1c48c14/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/ac8d724f84fd276fb0b51d0342a5c1d9f1c48c14/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/ac8d724f84fd276fb0b51d0342a5c1d9f1c48c14/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/ac8d724f84fd276fb0b51d0342a5c1d9f1c48c14/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/ac8d724f84fd276fb0b51d0342a5c1d9f1c48c14/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/ac8d724f84fd276fb0b51d0342a5c1d9f1c48c14/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/ac8d724f84fd276fb0b51d0342a5c1d9f1c48c14/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/ac8d724f84fd276fb0b51d0342a5c1d9f1c48c14/Scripts/NVSD/lib/settings_ui.lua</source>
+      </version>
+      <version name="1.0.70" author="NVSD" time="2026-02-14T00:00:00Z">
+        <changelog><![CDATA[Taller toolbar bar (36px) with 30px buttons matching REAPER icons, edit modal opens above button, fix popup title bar dragging over waveform]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/60cf6e1a2f6c8aea7714b112a0ded74308601e74/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/60cf6e1a2f6c8aea7714b112a0ded74308601e74/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/60cf6e1a2f6c8aea7714b112a0ded74308601e74/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/60cf6e1a2f6c8aea7714b112a0ded74308601e74/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/60cf6e1a2f6c8aea7714b112a0ded74308601e74/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/60cf6e1a2f6c8aea7714b112a0ded74308601e74/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/60cf6e1a2f6c8aea7714b112a0ded74308601e74/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/60cf6e1a2f6c8aea7714b112a0ded74308601e74/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/60cf6e1a2f6c8aea7714b112a0ded74308601e74/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/60cf6e1a2f6c8aea7714b112a0ded74308601e74/Scripts/NVSD/lib/settings_ui.lua</source>
+      </version>
+      <version name="1.0.71" author="NVSD" time="2026-02-14T00:00:00Z">
+        <changelog><![CDATA[Toolbar icons fill full 30x30 button size with no container box, subtle hover highlight only]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/da85d15bcbc29cd31df2090115418717196a529e/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/da85d15bcbc29cd31df2090115418717196a529e/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/da85d15bcbc29cd31df2090115418717196a529e/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/da85d15bcbc29cd31df2090115418717196a529e/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/da85d15bcbc29cd31df2090115418717196a529e/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/da85d15bcbc29cd31df2090115418717196a529e/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/da85d15bcbc29cd31df2090115418717196a529e/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/da85d15bcbc29cd31df2090115418717196a529e/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/da85d15bcbc29cd31df2090115418717196a529e/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/da85d15bcbc29cd31df2090115418717196a529e/Scripts/NVSD/lib/settings_ui.lua</source>
+      </version>
+      <version name="1.0.72" author="NVSD" time="2026-02-14T00:00:00Z">
+        <changelog><![CDATA[Drag-and-drop reorder for toolbar buttons with visual insertion indicator]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/345220b43508ff0d509293a2ae09fb5809cc09bc/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/345220b43508ff0d509293a2ae09fb5809cc09bc/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/345220b43508ff0d509293a2ae09fb5809cc09bc/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/345220b43508ff0d509293a2ae09fb5809cc09bc/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/345220b43508ff0d509293a2ae09fb5809cc09bc/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/345220b43508ff0d509293a2ae09fb5809cc09bc/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/345220b43508ff0d509293a2ae09fb5809cc09bc/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/345220b43508ff0d509293a2ae09fb5809cc09bc/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/345220b43508ff0d509293a2ae09fb5809cc09bc/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/345220b43508ff0d509293a2ae09fb5809cc09bc/Scripts/NVSD/lib/settings_ui.lua</source>
+      </version>
+      <version name="1.0.73" author="NVSD" time="2026-02-14T00:00:00Z">
+        <changelog><![CDATA[Vertically center all info bar elements, fix waveform icon stretching at taller bar height]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/06c1cb6563ecc74411df0cbcbb0fc1b27285a4ad/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/06c1cb6563ecc74411df0cbcbb0fc1b27285a4ad/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/06c1cb6563ecc74411df0cbcbb0fc1b27285a4ad/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/06c1cb6563ecc74411df0cbcbb0fc1b27285a4ad/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/06c1cb6563ecc74411df0cbcbb0fc1b27285a4ad/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/06c1cb6563ecc74411df0cbcbb0fc1b27285a4ad/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/06c1cb6563ecc74411df0cbcbb0fc1b27285a4ad/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/06c1cb6563ecc74411df0cbcbb0fc1b27285a4ad/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/06c1cb6563ecc74411df0cbcbb0fc1b27285a4ad/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/06c1cb6563ecc74411df0cbcbb0fc1b27285a4ad/Scripts/NVSD/lib/settings_ui.lua</source>
+      </version>
+      <version name="1.0.74" author="NVSD" time="2026-02-14T00:00:00Z">
+        <changelog><![CDATA[Edit toolbar modal opens above info bar so buttons stay visible, styled consistently with other modals (rounded corners, proper padding, colored buttons)]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/736bc5c2a660c7d85830b7ef3c507e883c97747e/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/736bc5c2a660c7d85830b7ef3c507e883c97747e/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/736bc5c2a660c7d85830b7ef3c507e883c97747e/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/736bc5c2a660c7d85830b7ef3c507e883c97747e/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/736bc5c2a660c7d85830b7ef3c507e883c97747e/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/736bc5c2a660c7d85830b7ef3c507e883c97747e/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/736bc5c2a660c7d85830b7ef3c507e883c97747e/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/736bc5c2a660c7d85830b7ef3c507e883c97747e/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/736bc5c2a660c7d85830b7ef3c507e883c97747e/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/736bc5c2a660c7d85830b7ef3c507e883c97747e/Scripts/NVSD/lib/settings_ui.lua</source>
+      </version>
+      <version name="1.0.75" author="NVSD" time="2026-02-14T00:00:00Z">
+        <changelog><![CDATA[Icon picker window bigger (620x640), scrollbar no longer clips right column, styled like other modals, centered "Text Only" button]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/d92e650aa57899b290566cc833b1ae05591aa432/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/d92e650aa57899b290566cc833b1ae05591aa432/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/d92e650aa57899b290566cc833b1ae05591aa432/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/d92e650aa57899b290566cc833b1ae05591aa432/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/d92e650aa57899b290566cc833b1ae05591aa432/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/d92e650aa57899b290566cc833b1ae05591aa432/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/d92e650aa57899b290566cc833b1ae05591aa432/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/d92e650aa57899b290566cc833b1ae05591aa432/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/d92e650aa57899b290566cc833b1ae05591aa432/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/d92e650aa57899b290566cc833b1ae05591aa432/Scripts/NVSD/lib/settings_ui.lua</source>
+      </version>
+      <version name="1.0.76" author="NVSD" time="2026-02-14T00:00:00Z">
+        <changelog><![CDATA[Add X close button to icon picker window]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/8aac8e1566f4b6d8aeed6996b257b1de54ed4932/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/8aac8e1566f4b6d8aeed6996b257b1de54ed4932/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/8aac8e1566f4b6d8aeed6996b257b1de54ed4932/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/8aac8e1566f4b6d8aeed6996b257b1de54ed4932/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/8aac8e1566f4b6d8aeed6996b257b1de54ed4932/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/8aac8e1566f4b6d8aeed6996b257b1de54ed4932/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/8aac8e1566f4b6d8aeed6996b257b1de54ed4932/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/8aac8e1566f4b6d8aeed6996b257b1de54ed4932/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/8aac8e1566f4b6d8aeed6996b257b1de54ed4932/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/8aac8e1566f4b6d8aeed6996b257b1de54ed4932/Scripts/NVSD/lib/settings_ui.lua</source>
+      </version>
+      <version name="1.0.77" author="NVSD" time="2026-02-14T00:00:00Z">
+        <changelog><![CDATA[Bigger text (1.15x) in settings, edit modal, icon pickers, and confirm dialogs. Bigger frame padding, icon preview at real 30x30 size.]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/37ce1d45af158e02c06d31a71ccb481b98d0baed/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/37ce1d45af158e02c06d31a71ccb481b98d0baed/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/37ce1d45af158e02c06d31a71ccb481b98d0baed/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/37ce1d45af158e02c06d31a71ccb481b98d0baed/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/37ce1d45af158e02c06d31a71ccb481b98d0baed/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/37ce1d45af158e02c06d31a71ccb481b98d0baed/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/37ce1d45af158e02c06d31a71ccb481b98d0baed/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/37ce1d45af158e02c06d31a71ccb481b98d0baed/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/37ce1d45af158e02c06d31a71ccb481b98d0baed/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/37ce1d45af158e02c06d31a71ccb481b98d0baed/Scripts/NVSD/lib/settings_ui.lua</source>
+      </version>
+      <version name="1.0.78" author="NVSD" time="2026-02-14T00:00:00Z">
+        <changelog><![CDATA[Fix: use CreateFont(15px) + PushFont/PopFont instead of non-existent SetWindowFontScale for bigger text in settings and popups]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/4f03d25398089eeae491b9b19b0e56dc83fc736c/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/4f03d25398089eeae491b9b19b0e56dc83fc736c/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/4f03d25398089eeae491b9b19b0e56dc83fc736c/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/4f03d25398089eeae491b9b19b0e56dc83fc736c/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/4f03d25398089eeae491b9b19b0e56dc83fc736c/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/4f03d25398089eeae491b9b19b0e56dc83fc736c/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/4f03d25398089eeae491b9b19b0e56dc83fc736c/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/4f03d25398089eeae491b9b19b0e56dc83fc736c/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/4f03d25398089eeae491b9b19b0e56dc83fc736c/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/4f03d25398089eeae491b9b19b0e56dc83fc736c/Scripts/NVSD/lib/settings_ui.lua</source>
+      </version>
+      <version name="1.0.79" author="NVSD" time="2026-02-14T00:00:00Z">
+        <changelog><![CDATA[Fix: remove font scaling code entirely (ReaImGui lacks PushFont/SetWindowFontScale). Increased padding and window sizes already improve readability.]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/ff3185b4a5053a516c6f1552438492543f8ceb51/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/ff3185b4a5053a516c6f1552438492543f8ceb51/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/ff3185b4a5053a516c6f1552438492543f8ceb51/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/ff3185b4a5053a516c6f1552438492543f8ceb51/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/ff3185b4a5053a516c6f1552438492543f8ceb51/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/ff3185b4a5053a516c6f1552438492543f8ceb51/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/ff3185b4a5053a516c6f1552438492543f8ceb51/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/ff3185b4a5053a516c6f1552438492543f8ceb51/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/ff3185b4a5053a516c6f1552438492543f8ceb51/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/ff3185b4a5053a516c6f1552438492543f8ceb51/Scripts/NVSD/lib/settings_ui.lua</source>
+      </version>
+      <version name="1.0.80" author="NVSD" time="2026-02-14T00:00:00Z">
+        <changelog><![CDATA[Auto-fill button label from REAPER action name when pasting command ID. Gear and CUE buttons scale up to match toolbar button size.]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/c43015583229dcd3454bc98162628a5084a09c37/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/c43015583229dcd3454bc98162628a5084a09c37/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/c43015583229dcd3454bc98162628a5084a09c37/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/c43015583229dcd3454bc98162628a5084a09c37/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/c43015583229dcd3454bc98162628a5084a09c37/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/c43015583229dcd3454bc98162628a5084a09c37/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/c43015583229dcd3454bc98162628a5084a09c37/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/c43015583229dcd3454bc98162628a5084a09c37/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/c43015583229dcd3454bc98162628a5084a09c37/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/c43015583229dcd3454bc98162628a5084a09c37/Scripts/NVSD/lib/settings_ui.lua</source>
+      </version>
+      <version name="1.0.81" author="NVSD" time="2026-02-14T00:00:00Z">
+        <changelog><![CDATA[Action search autocomplete in edit toolbar button modal. Streamlined context menu. Clickable icon preview. Centered edit modal. Fix stale icon cache on context recreation.]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/726a7b2/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/726a7b2/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/726a7b2/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/726a7b2/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/726a7b2/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/726a7b2/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/726a7b2/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/726a7b2/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/726a7b2/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/726a7b2/Scripts/NVSD/lib/settings_ui.lua</source>
+      </version>
+      <version name="1.0.82" author="NVSD" time="2026-02-14T00:00:00Z">
+        <changelog><![CDATA[Add 4px color strip at top showing item/track color.]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/2d70dfd/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/2d70dfd/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/2d70dfd/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/2d70dfd/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/2d70dfd/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/2d70dfd/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/2d70dfd/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/2d70dfd/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/2d70dfd/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/2d70dfd/Scripts/NVSD/lib/settings_ui.lua</source>
       </version>
     </reapack>
   </category>

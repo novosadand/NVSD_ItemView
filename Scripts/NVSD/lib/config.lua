@@ -11,7 +11,11 @@ config.MARKER_WIDTH = 12
 config.WINDOW_PADDING = 2
 config.WAVEFORM_MARGIN_H = 12
 config.WAVEFORM_MARGIN_V = 2
+config.COLOR_STRIP_HEIGHT = 4
 config.INFO_BAR_HEIGHT = 18
+config.INFO_BAR_HEIGHT_BASE = 18      -- no toolbar buttons
+config.INFO_BAR_HEIGHT_TOOLBAR = 36   -- with toolbar buttons (fits 30px REAPER icons)
+config.TOOLBAR_BTN_GAP = 4
 config.RULER_HEIGHT = 20
 config.TIME_RULER_HEIGHT = 18
 config.SNAP_THRESHOLD_PX = 25
@@ -21,6 +25,26 @@ config.LEFT_PANEL_WIDTH = 70
 config.LEFT_COLUMN_WIDTH = 145
 config.FX_COLUMN_WIDTH = 140
 config.GAIN_SLIDER_WIDTH = 16
+
+-- Warp bar (stretch markers / transient detection)
+config.WARP_BAR_HEIGHT = 18
+config.WARP_MARKER_HIT_RADIUS = 8
+config.WARP_DRAG_THRESHOLD = 4
+
+config.COLOR_WARP_MARKER = 0xE8A020FF
+config.COLOR_WARP_MARKER_HOVER = 0xFFBB44FF
+config.COLOR_WARP_MARKER_LINE = 0xE8A02055
+config.COLOR_WARP_MARKER_LINE_HOVER = 0xE8A02088
+config.COLOR_TRANSIENT = 0x88888899
+config.COLOR_TRANSIENT_HOVER = 0xBBBBBBCC
+config.COLOR_WARP_MARKER_GHOST = 0x88888888
+config.COLOR_WARP_MARKER_LINE_GHOST = 0x88888833
+config.COLOR_WARP_MARKER_SELECTED = 0x66CCCCFF
+config.COLOR_WARP_BAR_BG = 0x1E1E1EFF
+config.COLOR_WARP_BAR_BORDER = 0x333333FF
+
+-- Loop boundary marker color (vertical line at source_length intervals)
+config.COLOR_LOOP_REGION = 0xFFAA3360
 
 -- Envelope editor
 config.ENVELOPE_BAR_HEIGHT = 18

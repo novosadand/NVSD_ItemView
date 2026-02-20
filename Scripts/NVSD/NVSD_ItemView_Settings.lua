@@ -8,7 +8,9 @@ local script_dir = script_path:match("(.+)[/\\]")
 
 -- Load modules
 local settings = dofile(script_dir .. "/lib/settings.lua")
+local drawing = dofile(script_dir .. "/lib/drawing.lua")
 local settings_ui = dofile(script_dir .. "/lib/settings_ui.lua")
+settings_ui.set_drawing(drawing)
 
 -- Check for ReaImGui
 if not reaper.ImGui_CreateContext then

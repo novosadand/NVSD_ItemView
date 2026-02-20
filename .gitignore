@@ -20,5 +20,7 @@ docs/
 *.psd
 *.jpg
 gumroad*
+Sales*.csv
+buyers_emails.txt
 # Exception: README banner
 !github cover2.jpg
