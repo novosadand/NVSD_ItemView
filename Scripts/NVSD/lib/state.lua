@@ -478,14 +478,21 @@ function state.get_drag_delta(ctx, name, mouse_y, current_value, fine_sensitivit
   local base_delta = ctrl.start_y - mouse_y
 
   -- Edge auto-scroll: when mouse is stuck at screen edge, keep moving the value.
-  if state.drag_imgui_last_y and math.abs(mouse_y - state.drag_imgui_last_y) < 0.5 then
+  local stall_threshold = 0.1  -- low threshold for Retina/HiDPI displays
+  if state.drag_imgui_last_y and math.abs(mouse_y - state.drag_imgui_last_y) < stall_threshold then
     -- Mouse hasn't moved this frame
     if state.drag_edge_stall_frames < 255 then
       state.drag_edge_stall_frames = state.drag_edge_stall_frames + 1
     end
-    if state.drag_edge_stall_frames >= 4 and state.drag_edge_direction ~= 0 then
+    -- Determine direction: prefer per-frame direction, fall back to overall drag direction
+    local dir = state.drag_edge_direction
+    if dir == 0 and math.abs(base_delta) > 1 then
+      dir = base_delta > 0 and 1 or -1
+      state.drag_edge_direction = dir
+    end
+    if state.drag_edge_stall_frames >= 4 and dir ~= 0 then
       local speed = math.min(3, 0.5 + state.drag_edge_stall_frames * 0.05)
-      state.drag_edge_bonus = state.drag_edge_bonus + state.drag_edge_direction * speed
+      state.drag_edge_bonus = state.drag_edge_bonus + dir * speed
     end
   else
     -- Mouse moved: absorb accumulated bonus into start_y for seamless transition
@@ -494,10 +501,10 @@ function state.get_drag_delta(ctx, name, mouse_y, current_value, fine_sensitivit
       state.drag_edge_bonus = 0
     end
     state.drag_edge_stall_frames = 0
-    -- Record last movement direction
+    -- Record last movement direction from per-frame delta
     if state.drag_imgui_last_y then
       local frame_delta = state.drag_imgui_last_y - mouse_y
-      if math.abs(frame_delta) > 0.5 then
+      if math.abs(frame_delta) > stall_threshold then
         state.drag_edge_direction = frame_delta > 0 and 1 or -1
       end
     end
