@@ -447,8 +447,11 @@ function state.get_drag_delta(ctx, name, mouse_y, current_value, fine_sensitivit
     sensitivity = ctrl.fine_held and fine_sensitivity or 1.0
   end
 
-  -- Always use cumulative delta from screen coords (works on all platforms)
-  return state.drag_cumulative_delta_y * sensitivity
+  -- Use cumulative screen delta when cursor lock works (infinite drag range).
+  -- Fall back to ImGui mouse delta when it doesn't (Mac, broken JS_Mouse_SetPosition).
+  local use_cursor_lock = state.has_js_extension and state.cursor_lock_works ~= false
+  local delta_y = use_cursor_lock and state.drag_cumulative_delta_y or (ctrl.start_y - mouse_y)
+  return delta_y * sensitivity
 end
 
 -- Reset all drag and interaction flags (used on dialog recovery / focus loss)
