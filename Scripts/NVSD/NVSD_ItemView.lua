@@ -5266,23 +5266,36 @@ local function loop()
 
               local new_start
 
-              if state.dragging_start then
-                new_start = snap_best(raw_start, source_length, snap_threshold_time, state.drag_start_offset, state.drag_start_item_position)
+              if state.is_loop_src then
+                -- Looped: snap to source boundaries + grid, clamp within source
+                if state.dragging_start then
+                  new_start = snap_best(raw_start, source_length, snap_threshold_time, state.drag_start_offset, state.drag_start_item_position)
+                else
+                  local snapped_end = snap_best(raw_end, source_length, snap_threshold_time, state.drag_start_offset, state.drag_start_item_position)
+                  new_start = snapped_end - original_source_length
+                end
               else
-                local snapped_end = snap_best(raw_end, source_length, snap_threshold_time, state.drag_start_offset, state.drag_start_item_position)
-                new_start = snapped_end - original_source_length
+                -- Non-looped: grid snap only, no source boundary snap or clamping
+                if state.dragging_start then
+                  new_start = snap_to_grid_if_enabled(raw_start, state.drag_start_offset, state.drag_start_item_position)
+                else
+                  local snapped_end = snap_to_grid_if_enabled(raw_end, state.drag_start_offset, state.drag_start_item_position)
+                  new_start = snapped_end - original_source_length
+                end
               end
 
               local new_end = new_start + original_source_length
 
-              -- Clamp to source boundaries (keep item length constant)
-              if new_start < 0 then
-                new_start = 0
-                new_end = original_source_length
-              end
-              if new_end > source_length then
-                new_end = source_length
-                new_start = source_length - original_source_length
+              -- Clamp to source boundaries (keep item length constant) -- only for looped items
+              if state.is_loop_src then
+                if new_start < 0 then
+                  new_start = 0
+                  new_end = original_source_length
+                end
+                if new_end > source_length then
+                  new_end = source_length
+                  new_start = source_length - original_source_length
+                end
               end
 
               local new_take_offset = new_start - section_offset
