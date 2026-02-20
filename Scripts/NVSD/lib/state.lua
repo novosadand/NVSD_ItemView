@@ -125,6 +125,7 @@ state.drag_last_screen_y = 0  -- Track last frame's Y position for delta calcula
 state.has_js_extension = reaper.JS_Mouse_SetPosition ~= nil
 state.cursor_lock_works = nil  -- nil = untested, true/false after first verify
 state.cursor_lock_zero_frames = 0  -- count consecutive drag frames with zero cumulative delta
+state._copy_combo_prev = false       -- rising-edge detection for VKey Ctrl+C fallback
 
 -- Edge auto-scroll state (for Mac/no-cursor-lock fallback)
 state.drag_imgui_last_y = nil        -- previous frame ImGui mouse_y
