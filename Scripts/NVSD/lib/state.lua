@@ -428,6 +428,11 @@ end
 -- End a drag operation
 function state.end_drag(name)
   state.drag_controls[name].active = false
+  -- Snap cursor back to knob/slider position on release.
+  -- Safe even on Mac: we don't need delta events after drag ends.
+  if state.has_js_extension and state.drag_lock_screen_x ~= 0 then
+    reaper.JS_Mouse_SetPosition(state.drag_lock_screen_x, state.drag_lock_screen_y)
+  end
 end
 
 -- Check if a drag is active
