@@ -162,8 +162,10 @@ if reaper.GetExtState("NVSD_ItemView", "running") == "1" then
   end
   -- Stale instance detected, take over
 end
+local window_visible = true  -- visibility state for docker switching
 reaper.SetExtState("NVSD_ItemView", "running", "1", false)
 reaper.SetExtState("NVSD_ItemView", "heartbeat", tostring(reaper.time_precise()), false)
+reaper.SetExtState("NVSD_ItemView", "visible", "1", false)
 reaper.DeleteExtState("NVSD_ItemView", "close_requested", false)
 if toggle_cmd_id > 0 then
   reaper.SetToggleCommandState(toggle_section_id, toggle_cmd_id, 1)
@@ -171,6 +173,7 @@ if toggle_cmd_id > 0 then
 end
 reaper.atexit(function()
   reaper.SetExtState("NVSD_ItemView", "running", "0", false)
+  reaper.SetExtState("NVSD_ItemView", "visible", "0", false)
   reaper.DeleteExtState("NVSD_ItemView", "close_requested", false)
   reaper.DeleteExtState("NVSD_ItemView", "heartbeat", false)
   if toggle_cmd_id > 0 then
@@ -267,6 +270,19 @@ local function loop()
   -- Update heartbeat so stale-instance detection works
   reaper.SetExtState("NVSD_ItemView", "heartbeat", tostring(reaper.time_precise()), false)
 
+  -- Publish visibility for docker switching
+  reaper.SetExtState("NVSD_ItemView", "visible", window_visible and "1" or "0", false)
+
+  -- Handle show/hide requests from DockerSwitch
+  if reaper.GetExtState("NVSD_ItemView", "show_requested") == "1" then
+    reaper.DeleteExtState("NVSD_ItemView", "show_requested", false)
+    window_visible = true
+  end
+  if reaper.GetExtState("NVSD_ItemView", "hide_requested") == "1" then
+    reaper.DeleteExtState("NVSD_ItemView", "hide_requested", false)
+    window_visible = false
+  end
+
   -- Track mouse state early (needed to gate expensive operations)
   -- Only track when REAPER is the active application (not Firefox, etc.)
   local mouse_is_down = false
@@ -313,6 +329,11 @@ local function loop()
     reaper.DeleteExtState("NVSD_ItemView", "close_requested", false)
     state.stop_preview()
     open = false  -- signal outer loop() to stop deferring
+    return
+  end
+
+  -- Skip rendering when hidden (docker switch)
+  if not window_visible then
     return
   end
 
