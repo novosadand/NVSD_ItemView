@@ -2312,15 +2312,26 @@ local function loop()
             -- With JS extension: lock cursor in place for infinite drag range.
             -- Skip if cursor lock was already detected as broken (Mac Retina scaling,
             -- missing accessibility permissions, etc.) to avoid corrupting delta tracking.
-            if state.has_js_extension and state.drag_lock_screen_x ~= 0 and state.cursor_lock_works ~= false then
-              reaper.JS_Mouse_SetPosition(state.drag_lock_screen_x, state.drag_lock_screen_y)
-              local vx, vy = reaper.GetMousePosition()
-              if math.abs(vy - state.drag_lock_screen_y) <= 2 then
-                state.cursor_lock_works = true
+            if state.has_js_extension and state.drag_lock_screen_x ~= 0 then
+              if state.cursor_lock_works == true then
+                -- Verified working: teleport cursor and track from lock position.
+                reaper.JS_Mouse_SetPosition(state.drag_lock_screen_x, state.drag_lock_screen_y)
                 state.drag_last_screen_y = state.drag_lock_screen_y
+              elseif state.cursor_lock_works == nil then
+                -- First drag ever: test if JS_Mouse_SetPosition actually works.
+                -- Safe because get_drag_delta uses ImGui path until cursor_lock_works == true.
+                reaper.JS_Mouse_SetPosition(state.drag_lock_screen_x, state.drag_lock_screen_y)
+                local vx, vy = reaper.GetMousePosition()
+                if math.abs(vy - state.drag_lock_screen_y) <= 2 then
+                  state.cursor_lock_works = true
+                  state.drag_last_screen_y = state.drag_lock_screen_y
+                else
+                  -- Teleport failed. Disable permanently, fall back to ImGui path.
+                  state.cursor_lock_works = false
+                  state.drag_last_screen_y = cur_screen_y
+                end
               else
-                -- Teleport failed. Disable permanently to prevent position corruption.
-                state.cursor_lock_works = false
+                -- cursor_lock_works == false: broken, just track screen position.
                 state.drag_last_screen_y = cur_screen_y
               end
             else
