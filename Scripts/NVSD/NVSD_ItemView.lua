@@ -1663,19 +1663,26 @@ local function loop()
           -- Hide and lock cursor while dragging any control
           if state.is_any_control_dragging() then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
-            if state.has_js_extension and state.drag_lock_screen_x ~= 0 and state.drag_lock_screen_y ~= 0 then
-              local cur_screen_x, cur_screen_y = reaper.GetMousePosition()
-              -- Initialize last_screen_y if not set (defensive)
-              state.drag_last_screen_y = state.drag_last_screen_y or cur_screen_y
-              -- Calculate delta from last frame's position (not lock position)
-              -- This avoids issues with cursor teleport timing
-              local delta = state.drag_last_screen_y - cur_screen_y
-              if delta ~= 0 then
-                state.drag_cumulative_delta_y = state.drag_cumulative_delta_y + delta
-              end
-              -- Update last position and teleport cursor back to lock position
-              state.drag_last_screen_y = state.drag_lock_screen_y
+            -- Accumulate delta from screen coords (works on all platforms)
+            local cur_screen_x, cur_screen_y = reaper.GetMousePosition()
+            state.drag_last_screen_y = state.drag_last_screen_y or cur_screen_y
+            local delta = state.drag_last_screen_y - cur_screen_y
+            if delta ~= 0 then
+              state.drag_cumulative_delta_y = state.drag_cumulative_delta_y + delta
+            end
+            -- With JS extension: lock cursor in place for infinite drag range
+            if state.has_js_extension and state.drag_lock_screen_x ~= 0 then
               reaper.JS_Mouse_SetPosition(state.drag_lock_screen_x, state.drag_lock_screen_y)
+              -- Verify teleport worked (fails on Mac without accessibility permissions).
+              -- If it failed, track actual position for frame-to-frame delta instead.
+              local vx, vy = reaper.GetMousePosition()
+              if math.abs(vy - state.drag_lock_screen_y) <= 2 then
+                state.drag_last_screen_y = state.drag_lock_screen_y
+              else
+                state.drag_last_screen_y = cur_screen_y
+              end
+            else
+              state.drag_last_screen_y = cur_screen_y
             end
           end
 
