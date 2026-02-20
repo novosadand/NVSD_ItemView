@@ -826,15 +826,27 @@ local function loop()
           -- Guard against REAPER's GetMediaSourceLength returning inflated values
           -- for looped/section sources.  The real file length never changes for a
           -- given source object, but the API can sporadically return a larger value
-          -- (typically matching the looped item length).  Cache the minimum value
-          -- ever seen per source -- this converges to the true file length.
+          -- (typically matching the looped item length).  Cache the value per source
+          -- and only accept increases that look like genuine source changes (not
+          -- the inflated looped-item-length glitch).
+          local take_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
+          if take_playrate == 0 then take_playrate = 1 end
           if source ~= state._src_len_source then
             state._src_len_cache = nil
             state._src_len_source = source
           end
           if state._src_len_cache then
             if source_length < state._src_len_cache - 0.001 then
+              -- API returned a smaller value: always accept (could be correcting
+              -- an inflated initial read, or source genuinely changed).
               state._src_len_cache = source_length
+            elseif source_length > state._src_len_cache + 0.001 then
+              -- API returned a larger value: accept unless it suspiciously matches
+              -- the looped item length (the known REAPER API glitch).
+              local looped_length = item_length * take_playrate
+              if math.abs(source_length - looped_length) > 0.01 then
+                state._src_len_cache = source_length
+              end
             end
             source_length = state._src_len_cache
           else
@@ -2323,6 +2335,26 @@ local function loop()
           -- Hide and lock cursor while dragging any control
           if state.is_any_control_dragging() then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
+            -- DEBUG: show drag diagnostics (remove after Mac fix confirmed)
+            do
+              local dbg_name = state.drag_controls.pitch.active and "pitch"
+                  or state.drag_controls.pan.active and "pan"
+                  or state.drag_controls.gain.active and "gain"
+                  or "?"
+              local dbg_ctrl = state.drag_controls[dbg_name]
+              local use_lock = state.has_js_extension and state.cursor_lock_works == true
+              local dbg_delta = use_lock and state.drag_cumulative_delta_y or (dbg_ctrl and (dbg_ctrl.start_y - mouse_y) or 0)
+              local dbg_text = string.format("DRAG %s | lock=%s js=%s | start_y=%.0f mouse_y=%.0f | delta=%.1f cumul=%.1f",
+                  dbg_name,
+                  tostring(state.cursor_lock_works),
+                  tostring(state.has_js_extension),
+                  dbg_ctrl and dbg_ctrl.start_y or 0,
+                  mouse_y,
+                  dbg_delta,
+                  state.drag_cumulative_delta_y)
+              reaper.ImGui_DrawList_AddRectFilled(draw_list, wave_x, wave_y, wave_x + waveform_width, wave_y + 18, 0x000000DD)
+              reaper.ImGui_DrawList_AddText(draw_list, wave_x + 4, wave_y + 2, 0x00FF00FF, dbg_text)
+            end
             -- Accumulate delta from screen coords (works on all platforms)
             local cur_screen_x, cur_screen_y = reaper.GetMousePosition()
             state.drag_last_screen_y = state.drag_last_screen_y or cur_screen_y
@@ -2338,6 +2370,19 @@ local function loop()
                 -- Verified working: teleport cursor and track from lock position.
                 reaper.JS_Mouse_SetPosition(state.drag_lock_screen_x, state.drag_lock_screen_y)
                 state.drag_last_screen_y = state.drag_lock_screen_y
+                -- Runtime check: if cumulative delta stays at 0 for several frames
+                -- while actively dragging, the teleport is eating mouse events (macOS).
+                -- The verify test passes on Mac (teleport position matches) but
+                -- CGWarpMouseCursorPosition suppresses all subsequent mouse deltas.
+                if state.drag_cumulative_delta_y == 0 then
+                  state.cursor_lock_zero_frames = state.cursor_lock_zero_frames + 1
+                  if state.cursor_lock_zero_frames > 4 then
+                    state.cursor_lock_works = false
+                    state.drag_last_screen_y = cur_screen_y
+                  end
+                else
+                  state.cursor_lock_zero_frames = 0
+                end
               elseif state.cursor_lock_works == nil then
                 -- First drag ever: test if JS_Mouse_SetPosition actually works.
                 -- Safe because get_drag_delta uses ImGui path until cursor_lock_works == true.
@@ -2345,6 +2390,7 @@ local function loop()
                 local vx, vy = reaper.GetMousePosition()
                 if math.abs(vy - state.drag_lock_screen_y) <= 2 then
                   state.cursor_lock_works = true
+                  state.cursor_lock_zero_frames = 0
                   state.drag_last_screen_y = state.drag_lock_screen_y
                 else
                   -- Teleport failed. Disable permanently, fall back to ImGui path.
