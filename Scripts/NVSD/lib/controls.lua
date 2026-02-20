@@ -339,7 +339,7 @@ local function parse_submode_flags(sub_modes, algo_id)
 end
 
 -- Draw WARP/Reverse/Edit buttons in the left column
-function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take, config, state, utils, drawing, settings)
+function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take, config, state, utils, drawing, settings, panel_height, col2_x)
   local btn_height = 24
   local btn_margin = 10
   local btn_padding = 8
@@ -767,24 +767,6 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     if current_algo_id ~= state.warp_submode_flag_cache_algo then
       state.warp_submode_flag_cache = parse_submode_flags(sub_modes, current_algo_id)
       state.warp_submode_flag_cache_algo = current_algo_id
-      -- Debug: log parsed sub-mode structure
-      local c = state.warp_submode_flag_cache
-      if c then
-        local known = ALGO_UI[current_algo_id] and "known" or "auto"
-        reaper.ShowConsoleMsg("[SubMode] Algo=" .. current_algo_id .. " SubModes=" .. #sub_modes .. " " .. known .. " structural=" .. tostring(c.use_structural) .. "\n")
-        -- Print first 15 raw sub-mode names to see the actual data
-        for i = 1, math.min(15, #sub_modes) do
-          reaper.ShowConsoleMsg("  [" .. sub_modes[i].id .. "] " .. sub_modes[i].name .. "\n")
-        end
-        if #sub_modes > 15 then reaper.ShowConsoleMsg("  ... (" .. (#sub_modes - 15) .. " more)\n") end
-        reaper.ShowConsoleMsg("  Atoms: " .. table.concat(c.all_atoms, " | ") .. "\n")
-        reaper.ShowConsoleMsg("  Groups:\n")
-        for gi, g in ipairs(c.groups) do
-          local prefix = (gi == c.mode_group_idx) and "  MODE>" or "  FLAG>"
-          reaper.ShowConsoleMsg(prefix .. " {" .. table.concat(g, ", ") .. "}\n")
-        end
-        reaper.ShowConsoleMsg("  has_default=" .. tostring(c.has_default) .. "\n")
-      end
     end
     local cache = state.warp_submode_flag_cache
 
@@ -1451,10 +1433,27 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     end
   end
 
+  -- Progressive overflow: buttons that don't fit in col 1 move to col 2
+  local panel_bottom = left_col_y + panel_height
+  local cursor_x = left_col_x
+  local cursor_y = warp_btn_y + btn_height + 4 + dropdown_height
+  local col1_end, overflowed
+  local gap = 6
+
+  local function try_overflow(h)
+    if not overflowed and col2_x and cursor_y + h > panel_bottom then
+      overflowed = true
+      col1_end = cursor_y
+      cursor_x = col2_x
+      cursor_y = left_col_y + 10
+    end
+  end
+
   -- CLEAR button (reset to default state)
-  local clear_btn_y = warp_btn_y + btn_height + 4 + dropdown_height
+  try_overflow(20)
+  local clear_btn_y = cursor_y
+  local clear_btn_x = cursor_x + btn_padding
   local clear_btn_width = warp_btn_width
-  local clear_btn_x = left_col_x + btn_padding
   local clear_btn_height = 20
 
   local mouse_in_clear = mouse_x >= clear_btn_x and mouse_x <= clear_btn_x + clear_btn_width
@@ -1489,10 +1488,11 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   end
 
   -- Stretch x2 / /2 buttons (Ableton-style double/half speed)
-  local gap = 6
-  local stretch_row_y = clear_btn_y + clear_btn_height + 4
+  cursor_y = clear_btn_y + clear_btn_height + 4
+  try_overflow(20)
+  local stretch_row_y = cursor_y
   local stretch_btn_width = math.floor((warp_btn_width - gap) / 2)
-  local x2_btn_x = left_col_x + btn_padding
+  local x2_btn_x = cursor_x + btn_padding
   local half_btn_x = x2_btn_x + stretch_btn_width + gap
   local stretch_btn_height = 20
 
@@ -1565,12 +1565,14 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   end
 
   -- Second row: Reverse and Edit
-  local row2_y = stretch_row_y + stretch_btn_height + 4
+  cursor_y = stretch_row_y + stretch_btn_height + 4
+  try_overflow(btn_height)
+  local row2_y = cursor_y
   local rev_btn_width = 60
   local edit_btn_width = config.LEFT_COLUMN_WIDTH - (btn_padding * 2) - rev_btn_width - gap
 
   -- REVERSE button
-  local rev_btn_x = left_col_x + btn_padding
+  local rev_btn_x = cursor_x + btn_padding
 
   local mouse_in_rev = mouse_x >= rev_btn_x and mouse_x <= rev_btn_x + rev_btn_width
                        and mouse_y >= row2_y and mouse_y <= row2_y + btn_height
@@ -1616,9 +1618,11 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   end
 
   -- Third row: Loop toggle
-  local row3_y = row2_y + btn_height + 4
+  cursor_y = row2_y + btn_height + 4
+  try_overflow(btn_height)
+  local row3_y = cursor_y
   local loop_btn_width = config.LEFT_COLUMN_WIDTH - (btn_padding * 2)
-  local loop_btn_x = left_col_x + btn_padding
+  local loop_btn_x = cursor_x + btn_padding
 
   local is_looped = item and reaper.GetMediaItemInfo_Value(item, "B_LOOPSRC") == 1
 
@@ -1651,7 +1655,8 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     end
   end
 
-  return row3_y + btn_height
+  local last_bottom = row3_y + btn_height
+  return col1_end or last_bottom, overflowed and last_bottom or nil
 end
 
 -- Draw gain slider with tick marks

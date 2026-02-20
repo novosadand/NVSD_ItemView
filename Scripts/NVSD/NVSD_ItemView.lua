@@ -964,7 +964,8 @@ local function loop()
               and (config.LEFT_PANEL_WIDTH * 2)
               or config.LEFT_PANEL_WIDTH
 
-          local total_left_width = config.LEFT_COLUMN_WIDTH + effective_panel_width
+          -- FX column mode: when vertical space is too tight, FX gets its own column
+          local total_left_width = config.LEFT_COLUMN_WIDTH + (state.needs_fx_col and config.LEFT_COLUMN_WIDTH or 0) + effective_panel_width
           local pitch_gutter = state.envelopes_visible and config.PITCH_LABEL_WIDTH or 0
           local waveform_width = math.max(100, avail_w - (config.WAVEFORM_MARGIN_H * 2) - total_left_width - pitch_gutter)
 
@@ -978,7 +979,7 @@ local function loop()
 
           local left_col_x = cursor_x + config.WINDOW_PADDING
           local left_col_y = cursor_y + state.strip_h + config.WAVEFORM_MARGIN_V
-          local panel_x = left_col_x + config.LEFT_COLUMN_WIDTH
+          local panel_x = left_col_x + config.LEFT_COLUMN_WIDTH + (state.needs_fx_col and config.LEFT_COLUMN_WIDTH or 0)
           local panel_y = cursor_y + state.strip_h + config.WAVEFORM_MARGIN_V
           local wave_x = cursor_x + total_left_width + config.WAVEFORM_MARGIN_H + pitch_gutter
           local info_bar_y = cursor_y + state.strip_h + config.WAVEFORM_MARGIN_V
@@ -1001,12 +1002,11 @@ local function loop()
               and mouse_y >= warp_bar_y and mouse_y <= warp_bar_y + warp_bar_height
           local source_item_length = item_length * playrate
 
-          -- Detect looped item and track start_offset wrapping.
-          -- Two cases: (1) item physically longer than source, or
-          -- (2) loop on + start_offset causes playback to wrap past source end.
-          local is_looped_item = source_length > 0 and (
+          -- Detect looped item: requires loop ON.  Non-looped items extended
+          -- past source boundary just show silence, not wrapped audio.
+          local is_looped_item = source_length > 0 and state.is_loop_src and (
               source_item_length > source_length
-              or (state.is_loop_src and start_offset + source_item_length > source_length + 0.01)
+              or start_offset + source_item_length > source_length + 0.01
           )
 
           -- Warped view: when WARP mode is active, switch to item-time (pos) coordinates
@@ -1171,7 +1171,12 @@ local function loop()
                 ext_end = state.unwrapped_start_offset + source_item_length
                 ext_length = source_item_length
               else
-                ext_start = 0; ext_end = source_length; ext_length = source_length
+                -- Wrap accumulated D_STARTOFFS for non-looped display
+                local so = start_offset
+                if source_length > 0 and state.is_loop_src and so >= source_length then so = so % source_length end
+                ext_start = math.min(so, 0)
+                ext_end = math.max(so + source_item_length, source_length)
+                ext_length = ext_end - ext_start
               end
             end
           elseif is_looped_item then
@@ -1179,9 +1184,12 @@ local function loop()
             ext_end = state.unwrapped_start_offset + source_item_length
             ext_length = source_item_length
           else
-            ext_start = 0
-            ext_end = source_length
-            ext_length = source_length
+            -- Wrap accumulated D_STARTOFFS for non-looped display
+            local so = start_offset
+            if source_length > 0 and state.is_loop_src and so >= source_length then so = so % source_length end
+            ext_start = math.min(so, 0)
+            ext_end = math.max(so + source_item_length, source_length)
+            ext_length = ext_end - ext_start
           end
 
           -- One-shot view anchor: when markers are added/quantized/cleared,
@@ -1275,8 +1283,10 @@ local function loop()
                 target_start = state.unwrapped_start_offset
                 target_end = state.unwrapped_start_offset + source_item_length
               else
-                target_start = start_offset
-                target_end = start_offset + source_item_length
+                local so = start_offset
+                if source_length > 0 and state.is_loop_src and so >= source_length then so = so % source_length end
+                target_start = so
+                target_end = so + source_item_length
               end
             end
 
@@ -1320,8 +1330,8 @@ local function loop()
               local new_source_length = sel_e - sel_s
               local new_item_length = new_source_length / playrate
               local new_take_offset = sel_s - section_offset
-              -- Wrap to valid range for REAPER (selection uses unwrapped virtual coords)
-              if source_length > 0 then
+              -- Wrap for REAPER only when loop is on (non-looped items allow negative D_STARTOFFS)
+              if source_length > 0 and state.is_loop_src then
                 new_take_offset = new_take_offset % source_length
               end
 
@@ -1345,7 +1355,7 @@ local function loop()
                       local ret, pt_time, pt_val, pt_shape, pt_tension, pt_sel = reaper.GetEnvelopePoint(e, ei)
                       if ret then
                         local new_pt_time
-                        if source_length > 0 then
+                        if source_length > 0 and state.is_loop_src then
                           -- Source audio position of this point (wrapping around source)
                           local src_time = (take_offset + pt_time) % source_length
                           -- New take time relative to new D_STARTOFFS
@@ -1513,7 +1523,14 @@ local function loop()
           -- Single source of truth: does the ext range extend past source boundaries?
           -- Replaces the old is_extended_drag / is_post_drag_looped / is_looped_item checks
           -- for peak loading, overlay skip, envelope bounds, etc.
-          local is_extended_view = not is_warped_view and (ext_start < -0.0001 or ext_end > source_length + 0.0001)
+          local is_extended_view = not is_warped_view and (
+              ext_start < -0.0001 or ext_end > source_length + 0.0001
+              -- Safety net: when Loop is OFF and item extends past source, always use
+              -- clipped peaks even if ext bounds haven't caught up yet (race with REAPER)
+              or (not state.is_loop_src and source_length > 0 and (
+                  start_offset < -0.0001
+                  or start_offset + source_item_length > source_length + 0.0001
+                  or view_start + view_length > source_length + 0.0001)))
 
           local need_reload = state.view_peaks == nil
               or source ~= state.view_source
@@ -1579,7 +1596,9 @@ local function loop()
             view_offset = state.unwrapped_start_offset or start_offset
             view_item_length = source_item_length
           else
-            view_offset = start_offset
+            local so = start_offset
+            if source_length > 0 and state.is_loop_src and so >= source_length then so = so % source_length end
+            view_offset = so
             view_item_length = source_item_length
           end
 
@@ -1592,7 +1611,7 @@ local function loop()
             grid_playrate = 1
             grid_view_start = view_start
           else
-            grid_offset = (state.dragging_start or state.dragging_end) and state.drag_current_start or start_offset
+            grid_offset = (state.dragging_start or state.dragging_end) and state.drag_current_start or view_offset
             grid_playrate = (state.dragging_start or state.dragging_end) and state.drag_start_playrate or playrate
             grid_view_start = (state.dragging_start or state.dragging_end) and state.drag_start_view_start or view_start
           end
@@ -1627,7 +1646,7 @@ local function loop()
           config.waveform_zoom = state.waveform_zoom
           local start_px, end_px = drawing.draw_waveform(draw_list, wave_x, wave_y,
             waveform_width, waveform_height,
-            state.view_peaks, view_offset, view_item_length, wf_source_len, view_start, view_length, ruler_y, item_vol, wf_reversed, state.view_num_channels, config, pixel_step, state.wf_bounds_start, state.wf_bounds_end)
+            state.view_peaks, view_offset, view_item_length, wf_source_len, view_start, view_length, ruler_y, item_vol, wf_reversed, state.view_num_channels, config, pixel_step, state.wf_bounds_start, state.wf_bounds_end, state.is_loop_src)
 
           -- Unified coordinate conversion (used by all subsequent code)
           local function time_to_px(t)
@@ -1705,18 +1724,11 @@ local function loop()
             render_start = ext_start
             render_end = ext_end
           else
-            render_start = start_offset
-            render_end = start_offset + source_item_length
-            -- Clamp markers to source bounds; for looped items, wrap end to show
-            -- where audio actually is in the source (modulo source_length)
-            render_start = math.max(0, math.min(source_length, render_start))
-            if render_end > source_length and source_length > 0 then
-              local wrapped = render_end % source_length
-              if wrapped >= render_start then
-                render_end = wrapped
-              end
-            end
-            render_end = math.max(0, math.min(source_length, render_end))
+            -- Wrap accumulated D_STARTOFFS for non-looped display
+            local so = start_offset
+            if source_length > 0 and state.is_loop_src and so >= source_length then so = so % source_length end
+            render_start = so
+            render_end = so + source_item_length
           end
           local actual_start_px = time_to_px(render_start) - wave_x
           local actual_end_px = time_to_px(render_end) - wave_x
@@ -1840,7 +1852,52 @@ local function loop()
                 reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, view_right, wave_y + waveform_height, COLOR_UNUSED_SOURCE)
               end
             end
-          elseif not is_extended_view then
+          elseif is_extended_view then
+            -- Extended view overlay: dim outside item bounds + silence regions
+            do
+              local COLOR_UNUSED = 0x00000038   -- outside item (context)
+              local COLOR_SILENCE = 0x00000020  -- inside item but no audio
+              local view_left = wave_x
+              local view_right = wave_x + waveform_width
+              local item_start_px = time_to_px(view_offset)
+              local item_end_px = time_to_px(view_offset + view_item_length)
+              -- Dim before item start
+              if item_start_px > view_left then
+                local right = math.min(item_start_px, view_right)
+                if right > view_left then
+                  reaper.ImGui_DrawList_AddRectFilled(draw_list, view_left, ruler_y, right, wave_y + waveform_height, COLOR_UNUSED)
+                end
+              end
+              -- Dim after item end
+              if item_end_px < view_right then
+                local left = math.max(item_end_px, view_left)
+                if view_right > left then
+                  reaper.ImGui_DrawList_AddRectFilled(draw_list, left, ruler_y, view_right, wave_y + waveform_height, COLOR_UNUSED)
+                end
+              end
+              -- For non-looped items, dim silence regions within item bounds
+              if not state.is_loop_src then
+                local source_start_px = time_to_px(0)
+                local source_end_px = time_to_px(source_length)
+                -- Silence before source start (item starts before audio)
+                if view_offset < 0 then
+                  local sil_left = math.max(item_start_px, view_left)
+                  local sil_right = math.min(source_start_px, item_end_px, view_right)
+                  if sil_right > sil_left then
+                    reaper.ImGui_DrawList_AddRectFilled(draw_list, sil_left, wave_y, sil_right, wave_y + waveform_height, COLOR_SILENCE)
+                  end
+                end
+                -- Silence after source end (item extends past audio)
+                if view_offset + view_item_length > source_length then
+                  local sil_left = math.max(source_end_px, item_start_px, view_left)
+                  local sil_right = math.min(item_end_px, view_right)
+                  if sil_right > sil_left then
+                    reaper.ImGui_DrawList_AddRectFilled(draw_list, sil_left, wave_y, sil_right, wave_y + waveform_height, COLOR_SILENCE)
+                  end
+                end
+              end
+            end
+          else
             local COLOR_UNUSED_SOURCE = 0x00000038
             local COLOR_OUTSIDE_SOURCE = 0x00000058
 
@@ -1850,9 +1907,9 @@ local function loop()
             local view_right = wave_x + waveform_width
 
             -- Calculate active regions considering loops
-            -- Item plays from start_offset to start_offset + source_item_length
-            local item_start = start_offset
-            local item_end = start_offset + source_item_length
+            -- Item plays from view_offset to view_offset + view_item_length
+            local item_start = view_offset
+            local item_end = view_offset + view_item_length
 
             -- Check if item loops (extends past source_length)
             local is_looping = item_end > source_length
@@ -2052,7 +2109,7 @@ local function loop()
               elseif state.unwrapped_start_offset ~= nil then
                 env_time_offset = state.unwrapped_start_offset
               else
-                env_time_offset = start_offset
+                env_time_offset = view_offset
               end
               for i = 0, num_env_points - 1 do
                 local retval, ept_time, ept_value, ept_shape, ept_tension, ept_selected = reaper.GetEnvelopePoint(env, i)
@@ -2111,8 +2168,8 @@ local function loop()
           -- Draw REAPER timeline selection overlay
           local sel_ok, sel_start, sel_end = reaper.GetSet_LoopTimeRange(false, false, 0, 0, false)
           if sel_start and sel_end and sel_start ~= sel_end then
-            local sel_source_start = utils.project_to_source_time(sel_start, item_position, start_offset, playrate)
-            local sel_source_end = utils.project_to_source_time(sel_end, item_position, start_offset, playrate)
+            local sel_source_start = utils.project_to_source_time(sel_start, item_position, view_offset, playrate)
+            local sel_source_end = utils.project_to_source_time(sel_end, item_position, view_offset, playrate)
 
             local sel_px_start = time_to_px(sel_source_start)
             local sel_px_end = time_to_px(sel_source_end)
@@ -2145,24 +2202,48 @@ local function loop()
             end
           end
 
-          -- Left panel controls
-          local COLOR_LEFT_COL_BG = config.COLOR_WAVEFORM_BG
-          reaper.ImGui_DrawList_AddRectFilled(draw_list, left_col_x, left_col_y, left_col_x + config.LEFT_COLUMN_WIDTH - 2, left_col_y + panel_height, COLOR_LEFT_COL_BG)
+          -- Left column: buttons + FX (scoped to free register slots)
+          do
+            local bg = config.COLOR_WAVEFORM_BG
+            reaper.ImGui_DrawList_AddRectFilled(draw_list, left_col_x, left_col_y,
+              left_col_x + config.LEFT_COLUMN_WIDTH - 2, left_col_y + panel_height, bg)
 
-          local buttons_bottom = controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take, config, state, utils, drawing, settings)
+            -- Column 2 position (only when previous frame detected overflow)
+            local c2x = state.needs_fx_col and (left_col_x + config.LEFT_COLUMN_WIDTH) or nil
+            if c2x then
+              reaper.ImGui_DrawList_AddRectFilled(draw_list, c2x, left_col_y,
+                c2x + config.LEFT_COLUMN_WIDTH - 2, left_col_y + panel_height, bg)
+            end
 
-          -- Draw FX toolbar and scrollable FX list below buttons
-          local fx_toolbar_bottom = controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
-            left_col_x + 8, buttons_bottom + 6, config.LEFT_COLUMN_WIDTH - 16,
-            take, config, state, drawing)
-          local fx_area_top = fx_toolbar_bottom + 4
-          local fx_area_height = (left_col_y + panel_height - 4) - fx_area_top
-          controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
-            left_col_x + 4, fx_area_top, config.LEFT_COLUMN_WIDTH - 10, fx_area_height,
-            take, config, state, drawing)
+            -- Draw buttons (may overflow to col 2)
+            local c1b, c2b = controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y,
+              left_col_x, left_col_y, item, take, config, state, utils, drawing, settings,
+              panel_height, c2x)
 
-          -- FX right-click context menu
-          controls.draw_fx_context_menu(ctx, state)
+            -- Update state for next frame: need FX column if buttons + FX don't fit in col 1
+            state.needs_fx_col = (left_col_y + panel_height - 14 - c1b) < 50
+
+            -- Draw FX in column 2 (if active) or below buttons in column 1
+            if c2x then
+              local fy = c2b and (c2b + 6) or (left_col_y + 10)
+              local tb = controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
+                c2x + 8, fy, config.LEFT_COLUMN_WIDTH - 16, take, config, state, drawing)
+              local at = tb + 4
+              controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
+                c2x + 4, at, config.LEFT_COLUMN_WIDTH - 10,
+                (left_col_y + panel_height - 4) - at, take, config, state, drawing)
+            else
+              local tb = controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
+                left_col_x + 8, c1b + 6, config.LEFT_COLUMN_WIDTH - 16,
+                take, config, state, drawing)
+              local at = tb + 4
+              controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
+                left_col_x + 4, at, config.LEFT_COLUMN_WIDTH - 10,
+                (left_col_y + panel_height - 4) - at, take, config, state, drawing)
+            end
+
+            controls.draw_fx_context_menu(ctx, state)
+          end
 
           local COLOR_PANEL_BG = config.COLOR_INFO_BAR_BG
           reaper.ImGui_DrawList_AddRectFilled(draw_list, panel_x, panel_y,
@@ -3460,7 +3541,7 @@ local function loop()
               elseif is_looped_item then
                 drag_offset = state.unwrapped_start_offset or start_offset
               else
-                drag_offset = start_offset
+                drag_offset = view_offset
               end
               state.post_drag_ext_start = nil
               state.post_drag_ext_end = nil
@@ -3514,7 +3595,7 @@ local function loop()
               elseif is_looped_item then
                 drag_offset = state.unwrapped_start_offset or start_offset
               else
-                drag_offset = start_offset
+                drag_offset = view_offset
               end
               state.post_drag_ext_start = nil
               state.post_drag_ext_end = nil
@@ -3568,7 +3649,7 @@ local function loop()
             state.dragging_start = true  -- reuse marker drag machinery
             state.drag_alt_latched = true
             state.marker_drag_activated = false
-            state.drag_start_offset = start_offset
+            state.drag_start_offset = view_offset
             state.drag_start_length = item_length
             state.drag_start_item_position = item_position
             state.drag_start_mouse_x = mouse_x
@@ -3589,8 +3670,8 @@ local function loop()
               end
               state.drag_start_warp_map = state.warp_map
             else
-              state.drag_current_start = start_offset
-              state.drag_current_end = start_offset + source_item_length
+              state.drag_current_start = view_offset
+              state.drag_current_end = view_offset + source_item_length
               -- Save stretch markers for shifting during non-warp alt-drag
               local sm_count = reaper.GetTakeNumStretchMarkers(take)
               if sm_count > 0 then
@@ -3757,8 +3838,8 @@ local function loop()
             local sel_e = state.region_sel_end
             local new_length = (sel_e - sel_s) / playrate
             local new_startoffs = sel_s - section_offset
-            -- Wrap D_STARTOFFS for looped/extended selections
-            if source_length > 0 then
+            -- Wrap for REAPER only when loop is on (non-looped items allow negative D_STARTOFFS)
+            if source_length > 0 and state.is_loop_src then
               new_startoffs = new_startoffs % source_length
             end
 
@@ -3849,7 +3930,7 @@ local function loop()
             elseif state.unwrapped_start_offset ~= nil then
               env_offset = state.unwrapped_start_offset
             else
-              env_offset = start_offset
+              env_offset = view_offset
             end
             local env_time_min = is_extended_view and ext_start or 0
             local env_time_max = is_extended_view and ext_end or source_length
@@ -4966,7 +5047,7 @@ local function loop()
 
               if set_fi then
                 -- Fade-in ends at click position
-                local new_fi = (click_time - start_offset) / playrate
+                local new_fi = (click_time - view_offset) / playrate
                 new_fi = math.max(0, math.min(item_length, new_fi))
                 local fo = fade_out_len
                 if new_fi + fo > item_length then
@@ -4980,7 +5061,7 @@ local function loop()
 
               elseif set_fo then
                 -- Fade-out starts at click position
-                local current_end = start_offset + source_item_length
+                local current_end = view_offset + source_item_length
                 local new_fo = (current_end - click_time) / playrate
                 new_fo = math.max(0, math.min(item_length, new_fo))
                 local fi = fade_in_len
@@ -5024,7 +5105,7 @@ local function loop()
                   local new_srcpos = utils.warp_pos_to_src(state.warp_map, delta, playrate)
                   new_srcpos = math.max(0, new_srcpos)
                   local new_take_offset = new_srcpos - section_offset
-                  if source_length > 0 then new_take_offset = new_take_offset % source_length end
+                  if source_length > 0 and state.is_loop_src then new_take_offset = new_take_offset % source_length end
                   reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
                   -- Adjust D_POSITION so the right edge stays fixed
                   reaper.SetMediaItemInfo_Value(item, "D_POSITION", item_position + delta)
@@ -5044,7 +5125,7 @@ local function loop()
               else
                 -- Non-warp mode (original logic)
                 -- Use unwrapped offset when available (px_to_time returns unwrapped/extended coords)
-                local effective_start = state.unwrapped_start_offset ~= nil and state.unwrapped_start_offset or start_offset
+                local effective_start = state.unwrapped_start_offset ~= nil and state.unwrapped_start_offset or view_offset
                 local current_end = effective_start + source_item_length
 
                 if set_start then
@@ -5053,8 +5134,8 @@ local function loop()
                   local new_source_length = current_end - new_start
                   local new_item_length = new_source_length / playrate
                   local new_take_offset = new_start - section_offset
-                  -- Wrap for REAPER when extending past source boundaries
-                  if source_length > 0 then
+                  -- Wrap for REAPER only when loop is on (non-looped items allow negative D_STARTOFFS)
+                  if source_length > 0 and state.is_loop_src then
                     new_take_offset = new_take_offset % source_length
                   end
 
@@ -5065,8 +5146,7 @@ local function loop()
                     if fo == 0 then fi = math.min(fi, new_item_length) end
                   end
 
-                  -- Adjust D_POSITION so the right edge stays fixed
-                  reaper.SetMediaItemInfo_Value(item, "D_POSITION", item_position + item_length - new_item_length)
+                  -- Keep item left edge fixed, only adjust where sound starts (matches drag behavior)
                   reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
                   reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_item_length)
                   reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
@@ -5175,7 +5255,7 @@ local function loop()
               local new_srcpos = utils.warp_pos_to_src(orig_map, clamped_delta, state.drag_start_playrate)
               new_srcpos = math.max(0, new_srcpos)
               local new_take_offset = new_srcpos - section_offset
-              if source_length > 0 then new_take_offset = new_take_offset % source_length end
+              if source_length > 0 and state.is_loop_src then new_take_offset = new_take_offset % source_length end
               reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
               reaper.UpdateArrange()
             else
@@ -5315,7 +5395,7 @@ local function loop()
               local new_srcpos = utils.warp_pos_to_src(state.drag_start_warp_map, delta, state.drag_start_playrate)
               new_srcpos = math.max(0, new_srcpos)
               local new_take_offset = new_srcpos - section_offset
-              if source_length > 0 then new_take_offset = new_take_offset % source_length end
+              if source_length > 0 and state.is_loop_src then new_take_offset = new_take_offset % source_length end
               reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
               local new_length = math.max(0.01, state.drag_start_length - delta)
               -- Adjust D_POSITION so the right edge stays fixed (item extends/contracts from left)
@@ -5333,8 +5413,8 @@ local function loop()
               local new_source_length = original_source_end - new_start
               local new_item_length = new_source_length / state.drag_start_playrate
               local new_take_offset = new_start - section_offset
-              -- Wrap for REAPER when extending past source boundaries
-              if source_length > 0 then
+              -- Wrap for REAPER only when loop is on (non-looped items allow negative D_STARTOFFS)
+              if source_length > 0 and state.is_loop_src then
                 new_take_offset = new_take_offset % source_length
               end
 
@@ -5752,7 +5832,7 @@ local function loop()
             if is_warped_view then
               playhead_display = play_pos - item_position  -- item-time (pos-space)
             else
-              playhead_display = utils.project_to_source_time(play_pos, item_position, start_offset, playrate)
+              playhead_display = utils.project_to_source_time(play_pos, item_position, view_offset, playrate)
             end
             local playhead_px = time_to_px(playhead_display)
             if playhead_px >= wave_x and playhead_px <= wave_x + waveform_width then
@@ -5776,7 +5856,7 @@ local function loop()
               state.preview_active = false
             else
               -- Start preview from cursor position (or item start if no cursor set)
-              local pos = state.preview_cursor_pos or start_offset
+              local pos = state.preview_cursor_pos or view_offset
 
               if is_warped_view then
                 -- Warp mode: use REAPER transport so stretch markers are audible.

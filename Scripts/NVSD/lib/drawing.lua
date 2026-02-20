@@ -1992,7 +1992,7 @@ end
 -- peaks: per-view peaks from get_peaks_for_range (each peak maps to one pixel column)
 -- view_start/view_length: pre-computed visible time range
 -- pixel_step: 1 for full resolution, 2 for half (during REAPER interaction)
-function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offset, source_item_length, source_length, view_start, view_length, ruler_y, visual_gain, is_reversed, num_channels, config, pixel_step, bounds_start, bounds_end)
+function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offset, source_item_length, source_length, view_start, view_length, ruler_y, visual_gain, is_reversed, num_channels, config, pixel_step, bounds_start, bounds_end, is_loop_src)
   if not peaks or peaks.count == 0 or source_length <= 0 then return 0, 0 end
 
   visual_gain = visual_gain or 1.0
@@ -2001,7 +2001,8 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
   pixel_step = pixel_step or 1
 
   local item_end = start_offset + source_item_length
-  local is_looped = source_item_length > source_length
+  -- Only treat as looped when Loop is actually ON; non-looped extended items have silence past source
+  local is_looped = (is_loop_src ~= false) and source_item_length > source_length
   local view_end = view_start + view_length
 
   -- NOTE: Waveform BG is drawn by the caller before draw_grid_lines, so grid lines appear between bg and waveform
@@ -2069,7 +2070,8 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
       and wf_cache.height == height
       and wf_cache.x == x
       and wf_cache.y == y
-      and wf_cache.waveform_zoom == (config.waveform_zoom or 1) then
+      and wf_cache.waveform_zoom == (config.waveform_zoom or 1)
+      and wf_cache.is_loop_src == is_loop_src then
     -- Cache hit: reuse Phase 1+2 results
     col_tops = wf_cache.col_tops
     col_bots = wf_cache.col_bots
@@ -2183,6 +2185,7 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
     wf_cache.n_segs = n_segs
     wf_cache.is_waveform_mode = is_waveform_mode
     wf_cache.waveform_zoom = config.waveform_zoom or 1
+    wf_cache.is_loop_src = is_loop_src
   end
 
   -- Phase 3: Render (always runs — ImGui immediate mode requires redrawing every frame)
