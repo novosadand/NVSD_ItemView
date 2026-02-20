@@ -466,19 +466,13 @@ function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, pa
     if new_pos > 1 then
       new_pos = 1
       state.drag_controls.gain.start_value = 1
-      if state.has_js_extension then
-        state.drag_cumulative_delta_y = 0
-      else
-        state.drag_controls.gain.start_y = mouse_y
-      end
+      state.drag_cumulative_delta_y = 0
+      state.drag_controls.gain.start_y = mouse_y  -- rebase for ImGui fallback path
     elseif new_pos < 0 then
       new_pos = 0
       state.drag_controls.gain.start_value = 0
-      if state.has_js_extension then
-        state.drag_cumulative_delta_y = 0
-      else
-        state.drag_controls.gain.start_y = mouse_y
-      end
+      state.drag_cumulative_delta_y = 0
+      state.drag_controls.gain.start_y = mouse_y
     end
 
     local new_db = utils.slider_to_db(new_pos)
