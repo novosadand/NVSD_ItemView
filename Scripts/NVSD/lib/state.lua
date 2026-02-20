@@ -114,6 +114,7 @@ state.drag_lock_screen_y = 0
 state.drag_cumulative_delta_y = 0
 state.drag_last_screen_y = 0  -- Track last frame's Y position for delta calculation
 state.has_js_extension = reaper.JS_Mouse_SetPosition ~= nil
+state.cursor_lock_works = nil  -- nil = untested, true/false after first verify
 
 -- Warp mode state
 state.warp_mode = false

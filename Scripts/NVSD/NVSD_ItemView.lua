@@ -1670,15 +1670,18 @@ local function loop()
             if delta ~= 0 then
               state.drag_cumulative_delta_y = state.drag_cumulative_delta_y + delta
             end
-            -- With JS extension: lock cursor in place for infinite drag range
-            if state.has_js_extension and state.drag_lock_screen_x ~= 0 then
+            -- With JS extension: lock cursor in place for infinite drag range.
+            -- Skip if cursor lock was already detected as broken (Mac Retina scaling,
+            -- missing accessibility permissions, etc.) to avoid corrupting delta tracking.
+            if state.has_js_extension and state.drag_lock_screen_x ~= 0 and state.cursor_lock_works ~= false then
               reaper.JS_Mouse_SetPosition(state.drag_lock_screen_x, state.drag_lock_screen_y)
-              -- Verify teleport worked (fails on Mac without accessibility permissions).
-              -- If it failed, track actual position for frame-to-frame delta instead.
               local vx, vy = reaper.GetMousePosition()
               if math.abs(vy - state.drag_lock_screen_y) <= 2 then
+                state.cursor_lock_works = true
                 state.drag_last_screen_y = state.drag_lock_screen_y
               else
+                -- Teleport failed. Disable permanently to prevent position corruption.
+                state.cursor_lock_works = false
                 state.drag_last_screen_y = cur_screen_y
               end
             else
