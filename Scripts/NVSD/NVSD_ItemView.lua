@@ -2335,26 +2335,6 @@ local function loop()
           -- Hide and lock cursor while dragging any control
           if state.is_any_control_dragging() then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
-            -- DEBUG: show drag diagnostics (remove after Mac fix confirmed)
-            do
-              local dbg_name = state.drag_controls.pitch.active and "pitch"
-                  or state.drag_controls.pan.active and "pan"
-                  or state.drag_controls.gain.active and "gain"
-                  or "?"
-              local dbg_ctrl = state.drag_controls[dbg_name]
-              local use_lock = state.has_js_extension and state.cursor_lock_works == true
-              local dbg_delta = use_lock and state.drag_cumulative_delta_y or (dbg_ctrl and (dbg_ctrl.start_y - mouse_y) or 0)
-              local dbg_text = string.format("DRAG %s | lock=%s js=%s | start_y=%.0f mouse_y=%.0f | delta=%.1f cumul=%.1f",
-                  dbg_name,
-                  tostring(state.cursor_lock_works),
-                  tostring(state.has_js_extension),
-                  dbg_ctrl and dbg_ctrl.start_y or 0,
-                  mouse_y,
-                  dbg_delta,
-                  state.drag_cumulative_delta_y)
-              reaper.ImGui_DrawList_AddRectFilled(draw_list, wave_x, wave_y, wave_x + waveform_width, wave_y + 18, 0x000000DD)
-              reaper.ImGui_DrawList_AddText(draw_list, wave_x + 4, wave_y + 2, 0x00FF00FF, dbg_text)
-            end
             -- Accumulate delta from screen coords (works on all platforms)
             local cur_screen_x, cur_screen_y = reaper.GetMousePosition()
             state.drag_last_screen_y = state.drag_last_screen_y or cur_screen_y
