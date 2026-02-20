@@ -2311,8 +2311,15 @@ local function loop()
             end
             -- With JS extension: lock cursor in place for infinite drag range
             if state.has_js_extension and state.drag_lock_screen_x ~= 0 then
-              state.drag_last_screen_y = state.drag_lock_screen_y
               reaper.JS_Mouse_SetPosition(state.drag_lock_screen_x, state.drag_lock_screen_y)
+              -- Verify teleport worked (fails on Mac without accessibility permissions).
+              -- If it failed, track actual position for frame-to-frame delta instead.
+              local vx, vy = reaper.GetMousePosition()
+              if math.abs(vy - state.drag_lock_screen_y) <= 2 then
+                state.drag_last_screen_y = state.drag_lock_screen_y
+              else
+                state.drag_last_screen_y = cur_screen_y
+              end
             else
               state.drag_last_screen_y = cur_screen_y
             end
