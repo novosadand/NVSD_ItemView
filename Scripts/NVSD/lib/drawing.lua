@@ -2767,7 +2767,7 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
     state.show_ghost_markers = not state.show_ghost_markers
   end
   if mouse_in_ghost then
-    local ghost_tip = "Show other items' regions"
+    local ghost_tip = "Show other items' regions (experimental)"
     if settings then
       local sc = settings.current.shortcuts.toggle_ghost_markers
       if sc and sc.key ~= "" then
