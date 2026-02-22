@@ -724,7 +724,7 @@ local function loop()
       local take = reaper.GetActiveTake(item)
 
       -- Item-specific shortcuts (work on any item with an active take)
-      if take then
+      if take and not text_input_active then
         -- Toggle WARP (preserve pitch) - keyboard shortcut mirrors button behavior
         if settings.check_shortcut(ctx, "toggle_warp") then
           if not state.warp_saved_markers_map then state.warp_saved_markers_map = {} end
