@@ -35,6 +35,7 @@ settings.DEFAULT_SHORTCUTS = {
   zoom_to_markers = {ctrl = false, shift = false, alt = false, key = "Z"},
   unzoom_all = {ctrl = false, shift = false, alt = true, key = "Z"},
   toggle_cue_markers = {ctrl = false, shift = false, alt = false, key = "M"},
+  toggle_ghost_markers = {ctrl = false, shift = false, alt = false, key = "G"},
   show_in_explorer = {ctrl = true, shift = false, alt = false, key = "F"},
   quantize_transients = {ctrl = true, shift = false, alt = false, key = "U"},
   insert_warp_marker = {ctrl = true, shift = false, alt = false, key = "I"},

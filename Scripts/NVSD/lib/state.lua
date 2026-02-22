@@ -292,6 +292,15 @@ state.cached_cue_markers = nil       -- Cached cue marker data: {{time=, name=},
 state.cached_cue_source = nil        -- Source pointer for which cue markers were loaded
 state.cue_label_hovered = false      -- cue marker label is being hovered
 
+-- Ghost marker state (other selected items' regions)
+state.show_ghost_markers = false
+state.ghost_marker_regions = nil       -- {{src_start, src_end}, ...}
+state.ghost_marker_sel_count = 0       -- cache invalidation key
+state.ghost_marker_sel_first = nil
+state.ghost_marker_sel_last = nil
+state.ghost_marker_item = nil
+state.ghost_marker_proj_state = 0
+
 -- Audio preview state (CF_Preview API from SWS extension)
 state.preview_cursor_pos = nil       -- source time (seconds) where preview starts
 state.preview_handle = nil           -- CF_Preview handle (userdata)

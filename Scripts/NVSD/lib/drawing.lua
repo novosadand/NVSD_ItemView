@@ -2332,6 +2332,53 @@ function drawing.draw_preview_playhead(draw_list, x, y, height)
   reaper.ImGui_DrawList_AddLine(draw_list, x, y, x, y + height, color, 1.5)
 end
 
+-- Draw ghost markers (other selected items' regions as bracket pairs)
+function drawing.draw_ghost_markers(draw_list, regions, wave_x, wave_y, waveform_width, waveform_height, view_start, view_length, config)
+  if not regions or #regions == 0 or view_length <= 0 then return end
+
+  local bracket_color = (config.COLOR_MARKER & 0xFFFFFF00) | 0x66
+  local fill_color = (config.COLOR_MARKER & 0xFFFFFF00) | 0x18
+  local tick_len = 4
+  local inset = 2
+
+  reaper.ImGui_DrawList_PushClipRect(draw_list, wave_x, wave_y,
+    wave_x + waveform_width, wave_y + waveform_height, true)
+
+  for _, r in ipairs(regions) do
+    local lx = wave_x + ((r.start_t - view_start) / view_length) * waveform_width
+    local rx = wave_x + ((r.end_t - view_start) / view_length) * waveform_width
+
+    -- Skip if entirely off screen
+    if rx >= wave_x and lx <= wave_x + waveform_width then
+      local top = wave_y + inset
+      local bot = wave_y + waveform_height - inset
+
+      -- Subtle fill
+      local fill_l = math.max(lx, wave_x)
+      local fill_r = math.min(rx, wave_x + waveform_width)
+      if fill_r > fill_l then
+        reaper.ImGui_DrawList_AddRectFilled(draw_list, fill_l, top, fill_r, bot, fill_color)
+      end
+
+      -- Left bracket: vertical line + ticks
+      if lx >= wave_x and lx <= wave_x + waveform_width then
+        reaper.ImGui_DrawList_AddLine(draw_list, lx, top, lx, bot, bracket_color, 1.5)
+        reaper.ImGui_DrawList_AddLine(draw_list, lx, top, lx + tick_len, top, bracket_color, 1.5)
+        reaper.ImGui_DrawList_AddLine(draw_list, lx, bot, lx + tick_len, bot, bracket_color, 1.5)
+      end
+
+      -- Right bracket: vertical line + ticks
+      if rx >= wave_x and rx <= wave_x + waveform_width then
+        reaper.ImGui_DrawList_AddLine(draw_list, rx, top, rx, bot, bracket_color, 1.5)
+        reaper.ImGui_DrawList_AddLine(draw_list, rx, top, rx - tick_len, top, bracket_color, 1.5)
+        reaper.ImGui_DrawList_AddLine(draw_list, rx, bot, rx - tick_len, bot, bracket_color, 1.5)
+      end
+    end
+  end
+
+  reaper.ImGui_DrawList_PopClipRect(draw_list)
+end
+
 -- Draw WAV cue markers (embedded cue points from source file)
 -- markers must be sorted by time. Double-click a label to select the region to the next cue point.
 function drawing.draw_cue_markers(ctx, draw_list, markers, wave_x, wave_y, waveform_width, waveform_height, view_start, view_length, source_length, is_extended, config, mouse_x, mouse_y, state, item)
@@ -2684,6 +2731,50 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
       end
     end
     drawing.tooltip(ctx, "env_snap_btn", snap_tip)
+  end
+
+  -- Ghost markers toggle button (bracket icon, to the right of snap button)
+  local ghost_btn_w = 22
+  local ghost_gap = 3
+  local ghost_btn_x = snap_btn_x + snap_btn_w + ghost_gap
+  local ghost_btn_y = btn_y
+  local ghost_btn_h = btn_h
+  local mouse_in_ghost = mouse_x >= ghost_btn_x and mouse_x <= ghost_btn_x + ghost_btn_w
+                        and mouse_y >= ghost_btn_y and mouse_y <= ghost_btn_y + ghost_btn_h
+  local ghost_active = state.show_ghost_markers
+  local ghost_color = (config.COLOR_MARKER & 0xFFFFFF00) | 0x66
+  local ghost_bg = ghost_active and ghost_color or (mouse_in_ghost and 0x505050FF or 0x303030FF)
+  local ghost_border = ghost_active and ghost_color or 0x555555FF
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, ghost_btn_x, ghost_btn_y,
+      ghost_btn_x + ghost_btn_w, ghost_btn_y + ghost_btn_h, ghost_bg, 2)
+  reaper.ImGui_DrawList_AddRect(draw_list, ghost_btn_x, ghost_btn_y,
+      ghost_btn_x + ghost_btn_w, ghost_btn_y + ghost_btn_h, ghost_border, 2)
+
+  -- Draw bracket pair icon
+  local gcx = ghost_btn_x + ghost_btn_w / 2
+  local gcy = ghost_btn_y + ghost_btn_h / 2
+  local icon_color = ghost_active and 0x202020FF or 0xCCCCCCFF
+  -- Back bracket (smaller, offset right)
+  reaper.ImGui_DrawList_AddLine(draw_list, gcx, gcy - 4, gcx, gcy + 4, icon_color, 1)
+  reaper.ImGui_DrawList_AddLine(draw_list, gcx, gcy - 4, gcx + 2, gcy - 4, icon_color, 1)
+  reaper.ImGui_DrawList_AddLine(draw_list, gcx, gcy + 4, gcx + 2, gcy + 4, icon_color, 1)
+  -- Front bracket (full size, offset left)
+  reaper.ImGui_DrawList_AddLine(draw_list, gcx - 4, gcy - 5, gcx - 4, gcy + 5, icon_color, 1.5)
+  reaper.ImGui_DrawList_AddLine(draw_list, gcx - 4, gcy - 5, gcx - 1, gcy - 5, icon_color, 1.5)
+  reaper.ImGui_DrawList_AddLine(draw_list, gcx - 4, gcy + 5, gcx - 1, gcy + 5, icon_color, 1.5)
+
+  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_ghost then
+    state.show_ghost_markers = not state.show_ghost_markers
+  end
+  if mouse_in_ghost then
+    local ghost_tip = "Show other items' regions"
+    if settings then
+      local sc = settings.current.shortcuts.toggle_ghost_markers
+      if sc and sc.key ~= "" then
+        ghost_tip = ghost_tip .. " (" .. settings.format_shortcut(sc) .. ")"
+      end
+    end
+    drawing.tooltip(ctx, "ghost_markers_btn", ghost_tip)
   end
 
 end

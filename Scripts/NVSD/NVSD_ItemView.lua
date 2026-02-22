@@ -472,6 +472,11 @@ local function loop()
       state.show_cue_markers = not state.show_cue_markers
     end
 
+    -- Toggle ghost markers (configurable shortcut, default G)
+    if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "toggle_ghost_markers") then
+      state.show_ghost_markers = not state.show_ghost_markers
+    end
+
     -- Open settings (configurable shortcut, default S)
     if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "open_settings") then
       if not settings_ui.is_open() then settings_ui.open(settings) end
@@ -891,6 +896,65 @@ local function loop()
             -- Auto-show cue markers when the file has them
             if #state.cached_cue_markers > 0 then
               state.show_cue_markers = true
+            end
+          end
+
+          -- Cache ghost marker regions (other selected items sharing same root source)
+          if state.show_ghost_markers then
+            local sel_count = reaper.CountSelectedMediaItems(0)
+            local sel_first = sel_count > 0 and reaper.GetSelectedMediaItem(0, 0) or nil
+            local sel_last = sel_count > 0 and reaper.GetSelectedMediaItem(0, sel_count - 1) or nil
+            local proj_state = reaper.GetProjectStateChangeCount(0)
+            if sel_count ~= state.ghost_marker_sel_count
+                or sel_first ~= state.ghost_marker_sel_first
+                or sel_last ~= state.ghost_marker_sel_last
+                or item ~= state.ghost_marker_item
+                or proj_state ~= state.ghost_marker_proj_state then
+              state.ghost_marker_sel_count = sel_count
+              state.ghost_marker_sel_first = sel_first
+              state.ghost_marker_sel_last = sel_last
+              state.ghost_marker_item = item
+              state.ghost_marker_proj_state = proj_state
+              state.ghost_marker_regions = {}
+              if sel_count >= 2 then
+                local my_path = reaper.GetMediaSourceFileName(source, "")
+                if my_path and my_path ~= "" then
+                  for si = 0, sel_count - 1 do
+                    local other_item = reaper.GetSelectedMediaItem(0, si)
+                    if other_item ~= item then
+                      local other_take = reaper.GetActiveTake(other_item)
+                      if other_take and not reaper.TakeIsMIDI(other_take) then
+                        local other_src = reaper.GetMediaItemTake_Source(other_take)
+                        if other_src then
+                          -- Walk to root source, accumulating section offset
+                          local other_sect_offset = 0
+                          local other_parent = reaper.GetMediaSourceParent(other_src)
+                          while other_parent do
+                            local retval, sect_offs = reaper.PCM_Source_GetSectionInfo(other_src)
+                            if retval then other_sect_offset = other_sect_offset + (sect_offs or 0) end
+                            other_src = other_parent
+                            other_parent = reaper.GetMediaSourceParent(other_src)
+                          end
+                          local other_path = reaper.GetMediaSourceFileName(other_src, "")
+                          if other_path == my_path then
+                            local other_startoffs = reaper.GetMediaItemTakeInfo_Value(other_take, "D_STARTOFFS")
+                            local other_playrate = reaper.GetMediaItemTakeInfo_Value(other_take, "D_PLAYRATE")
+                            if other_playrate == 0 then other_playrate = 1 end
+                            local other_length = reaper.GetMediaItemInfo_Value(other_item, "D_LENGTH")
+                            local src_start = other_sect_offset + other_startoffs
+                            local src_end = src_start + other_length * other_playrate
+                            -- Handle reversed items
+                            if src_start > src_end then src_start, src_end = src_end, src_start end
+                            state.ghost_marker_regions[#state.ghost_marker_regions + 1] = {
+                              src_start = src_start, src_end = src_end
+                            }
+                          end
+                        end
+                      end
+                    end
+                  end
+                end
+              end
             end
           end
 
@@ -6079,6 +6143,21 @@ local function loop()
           end
           if state.fade_out_hovered and fade_out_len == 0 and not state.dragging_fade_out then
             drawing.draw_fade_hint(draw_list, end_marker_x, wave_y, false)
+          end
+
+          -- Draw ghost markers (other items' regions, behind everything else)
+          if state.show_ghost_markers and state.ghost_marker_regions and #state.ghost_marker_regions > 0 then
+            local ghost_display = {}
+            for _, r in ipairs(state.ghost_marker_regions) do
+              if is_warped_view then
+                local ds = utils.warp_src_to_pos(state.warp_map, r.src_start - section_offset, playrate)
+                local de = utils.warp_src_to_pos(state.warp_map, r.src_end - section_offset, playrate)
+                ghost_display[#ghost_display + 1] = {start_t = ds, end_t = de}
+              else
+                ghost_display[#ghost_display + 1] = {start_t = r.src_start, end_t = r.src_end}
+              end
+            end
+            drawing.draw_ghost_markers(draw_list, ghost_display, wave_x, wave_y, waveform_width, waveform_height, view_start, view_length, config)
           end
 
           -- Draw WAV cue markers (behind start/end markers)
