@@ -385,16 +385,14 @@ local function loop()
     -- Audio preview (configurable shortcut, default Ctrl+Space)
     if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "audio_preview") and reaper.CF_CreatePreview then
       state.preview_start_requested = true  -- processed in item context where source is available
-    end
 
     -- Preview from start marker (configurable, default Enter)
-    if reaper_is_active and not text_input_active and not settings.listening and settings.check_shortcut(ctx, "preview_from_start") then
+    elseif reaper_is_active and not text_input_active and not settings.listening and settings.check_shortcut(ctx, "preview_from_start") then
       state.preview_from_start_requested = true  -- processed in item context where ext_start is available
-    end
 
     -- Forward Space to REAPER transport (so playback works without clicking back to timeline)
     -- Plain Space while preview is playing: stop preview instead of toggling transport
-    if reaper_is_active and not text_input_active and not settings.listening and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Space()) then
+    elseif reaper_is_active and not text_input_active and not settings.listening and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Space()) then
       if state.preview_active then
         state.stop_preview()
       else
