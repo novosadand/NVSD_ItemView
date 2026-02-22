@@ -1164,19 +1164,19 @@ local function loop()
             ext_end = state.slope_drag_start_ext_end
             ext_length = ext_end - ext_start
           elseif is_warped_view then
-            -- In warped view (pos-time), always show [0, item_length] to match
-            -- REAPER's item display. The source-extent mapping used in non-warped
-            -- mode doesn't translate well to pos-time: when the item has a large
-            -- take offset, warp_src_to_pos(0) can map to wildly negative values,
-            -- compressing the actual item content into a tiny sliver.
-            -- During marker drag, expand to include the dragged region so the
-            -- user can see/adjust the crop beyond the current item edges.
+            -- In warped view (pos-time), show full source extent mapped through
+            -- the warp map. This matches non-warp behavior where ext is based on
+            -- source_length (stable) rather than item_length (changes with markers).
+            -- Without this, dragging markers changes ext_length, causing the view
+            -- to auto-zoom to fit the marker region.
+            local src_start_pos = utils.warp_src_to_pos(state.warp_map, 0, playrate)
+            local src_end_pos = utils.warp_src_to_pos(state.warp_map, source_length, playrate)
             if (state.dragging_start or state.dragging_end) and state.drag_current_start then
-              ext_start = math.min(0, state.drag_current_start)
-              ext_end = math.max(item_length, state.drag_current_end)
+              ext_start = math.min(src_start_pos, 0, state.drag_current_start)
+              ext_end = math.max(src_end_pos, item_length, state.drag_current_end)
             else
-              ext_start = 0
-              ext_end = item_length
+              ext_start = math.min(src_start_pos, 0)
+              ext_end = math.max(src_end_pos, item_length)
             end
             ext_length = ext_end - ext_start
           elseif (state.dragging_start or state.dragging_end) then
