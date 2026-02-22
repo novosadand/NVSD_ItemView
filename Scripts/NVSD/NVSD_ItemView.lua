@@ -441,6 +441,10 @@ local function loop()
       state.zoom_level = 1.0
       state.pan_offset = 0
       state.zoom_toggle_active = false
+    elseif reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "unzoom_all") then
+      state.zoom_level = 1.0
+      state.pan_offset = 0
+      state.zoom_toggle_active = false
     end
 
     -- Toggle envelope snap (configurable shortcut, default Ctrl+4)
@@ -1512,13 +1516,6 @@ local function loop()
               state.pan_offset = 0
               state.zoom_toggle_active = false
             end
-          end
-
-          -- Unzoom completely (Alt+Z)
-          if reaper_is_active and settings.check_shortcut(ctx, "unzoom_all") then
-            state.zoom_level = 1.0
-            state.pan_offset = 0
-            state.zoom_toggle_active = false
           end
 
           -- Add markers at all transients + quantize all to grid (Ctrl+U)
