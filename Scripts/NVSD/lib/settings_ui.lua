@@ -37,6 +37,7 @@ local EDITABLE_SHORTCUTS = {
   {name = "toggle_cue_markers", label = "Toggle WAV cue markers"},
   {name = "show_in_explorer", label = "Show in Media Explorer"},
   {name = "quantize_transients", label = "Add markers at all transients"},
+  {name = "preview_from_start", label = "Preview from start marker"},
 }
 
 -- Reference shortcuts (not editable)
@@ -1722,6 +1723,8 @@ local HELP_SECTIONS = {
       {key = "Ctrl+click", desc = "Set start marker"},
       {key = "Ctrl+Shift+click", desc = "Set end marker"},
       {key = "Ctrl+Space", desc = "Audio preview (requires SWS)"},
+      {key = "Enter", desc = "Preview from start marker"},
+      "- Click during preview moves playhead without stopping",
     },
   },
   {
@@ -1846,6 +1849,7 @@ local HELP_SECTIONS = {
       {key = "H", desc = "Hide envelopes"},
       {key = "M", desc = "Cue markers"},
       {key = "Ctrl+Space", desc = "Audio preview"},
+      {key = "Enter", desc = "Preview from start marker"},
       {key = "Ctrl+F", desc = "Show in Media Explorer"},
       {key = "S", desc = "Settings"},
       {key = "Mouse4 / Mouse5", desc = "Set start/end marker"},

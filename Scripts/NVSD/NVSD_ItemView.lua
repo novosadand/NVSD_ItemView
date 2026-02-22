@@ -385,9 +385,16 @@ local function loop()
     -- Audio preview (configurable shortcut, default Ctrl+Space)
     if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "audio_preview") and reaper.CF_CreatePreview then
       state.preview_start_requested = true  -- processed in item context where source is available
+    end
+
+    -- Preview from start marker (configurable, default Enter)
+    if reaper_is_active and not text_input_active and not settings.listening and settings.check_shortcut(ctx, "preview_from_start") then
+      state.preview_from_start_requested = true  -- processed in item context where ext_start is available
+    end
+
     -- Forward Space to REAPER transport (so playback works without clicking back to timeline)
     -- Plain Space while preview is playing: stop preview instead of toggling transport
-    elseif reaper_is_active and not text_input_active and not settings.listening and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Space()) then
+    if reaper_is_active and not text_input_active and not settings.listening and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Space()) then
       if state.preview_active then
         state.stop_preview()
       else
@@ -3905,7 +3912,10 @@ local function loop()
                   click_t = snap_to_grid_if_enabled(click_t)
                 end
                 state.preview_cursor_pos = click_t
-                state.stop_preview()
+                if state.preview_active then
+                  state.stop_preview()
+                  state.preview_start_requested = true
+                end
               end
             end
           end
@@ -4908,8 +4918,11 @@ local function loop()
               click_t = snap_to_grid_if_enabled(click_t)
             end
             state.preview_cursor_pos = click_t
-            -- Stop any active preview when cursor moves
-            state.stop_preview()
+            -- If preview is playing, restart from new position; otherwise just place cursor
+            if state.preview_active then
+              state.stop_preview()
+              state.preview_start_requested = true
+            end
           end
 
           -- End dragging
@@ -5050,7 +5063,10 @@ local function loop()
               -- Click on marker without dragging: place preview cursor at marker position
               local marker_pos = state.dragging_start and state.drag_current_start or state.drag_current_end
               state.preview_cursor_pos = marker_pos
-              state.stop_preview()
+              if state.preview_active then
+                state.stop_preview()
+                state.preview_start_requested = true
+              end
             end
             -- Alt+click on fade curve (no drag movement): remove the fade
             if state.dragging_fade_curve_in and not state.fade_curve_was_dragged then
@@ -5931,6 +5947,14 @@ local function loop()
             if playhead_px >= wave_x and playhead_px <= wave_x + waveform_width then
               drawing.draw_playhead(draw_list, playhead_px, wave_y, waveform_height, config)
             end
+          end
+
+          -- Preview from start marker (Enter): jump cursor to left marker and start/restart preview
+          if state.preview_from_start_requested then
+            state.preview_from_start_requested = false
+            state.preview_cursor_pos = ext_start
+            state.stop_preview()
+            state.preview_start_requested = true
           end
 
           -- Audio preview: handle Ctrl+Space toggle

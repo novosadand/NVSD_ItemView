@@ -39,6 +39,7 @@ settings.DEFAULT_SHORTCUTS = {
   quantize_transients = {ctrl = true, shift = false, alt = false, key = "U"},
   insert_warp_marker = {ctrl = true, shift = false, alt = false, key = "I"},
   add_transient = {ctrl = true, shift = true, alt = false, key = "I"},
+  preview_from_start = {ctrl = false, shift = false, alt = false, key = "Enter"},
 }
 
 -- Map key names to ImGui key getter function names (created once at module load)
