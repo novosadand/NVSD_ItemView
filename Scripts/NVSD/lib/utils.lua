@@ -835,7 +835,6 @@ end
 -- Optional range_start/range_end in SOURCE time to limit to a region
 -- Optional warp_map/playrate for correct pos computation in warped view
 function utils.add_markers_at_transients(take, transients, range_start, range_end, warp_map, playrate)
-  local count = 0
   local item = reaper.GetMediaItemTake_Item(take)
   local item_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
   local sm_count = reaper.GetTakeNumStretchMarkers(take)
@@ -845,6 +844,9 @@ function utils.add_markers_at_transients(take, transients, range_start, range_en
     local _, _, srcpos = reaper.GetTakeStretchMarker(take, i)
     existing[#existing + 1] = srcpos
   end
+  -- First pass: compute snap destination for each candidate and pick the closest
+  -- transient per grid point (avoids multiple markers at the same position)
+  local grid_best = {}  -- snapped_pos -> {srcpos, pos, dist}
   for _, srcpos in ipairs(transients) do
     if (not range_start or srcpos >= range_start) and (not range_end or srcpos <= range_end) then
       local has = false
@@ -853,12 +855,20 @@ function utils.add_markers_at_transients(take, transients, range_start, range_en
       end
       if not has then
         local pos = warp_map and utils.warp_src_to_pos(warp_map, srcpos, playrate or 1) or srcpos
-        -- Snap destination to nearest grid line
-        pos = snap_to_grid(item_pos + pos) - item_pos
-        reaper.SetTakeStretchMarker(take, -1, pos, srcpos)
-        count = count + 1
+        local snapped = snap_to_grid(item_pos + pos) - item_pos
+        local dist = math.abs(pos - snapped)
+        local key = string.format("%.8f", snapped)
+        if not grid_best[key] or dist < grid_best[key].dist then
+          grid_best[key] = {srcpos = srcpos, pos = snapped, dist = dist}
+        end
       end
     end
+  end
+  -- Second pass: create markers (one per grid point)
+  local count = 0
+  for _, entry in pairs(grid_best) do
+    reaper.SetTakeStretchMarker(take, -1, entry.pos, entry.srcpos)
+    count = count + 1
   end
   return count
 end
