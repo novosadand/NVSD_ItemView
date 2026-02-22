@@ -629,11 +629,17 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       arrow_color)
   end
 
+  -- Capture before any close handlers run (used to block clicks on buttons underneath)
+  -- Must be before any dropdown button handler so the snapshot is available
+  local any_dropdown_menu_open = state.warp_dropdown_open or state.warp_submode_dropdown_open or state.warp_mode_dropdown_open
+  state._dropdown_menu_open = any_dropdown_menu_open
+
   if mouse_in_dropdown and dropdown_enabled and not state.warp_dropdown_open then
     drawing.tooltip(ctx, "pitch_mode", "Pitch shift algorithm (scroll to cycle)")
   end
 
-  if dropdown_enabled and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_dropdown and not any_dropdown_menu_open then
+  if dropdown_enabled and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_dropdown
+     and (not any_dropdown_menu_open or state.warp_dropdown_open) then
     state.warp_dropdown_open = not state.warp_dropdown_open
     if state.warp_dropdown_open then
       state.warp_submode_dropdown_open = false
@@ -668,10 +674,6 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       end
     end
   end
-
-  -- Capture before close handlers run (used to block clicks on buttons underneath)
-  local any_dropdown_menu_open = state.warp_dropdown_open or state.warp_submode_dropdown_open or state.warp_mode_dropdown_open
-  state._dropdown_menu_open = any_dropdown_menu_open
 
   if state.warp_dropdown_open then
     local menu_dl = reaper.ImGui_GetForegroundDrawList(ctx)
@@ -929,7 +931,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       end
 
       if dropdown_enabled and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_mode_dd
-         and not any_dropdown_menu_open then
+         and (not any_dropdown_menu_open or state.warp_mode_dropdown_open) then
         state.warp_mode_dropdown_open = not state.warp_mode_dropdown_open
         if state.warp_mode_dropdown_open then
           state.warp_dropdown_open = false
@@ -1218,7 +1220,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       end
 
       if dropdown_enabled and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_flags_dd
-         and not any_dropdown_menu_open then
+         and (not any_dropdown_menu_open or state.warp_submode_dropdown_open) then
         state.warp_submode_dropdown_open = not state.warp_submode_dropdown_open
         if state.warp_submode_dropdown_open then
           state.warp_dropdown_open = false
