@@ -4923,11 +4923,10 @@ local function loop()
             end
           end
 
-          -- Double-click: slide both markers so left marker lands at click position (non-warp only)
+          -- Double-click: slide both markers so left marker lands at click position
           -- Note: selecting_region starts on first click, so allow double-click when selection
           -- hasn't been drag-activated yet (cancel the pending selection instead)
           if reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_waveform
-              and not is_warped_view
               and not state._any_popup_open
               and not (state.selecting_region and state.selection_drag_activated)
               and not state.dragging_start and not state.dragging_end
@@ -4942,77 +4941,151 @@ local function loop()
             if state.selecting_region then
               state.selecting_region = false
             end
-            local click_t = px_to_time(mouse_x)
-            local region_len = source_item_length  -- length in source-time
-            local new_start = click_t
-            local new_end = new_start + region_len
 
-            -- Clamp to source boundaries for looped items (same as alt+drag)
-            if state.is_loop_src then
-              if new_start < 0 then
-                new_start = 0
-                new_end = region_len
+            if is_warped_view then
+              -- Warp mode: click is in pos-time, shift stretch markers and D_STARTOFFS
+              local click_t = px_to_time(mouse_x)
+              local delta = click_t  -- slide amount in pos-time
+
+              -- Clamp to source boundaries in pos-time
+              local src_start_pos = utils.warp_src_to_pos(state.warp_map, 0, playrate)
+              local src_end_pos = utils.warp_src_to_pos(state.warp_map, source_length, playrate)
+              delta = math.max(src_start_pos, math.min(src_end_pos - item_length, delta))
+
+              -- Compute new D_STARTOFFS from current warp map BEFORE shifting markers
+              local new_srcpos = utils.warp_pos_to_src(state.warp_map, delta, playrate)
+              new_srcpos = math.max(0, new_srcpos)
+              local new_take_offset = new_srcpos - section_offset
+              if source_length > 0 and state.is_loop_src then
+                new_take_offset = new_take_offset % source_length
               end
-              if new_end > source_length then
-                new_end = source_length
-                new_start = source_length - region_len
+
+              -- Shift stretch markers' pos by -delta (srcpos unchanged)
+              local sm_count = reaper.GetTakeNumStretchMarkers(take)
+              if sm_count > 0 then
+                local markers = {}
+                for si = 0, sm_count - 1 do
+                  local _, pos, srcpos = reaper.GetTakeStretchMarker(take, si)
+                  markers[#markers + 1] = {pos = pos - delta, srcpos = srcpos}
+                end
+                for si = sm_count - 1, 0, -1 do
+                  reaper.DeleteTakeStretchMarkers(take, si)
+                end
+                for _, sm in ipairs(markers) do
+                  reaper.SetTakeStretchMarker(take, -1, sm.pos, sm.srcpos)
+                end
               end
-            end
 
-            local new_take_offset = new_start - section_offset
-
-            -- Shift envelope points so they stay audio-anchored
-            if not state.envelope_lock then
-              local offset_delta = new_take_offset - take_offset
-              if math.abs(offset_delta) > 0.000001 then
-                local env_names = { "Volume", "Pitch", "Pan" }
-                for _, ename in ipairs(env_names) do
-                  local e = reaper.GetTakeEnvelopeByName(take, ename)
-                  if e then
-                    local np = reaper.CountEnvelopePoints(e)
-                    for ei = 0, np - 1 do
-                      local ret, pt_time, pt_val, pt_shape, pt_tension, pt_sel = reaper.GetEnvelopePoint(e, ei)
-                      if ret then
-                        reaper.SetEnvelopePoint(e, ei, pt_time - offset_delta, pt_val, pt_shape, pt_tension, pt_sel, true)
+              -- Shift envelope points so they stay audio-anchored
+              if not state.envelope_lock then
+                local offset_delta = new_take_offset - take_offset
+                if source_length > 0 then
+                  if offset_delta > source_length * 0.5 then
+                    offset_delta = offset_delta - source_length
+                  elseif offset_delta < -source_length * 0.5 then
+                    offset_delta = offset_delta + source_length
+                  end
+                end
+                if math.abs(offset_delta) > 0.000001 then
+                  local env_names = { "Volume", "Pitch", "Pan" }
+                  for _, ename in ipairs(env_names) do
+                    local e = reaper.GetTakeEnvelopeByName(take, ename)
+                    if e then
+                      local np = reaper.CountEnvelopePoints(e)
+                      for ei = 0, np - 1 do
+                        local ret, pt_time, pt_val, pt_shape, pt_tension, pt_sel = reaper.GetEnvelopePoint(e, ei)
+                        if ret then
+                          reaper.SetEnvelopePoint(e, ei, pt_time - offset_delta, pt_val, pt_shape, pt_tension, pt_sel, true)
+                        end
                       end
+                      reaper.Envelope_SortPoints(e)
                     end
-                    reaper.Envelope_SortPoints(e)
                   end
                 end
               end
-            end
 
-            -- Shift stretch markers so waveform follows
-            local sm_count = reaper.GetTakeNumStretchMarkers(take)
-            if sm_count > 0 then
-              local srcpos_delta = new_start - start_offset
-              local markers = {}
-              for si = 0, sm_count - 1 do
-                local _, pos, srcpos = reaper.GetTakeStretchMarker(take, si)
-                markers[#markers + 1] = {pos = pos, srcpos = srcpos + srcpos_delta}
-              end
-              for si = sm_count - 1, 0, -1 do
-                reaper.DeleteTakeStretchMarkers(take, si)
-              end
-              for _, sm in ipairs(markers) do
-                reaper.SetTakeStretchMarker(take, -1, sm.pos, sm.srcpos)
-              end
+              reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
+              reaper.UpdateItemInProject(item)
+              reaper.UpdateArrange()
               state.warp_markers = utils.get_stretch_markers(take)
+              reaper.Undo_OnStateChangeEx("NVSD_ItemView: Move region to click position", -1, -1)
+
+              -- Preview cursor at new left marker (pos=0 after slide)
+              state.preview_cursor_pos = 0
+            else
+              -- Non-warp mode: click is in source-time
+              local click_t = px_to_time(mouse_x)
+              local region_len = source_item_length  -- length in source-time
+              local new_start = click_t
+              local new_end = new_start + region_len
+
+              -- Clamp to source boundaries for looped items (same as alt+drag)
+              if state.is_loop_src then
+                if new_start < 0 then
+                  new_start = 0
+                  new_end = region_len
+                end
+                if new_end > source_length then
+                  new_end = source_length
+                  new_start = source_length - region_len
+                end
+              end
+
+              local new_take_offset = new_start - section_offset
+
+              -- Shift envelope points so they stay audio-anchored
+              if not state.envelope_lock then
+                local offset_delta = new_take_offset - take_offset
+                if math.abs(offset_delta) > 0.000001 then
+                  local env_names = { "Volume", "Pitch", "Pan" }
+                  for _, ename in ipairs(env_names) do
+                    local e = reaper.GetTakeEnvelopeByName(take, ename)
+                    if e then
+                      local np = reaper.CountEnvelopePoints(e)
+                      for ei = 0, np - 1 do
+                        local ret, pt_time, pt_val, pt_shape, pt_tension, pt_sel = reaper.GetEnvelopePoint(e, ei)
+                        if ret then
+                          reaper.SetEnvelopePoint(e, ei, pt_time - offset_delta, pt_val, pt_shape, pt_tension, pt_sel, true)
+                        end
+                      end
+                      reaper.Envelope_SortPoints(e)
+                    end
+                  end
+                end
+              end
+
+              -- Shift stretch markers so waveform follows
+              local sm_count = reaper.GetTakeNumStretchMarkers(take)
+              if sm_count > 0 then
+                local srcpos_delta = new_start - start_offset
+                local markers = {}
+                for si = 0, sm_count - 1 do
+                  local _, pos, srcpos = reaper.GetTakeStretchMarker(take, si)
+                  markers[#markers + 1] = {pos = pos, srcpos = srcpos + srcpos_delta}
+                end
+                for si = sm_count - 1, 0, -1 do
+                  reaper.DeleteTakeStretchMarkers(take, si)
+                end
+                for _, sm in ipairs(markers) do
+                  reaper.SetTakeStretchMarker(take, -1, sm.pos, sm.srcpos)
+                end
+                state.warp_markers = utils.get_stretch_markers(take)
+              end
+
+              reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
+              reaper.UpdateItemInProject(item)
+              reaper.UpdateArrange()
+              reaper.Undo_OnStateChangeEx("NVSD_ItemView: Move region to click position", -1, -1)
+
+              -- Update preview cursor to new left marker
+              state.preview_cursor_pos = new_start
+
+              -- Reset view state so ext recalculates cleanly
+              state.unwrapped_start_offset = nil
+              state.prev_raw_start_offset = nil
+              state.post_drag_ext_start = nil
+              state.post_drag_ext_end = nil
             end
-
-            reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
-            reaper.UpdateItemInProject(item)
-            reaper.UpdateArrange()
-            reaper.Undo_OnStateChangeEx("NVSD_ItemView: Move region to click position", -1, -1)
-
-            -- Update preview cursor to new left marker
-            state.preview_cursor_pos = new_start
-
-            -- Reset view state so ext recalculates cleanly
-            state.unwrapped_start_offset = nil
-            state.prev_raw_start_offset = nil
-            state.post_drag_ext_start = nil
-            state.post_drag_ext_end = nil
           end
 
           -- End dragging
