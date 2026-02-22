@@ -633,7 +633,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     drawing.tooltip(ctx, "pitch_mode", "Pitch shift algorithm (scroll to cycle)")
   end
 
-  if dropdown_enabled and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_dropdown then
+  if dropdown_enabled and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_dropdown and not any_dropdown_menu_open then
     state.warp_dropdown_open = not state.warp_dropdown_open
     if state.warp_dropdown_open then
       state.warp_submode_dropdown_open = false
@@ -929,7 +929,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       end
 
       if dropdown_enabled and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_mode_dd
-         and not state.warp_dropdown_open and not state.warp_submode_dropdown_open then
+         and not any_dropdown_menu_open then
         state.warp_mode_dropdown_open = not state.warp_mode_dropdown_open
         if state.warp_mode_dropdown_open then
           state.warp_dropdown_open = false
@@ -1218,7 +1218,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       end
 
       if dropdown_enabled and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_flags_dd
-         and not state.warp_dropdown_open and not state.warp_mode_dropdown_open then
+         and not any_dropdown_menu_open then
         state.warp_submode_dropdown_open = not state.warp_submode_dropdown_open
         if state.warp_submode_dropdown_open then
           state.warp_dropdown_open = false
