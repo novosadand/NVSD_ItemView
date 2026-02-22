@@ -4924,10 +4924,12 @@ local function loop()
           end
 
           -- Double-click: slide both markers so left marker lands at click position (non-warp only)
+          -- Note: selecting_region starts on first click, so allow double-click when selection
+          -- hasn't been drag-activated yet (cancel the pending selection instead)
           if reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_waveform
               and not is_warped_view
               and not state._any_popup_open
-              and not state.selecting_region
+              and not (state.selecting_region and state.selection_drag_activated)
               and not state.dragging_start and not state.dragging_end
               and not state.dragging_fade_in and not state.dragging_fade_out
               and not state.dragging_fade_curve_in and not state.dragging_fade_curve_out
@@ -4936,6 +4938,10 @@ local function loop()
               and not near_fade_in and not near_fade_out
               and not alt_held
               and not (state.envelopes_visible and (state.env_node_hovered_idx >= 0 or state.envelope_hovered_segment >= 0 or reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl()))) then
+            -- Cancel pending region selection from first click
+            if state.selecting_region then
+              state.selecting_region = false
+            end
             local click_t = px_to_time(mouse_x)
             local region_len = source_item_length  -- length in source-time
             local new_start = click_t
