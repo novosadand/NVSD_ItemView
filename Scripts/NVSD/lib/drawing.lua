@@ -2750,24 +2750,22 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
   reaper.ImGui_DrawList_AddRect(draw_list, ghost_btn_x, ghost_btn_y,
       ghost_btn_x + ghost_btn_w, ghost_btn_y + ghost_btn_h, ghost_border, 2)
 
-  -- Draw bracket pair icon
+  -- Draw region icon (two overlapping rounded rectangles)
   local gcx = ghost_btn_x + ghost_btn_w / 2
   local gcy = ghost_btn_y + ghost_btn_h / 2
   local icon_color = ghost_active and 0x202020FF or 0xCCCCCCFF
-  -- Back bracket (smaller, offset right)
-  reaper.ImGui_DrawList_AddLine(draw_list, gcx, gcy - 4, gcx, gcy + 4, icon_color, 1)
-  reaper.ImGui_DrawList_AddLine(draw_list, gcx, gcy - 4, gcx + 2, gcy - 4, icon_color, 1)
-  reaper.ImGui_DrawList_AddLine(draw_list, gcx, gcy + 4, gcx + 2, gcy + 4, icon_color, 1)
-  -- Front bracket (full size, offset left)
-  reaper.ImGui_DrawList_AddLine(draw_list, gcx - 4, gcy - 5, gcx - 4, gcy + 5, icon_color, 1.5)
-  reaper.ImGui_DrawList_AddLine(draw_list, gcx - 4, gcy - 5, gcx - 1, gcy - 5, icon_color, 1.5)
-  reaper.ImGui_DrawList_AddLine(draw_list, gcx - 4, gcy + 5, gcx - 1, gcy + 5, icon_color, 1.5)
+  local icon_dim = ghost_active and 0x20202088 or 0xCCCCCC66
+  -- Back region (dimmer, offset right+down)
+  reaper.ImGui_DrawList_AddRect(draw_list, gcx - 1, gcy - 3, gcx + 6, gcy + 4, icon_dim, 1, 0, 1)
+  -- Front region (brighter, offset left+up)
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, gcx - 6, gcy - 5, gcx + 1, gcy + 2, icon_dim, 1)
+  reaper.ImGui_DrawList_AddRect(draw_list, gcx - 6, gcy - 5, gcx + 1, gcy + 2, icon_color, 1, 0, 1.5)
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_ghost then
     state.show_ghost_markers = not state.show_ghost_markers
   end
   if mouse_in_ghost then
-    local ghost_tip = "Show other items' regions (experimental)"
+    local ghost_tip = "Show other items' regions"
     if settings then
       local sc = settings.current.shortcuts.toggle_ghost_markers
       if sc and sc.key ~= "" then
