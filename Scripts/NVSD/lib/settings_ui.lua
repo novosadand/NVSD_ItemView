@@ -82,7 +82,6 @@ local CORE_COLORS = {
 local ui_state = {
   open = false,
   pending_theme_id = nil,
-  original_theme_id = nil,
   listening_for = nil,       -- Shortcut name being captured, or nil
   custom_init_from = 0,      -- Index for "Initialize from" combo
   custom_colors_dirty = false, -- True when custom colors changed but not yet saved to ExtState
@@ -137,15 +136,6 @@ local COLORS = {
   header_text = 0xFFFFFFFF,
 }
 
--- Deep-copy a shortcuts table
-local function deep_copy_shortcuts(shortcuts)
-  local copy = {}
-  for name, s in pairs(shortcuts) do
-    copy[name] = {ctrl = s.ctrl, shift = s.shift, alt = s.alt, key = s.key}
-  end
-  return copy
-end
-
 -- Apply a shortcut change: update settings.current and persist to ExtState
 local function apply_shortcut(settings, name, binding)
   settings.current.shortcuts[name] = {
@@ -158,8 +148,6 @@ end
 -- Initialize pending values from current settings
 local function init_pending(settings)
   ui_state.pending_theme_id = settings.current.theme_id
-  ui_state.original_theme_id = settings.current.theme_id
-  ui_state.original_shortcuts = deep_copy_shortcuts(settings.current.shortcuts)
   ui_state.listening_for = nil
   ui_state.conflict_pending = nil
   ui_state.conflict_just_cleared = nil
@@ -177,19 +165,7 @@ function settings_ui.open(settings)
   init_pending(settings)
 end
 
-function settings_ui.close(settings, restore_original)
-  if restore_original and settings then
-    -- Restore theme
-    if ui_state.original_theme_id then
-      settings.current.theme_id = ui_state.original_theme_id
-      settings.colors_dirty = true
-    end
-    -- Restore shortcuts
-    if ui_state.original_shortcuts then
-      settings.current.shortcuts = deep_copy_shortcuts(ui_state.original_shortcuts)
-      settings.save()
-    end
-  end
+function settings_ui.close(settings)
   -- Flush any pending custom color changes to ExtState
   if ui_state.custom_colors_dirty and settings then
     local custom_theme = settings.get_theme("custom")
@@ -199,8 +175,6 @@ function settings_ui.close(settings, restore_original)
     ui_state.custom_colors_dirty = false
   end
   ui_state.open = false
-  ui_state.original_theme_id = nil
-  ui_state.original_shortcuts = nil
   ui_state.listening_for = nil
   ui_state.conflict_pending = nil
   ui_state.conflict_just_cleared = nil
@@ -369,6 +343,7 @@ local function draw_theme_row(ctx, theme, settings, bar_w, bar_h)
     ui_state.pending_theme_id = theme.id
     settings.current.theme_id = theme.id
     settings.colors_dirty = true
+    settings.save()
   end
   -- Description as tooltip
   if reaper.ImGui_IsItemHovered(ctx) and theme.description ~= "" then
@@ -409,7 +384,7 @@ local function draw_appearance_tab(ctx, settings)
   end
 
   local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
-  if not reaper.ImGui_BeginChild(ctx, "appearance_scroll", avail_w, avail_h - 54) then return end
+  if not reaper.ImGui_BeginChild(ctx, "appearance_scroll", avail_w, avail_h) then return end
 
   local bar_w = 84
   local bar_h = 14
@@ -526,6 +501,7 @@ local function draw_appearance_tab(ctx, settings)
           ui_state.pending_theme_id = "default"
           settings.current.theme_id = "default"
           settings.colors_dirty = true
+          settings.save()
         end
         settings.delete_user_theme(ui_state.delete_confirm_id)
       end
@@ -574,6 +550,7 @@ local function draw_appearance_tab(ctx, settings)
           ui_state.pending_theme_id = new_id
           settings.current.theme_id = new_id
           settings.colors_dirty = true
+          settings.save()
         end
         ui_state.show_save_input = false
         ui_state.save_theme_name = ""
@@ -674,9 +651,12 @@ local function draw_shortcuts_tab(ctx, settings)
   local just_cleared_name = ui_state.conflict_just_cleared
 
   local flags = reaper.ImGui_TableFlags_None()
-  if reaper.ImGui_BeginTable(ctx, "editable_shortcuts", 3, flags) then
+  if not ui_state.shortcut_hover then ui_state.shortcut_hover = {} end
+
+  if reaper.ImGui_BeginTable(ctx, "editable_shortcuts", 4, flags) then
     reaper.ImGui_TableSetupColumn(ctx, "Action", reaper.ImGui_TableColumnFlags_WidthStretch())
     reaper.ImGui_TableSetupColumn(ctx, "Binding", reaper.ImGui_TableColumnFlags_WidthFixed(), 120)
+    reaper.ImGui_TableSetupColumn(ctx, "Clear", reaper.ImGui_TableColumnFlags_WidthFixed(), 24)
     reaper.ImGui_TableSetupColumn(ctx, "Reset", reaper.ImGui_TableColumnFlags_WidthFixed(), 30)
 
     for _, entry in ipairs(EDITABLE_SHORTCUTS) do
@@ -747,11 +727,42 @@ local function draw_shortcuts_tab(ctx, settings)
         end
       end
 
+      local btn_hovered = reaper.ImGui_IsItemHovered(ctx)
+
       if color_pushed > 0 then
         reaper.ImGui_PopStyleColor(ctx, color_pushed)
       end
 
-      -- Column 3: Reset button (only if non-default)
+      -- Column 3: Clear button (visible on hover, like toolbar X)
+      reaper.ImGui_TableNextColumn(ctx)
+      local prev_hover = ui_state.shortcut_hover[name] or false
+      local show_clear = (btn_hovered or prev_hover) and not is_unbound and not is_listening
+      local x_hovered = false
+
+      if show_clear then
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(),        0x00000000)
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x66333399)
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(),  0xCC444499)
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(),          0x666666FF)
+        if reaper.ImGui_SmallButton(ctx, "x##clear_" .. name) then
+          apply_shortcut(settings, name, {ctrl = false, shift = false, alt = false, key = ""})
+        end
+        x_hovered = reaper.ImGui_IsItemHovered(ctx)
+        reaper.ImGui_PopStyleColor(ctx, 4)
+      else
+        -- Invisible but still interactive (preserves hover detection for transitions)
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(),        0x00000000)
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x00000000)
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(),  0x00000000)
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(),          0x00000000)
+        reaper.ImGui_SmallButton(ctx, "x##clear_" .. name)
+        x_hovered = reaper.ImGui_IsItemHovered(ctx)
+        reaper.ImGui_PopStyleColor(ctx, 4)
+      end
+
+      ui_state.shortcut_hover[name] = btn_hovered or x_hovered
+
+      -- Column 4: Reset button (only if non-default)
       reaper.ImGui_TableNextColumn(ctx)
       if not is_default then
         if reaper.ImGui_SmallButton(ctx, "R##reset_" .. name) then
@@ -2011,7 +2022,7 @@ local function draw_help_tab(ctx, settings)
   end
 
   local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
-  if reaper.ImGui_BeginChild(ctx, "help_scroll", avail_w, avail_h - 54) then
+  if reaper.ImGui_BeginChild(ctx, "help_scroll", avail_w, avail_h) then
     local content_w = avail_w - 16  -- margin for scrollbar
     for i, section in ipairs(HELP_SECTIONS) do
       if i == 1 then
@@ -2067,7 +2078,7 @@ function settings_ui.draw(ctx, settings)
 
   -- Style: dark theme matching modal aesthetic
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_WindowBg(), COLORS.window_bg)
-  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ChildBg(), COLORS.child_bg)
+  reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ChildBg(), COLORS.window_bg)
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Border(), COLORS.border)
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), COLORS.btn_default)
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), COLORS.btn_hover)
@@ -2093,7 +2104,7 @@ function settings_ui.draw(ctx, settings)
   local visible, open = reaper.ImGui_Begin(ctx, "NVSD ItemView Settings", true, flags)
 
   if not open then
-    settings_ui.close(settings, true)
+    settings_ui.close(settings)
     reaper.ImGui_End(ctx)
     reaper.ImGui_PopStyleVar(ctx, style_var_count)
     reaper.ImGui_PopStyleColor(ctx, style_color_count)
@@ -2102,7 +2113,6 @@ function settings_ui.draw(ctx, settings)
 
   if visible then
     -- Tab bar
-    local is_toolbar_tab = false
     if reaper.ImGui_BeginTabBar(ctx, "settings_tabs") then
       if reaper.ImGui_BeginTabItem(ctx, "Appearance") then
         reaper.ImGui_Spacing(ctx)
@@ -2115,7 +2125,6 @@ function settings_ui.draw(ctx, settings)
         reaper.ImGui_EndTabItem(ctx)
       end
       if reaper.ImGui_BeginTabItem(ctx, "Toolbar") then
-        is_toolbar_tab = true
         reaper.ImGui_Spacing(ctx)
         draw_toolbar_tab(ctx, settings)
         reaper.ImGui_EndTabItem(ctx)
@@ -2126,70 +2135,6 @@ function settings_ui.draw(ctx, settings)
         reaper.ImGui_EndTabItem(ctx)
       end
       reaper.ImGui_EndTabBar(ctx)
-    end
-
-    -- Bottom buttons (hidden on Toolbar tab - toolbar auto-saves)
-    if not is_toolbar_tab then
-      reaper.ImGui_Spacing(ctx)
-      local draw_list = reaper.ImGui_GetWindowDrawList(ctx)
-      local sx, sy = reaper.ImGui_GetCursorScreenPos(ctx)
-      local content_w = reaper.ImGui_GetContentRegionAvail(ctx)
-      reaper.ImGui_DrawList_AddLine(draw_list, sx, sy, sx + content_w, sy, COLORS.separator, 1)
-      reaper.ImGui_Dummy(ctx, 0, 6)
-
-      -- Reset Defaults (subtle, left)
-      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x00000000)
-      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x00000000)
-      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x00000000)
-      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), COLORS.text_dim)
-      if reaper.ImGui_SmallButton(ctx, "Reset Defaults") then
-        settings.reset_all()
-        ui_state.pending_theme_id = settings.current.theme_id
-        stop_listening(settings)
-        ui_state.conflict_pending = nil
-        ui_state.conflict_just_cleared = nil
-      end
-      if reaper.ImGui_IsItemHovered(ctx) then
-        local ix, iy = reaper.ImGui_GetItemRectMin(ctx)
-        local ix2, iy2 = reaper.ImGui_GetItemRectMax(ctx)
-        reaper.ImGui_DrawList_AddLine(draw_list, ix, iy2, ix2, iy2, COLORS.text_dim, 1)
-      end
-      reaper.ImGui_PopStyleColor(ctx, 4)
-
-      -- Right-aligned Cancel + Save & Close
-      local cancel_w = 80
-      local save_w = 120
-      local btn_gap = 8
-      local btn_h = 30
-      local win_w = reaper.ImGui_GetWindowWidth(ctx)
-      local padding = 20
-      local buttons_width = cancel_w + btn_gap + save_w
-
-      reaper.ImGui_SameLine(ctx, win_w - padding - buttons_width)
-
-      -- Cancel (grey, subtle)
-      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), COLORS.btn_default)
-      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), COLORS.btn_hover)
-      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), COLORS.btn_active)
-      if reaper.ImGui_Button(ctx, "Cancel", cancel_w, btn_h) then
-        settings_ui.close(settings, true)
-      end
-      reaper.ImGui_PopStyleColor(ctx, 3)
-
-      reaper.ImGui_SameLine(ctx, 0, btn_gap)
-
-      -- Save & Close (accent, primary)
-      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), COLORS.accent)
-      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), COLORS.accent_hover)
-      reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), COLORS.accent_active)
-      if reaper.ImGui_Button(ctx, "Save & Close", save_w, btn_h) then
-        -- Theme still uses pending (live preview), shortcuts already applied
-        settings.current.theme_id = ui_state.pending_theme_id
-        settings.colors_dirty = true
-        settings.save()
-        settings_ui.close(settings, false)
-      end
-      reaper.ImGui_PopStyleColor(ctx, 3)
     end
   end
 

@@ -2390,7 +2390,7 @@ local function loop()
           else
             -- Single column: knobs get fixed minimum space, gain gets the rest
             local pan_height = 70
-            local pitch_height = 85
+            local pitch_height = 96
             local panel_split1 = panel_y + panel_height - pan_height - pitch_height
             local panel_split2 = panel_split1 + pan_height
 

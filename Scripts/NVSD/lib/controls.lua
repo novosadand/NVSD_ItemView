@@ -1885,7 +1885,7 @@ function controls.draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, pan
   local knob_cx = panel_x + config.LEFT_PANEL_WIDTH / 2 - 2
   local region_h = panel_bottom - panel_split
   local centered_cy = panel_split + region_h / 2
-  local max_cy = panel_bottom - 50  -- boxes need 50px below center
+  local max_cy = panel_bottom - 61  -- boxes need 50px below center + 11px breathing room
   local min_cy = panel_split + 34   -- label needs 34px above center
   local knob_cy = math.max(min_cy, math.min(centered_cy, max_cy))
   local knob_angle = utils.pitch_to_angle(take_pitch, config.PITCH_MAX)

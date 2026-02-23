@@ -2742,9 +2742,8 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
   local mouse_in_ghost = mouse_x >= ghost_btn_x and mouse_x <= ghost_btn_x + ghost_btn_w
                         and mouse_y >= ghost_btn_y and mouse_y <= ghost_btn_y + ghost_btn_h
   local ghost_active = state.show_ghost_markers
-  local ghost_color = (config.COLOR_MARKER & 0xFFFFFF00) | 0x66
-  local ghost_bg = ghost_active and ghost_color or (mouse_in_ghost and 0x505050FF or 0x303030FF)
-  local ghost_border = ghost_active and ghost_color or 0x555555FF
+  local ghost_bg = ghost_active and config.COLOR_BTN_ON or (mouse_in_ghost and 0x505050FF or 0x303030FF)
+  local ghost_border = ghost_active and config.COLOR_BTN_ON or 0x555555FF
   reaper.ImGui_DrawList_AddRectFilled(draw_list, ghost_btn_x, ghost_btn_y,
       ghost_btn_x + ghost_btn_w, ghost_btn_y + ghost_btn_h, ghost_bg, 2)
   reaper.ImGui_DrawList_AddRect(draw_list, ghost_btn_x, ghost_btn_y,

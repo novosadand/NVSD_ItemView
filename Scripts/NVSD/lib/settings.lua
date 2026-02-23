@@ -27,7 +27,7 @@ settings.DEFAULT_SHORTCUTS = {
   show_pitch_env = {ctrl = false, shift = true, alt = false, key = "H"},
   show_pan_env = {ctrl = false, shift = true, alt = false, key = "P"},
   hide_envelopes = {ctrl = false, shift = false, alt = false, key = "H"},
-  open_settings = {ctrl = false, shift = false, alt = false, key = "S"},
+  open_settings = {ctrl = false, shift = false, alt = true, key = "S"},
   set_start_marker = {ctrl = false, shift = false, alt = false, key = "Mouse4"},
   set_end_marker = {ctrl = false, shift = false, alt = false, key = "Mouse5"},
   set_fade_in = {ctrl = false, shift = true, alt = false, key = "Mouse4"},
