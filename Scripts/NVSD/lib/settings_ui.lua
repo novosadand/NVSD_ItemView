@@ -1939,6 +1939,7 @@ local HELP_SECTIONS = {
       "- Running it again while open closes it",
       "- Right-click title bar to dock",
       "- WARP markers persist per-item across sessions",
+      "- Scroll over dropdowns (Algorithm, Mode, Options) to cycle values",
       "- JS_ReaScriptAPI improves knob/slider drag range",
       "- Hover any element for a tooltip",
     },
