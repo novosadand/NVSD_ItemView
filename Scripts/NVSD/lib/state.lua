@@ -293,7 +293,7 @@ state.cached_cue_source = nil        -- Source pointer for which cue markers wer
 state.cue_label_hovered = false      -- cue marker label is being hovered
 
 -- Ghost marker state (other selected items' regions)
-state.show_ghost_markers = false
+state.show_ghost_markers = true
 state.ghost_marker_regions = nil       -- {{src_start, src_end}, ...}
 state.ghost_marker_sel_count = 0       -- cache invalidation key
 state.ghost_marker_sel_first = nil
