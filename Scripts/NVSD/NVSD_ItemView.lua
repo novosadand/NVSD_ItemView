@@ -497,8 +497,10 @@ local function loop()
       end
     end
 
-    -- Delete: remove selected envelope nodes
-    if not text_input_active and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Delete())
+    -- Delete / Backspace: remove selected envelope nodes (Backspace for Mac compatibility)
+    if not text_input_active
+        and (reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Delete())
+          or reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Backspace()))
         and #state.env_selected_nodes > 0 and state.envelopes_visible then
       local env_n = state.env_selection_env_name
       local sel_item = state.env_selection_item
@@ -3233,8 +3235,9 @@ local function loop()
             end
           end
 
-          -- Delete key: remove hovered stretch marker
-          if reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Delete())
+          -- Delete / Backspace: remove hovered stretch marker (Backspace for Mac)
+          if (reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Delete())
+              or reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Backspace()))
               and state.warp_marker_hovered_idx > 0 and not state.any_drag_active() then
             local sm = state.warp_markers[state.warp_marker_hovered_idx]
             if sm then
