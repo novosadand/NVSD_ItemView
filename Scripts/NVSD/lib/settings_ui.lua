@@ -1808,6 +1808,8 @@ local HELP_SECTIONS = {
       "- Drag fade handles at item edges to adjust length",
       {key = "Alt+drag", desc = "Adjust curve tension"},
       "- Right-click fade handle to pick shape (7 options)",
+      {key = "Shift+Mouse4", desc = "Set fade-in at cursor"},
+      {key = "Shift+Mouse5", desc = "Set fade-out at cursor"},
       "- Fades auto-clamp so they never overlap",
     },
   },
