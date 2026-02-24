@@ -34,6 +34,7 @@ settings_ui.set_drawing(drawing)
 -- Initialize settings
 config.settings = settings
 settings.load()
+state.apply_defaults(settings)
 config.refresh_colors()
 
 -- Convert REAPER native color (0x00BBGGRR on Windows) to ImGui (0xRRGGBBAA)
@@ -547,6 +548,10 @@ local function loop()
 
     -- Draw settings UI if open
     settings_ui.draw(ctx, settings)
+    if settings_ui.defaults_changed then
+      state.apply_defaults(settings)
+      settings_ui.defaults_changed = false
+    end
 
     -- Create undo point on mouse release if we were dragging
     if reaper.ImGui_IsMouseReleased(ctx, 0) and state.undo_block_open then
@@ -605,7 +610,7 @@ local function loop()
           local pitch_env = reaper.GetTakeEnvelopeByName(sel_take, "Pitch")
           local pan_env = reaper.GetTakeEnvelopeByName(sel_take, "Pan")
           if vol_env or pitch_env or pan_env then
-            state.envelopes_visible = true
+            state.envelopes_visible = settings.current.defaults.auto_show_envelopes
             if pitch_env and not vol_env and not pan_env then
               state.envelope_type = "Pitch"
             elseif pan_env and not vol_env and not pitch_env then
@@ -899,9 +904,11 @@ local function loop()
               end
               table.sort(state.cached_cue_markers, function(a, b) return a.time < b.time end)
             end
-            -- Auto-show cue markers when the file has them
+            -- Set cue marker visibility from user's default
             if #state.cached_cue_markers > 0 then
-              state.show_cue_markers = true
+              state.show_cue_markers = settings.current.defaults.show_cue_markers
+            else
+              state.show_cue_markers = false
             end
           end
 

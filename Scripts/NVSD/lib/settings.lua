@@ -657,6 +657,15 @@ settings.THEMES = {
 -- Number of built-in themes (everything before user-saved themes)
 settings.BUILTIN_THEME_COUNT = #settings.THEMES
 
+-- Default toggle defaults (initial visibility when selecting items)
+settings.DEFAULT_DEFAULTS = {
+  show_cue_markers = true,
+  show_ghost_markers = true,
+  auto_show_envelopes = true,
+  envelope_lock = false,
+  env_snap_enabled = true,
+}
+
 -- Dirty flag: when true, config.refresh_colors() will run next frame
 settings.colors_dirty = true  -- Start dirty so initial load applies colors
 
@@ -665,6 +674,7 @@ settings.current = {
   theme_id = "default",
   shortcuts = {},
   toolbar_buttons = {},  -- {label, cmd} entries for custom info bar buttons
+  defaults = {},         -- toggle defaults (loaded from DEFAULT_DEFAULTS)
 }
 
 -- Save custom theme colors to ExtState
@@ -882,6 +892,17 @@ function settings.load()
       }
     end
   end
+
+  -- Load toggle defaults
+  settings.current.defaults = {}
+  for name, default_val in pairs(settings.DEFAULT_DEFAULTS) do
+    local saved = reaper.GetExtState(EXT_SECTION, "default_" .. name)
+    if saved ~= "" then
+      settings.current.defaults[name] = (saved == "true")
+    else
+      settings.current.defaults[name] = default_val
+    end
+  end
 end
 
 -- Save settings to ExtState
@@ -896,12 +917,20 @@ function settings.save()
 
   -- Save toolbar buttons
   settings.save_toolbar()
+
+  -- Save toggle defaults
+  for name, val in pairs(settings.current.defaults) do
+    reaper.SetExtState(EXT_SECTION, "default_" .. name, tostring(val), true)
+  end
 end
 
 -- Apply settings (update current and save)
 function settings.apply(new_settings)
   settings.current.theme_id = new_settings.theme_id
   settings.current.shortcuts = new_settings.shortcuts
+  if new_settings.defaults then
+    settings.current.defaults = new_settings.defaults
+  end
   settings.colors_dirty = true
   settings.save()
 end
@@ -917,6 +946,11 @@ function settings.reset_all()
       alt = default.alt,
       key = default.key
     }
+  end
+  -- Reset toggle defaults
+  settings.current.defaults = {}
+  for name, default_val in pairs(settings.DEFAULT_DEFAULTS) do
+    settings.current.defaults[name] = default_val
   end
   settings.colors_dirty = true
   settings.save()

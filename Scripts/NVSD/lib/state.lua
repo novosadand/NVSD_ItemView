@@ -606,4 +606,14 @@ function state.invalidate_view_peaks()
   state.view_warped = nil
 end
 
+-- Apply toggle defaults from settings (called at startup and optionally on item switch)
+function state.apply_defaults(s)
+  local d = s.current.defaults
+  state.show_cue_markers = d.show_cue_markers
+  state.show_ghost_markers = d.show_ghost_markers
+  state.envelope_lock = d.envelope_lock
+  state.env_snap_enabled = d.env_snap_enabled
+  -- envelopes_visible is handled per-item-switch, not here
+end
+
 return state
