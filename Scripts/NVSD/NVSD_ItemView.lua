@@ -1768,9 +1768,25 @@ local function loop()
             state.wf_bounds_end = nil
           end
           config.waveform_zoom = state.waveform_zoom
+          if settings.current.layout.shaped_waveform then
+            state.modulation = {
+              fade_in_len = fade_in_len,
+              fade_in_shape = fade_in_shape,
+              fade_in_dir = fade_in_dir,
+              fade_out_len = fade_out_len,
+              fade_out_shape = fade_out_shape,
+              fade_out_dir = fade_out_dir,
+              vol_env = take and reaper.GetTakeEnvelopeByName(take, "Volume"),
+              pan_env = take and reaper.GetTakeEnvelopeByName(take, "Pan"),
+              pan_value = take and reaper.GetMediaItemTakeInfo_Value(take, "D_PAN") or 0,
+              playrate = playrate,
+            }
+          else
+            state.modulation = nil
+          end
           local start_px, end_px = drawing.draw_waveform(draw_list, wave_x, wave_y,
             waveform_width, waveform_height,
-            state.view_peaks, view_offset, view_item_length, wf_source_len, view_start, view_length, ruler_y, item_vol, wf_reversed, state.view_num_channels, config, pixel_step, state.wf_bounds_start, state.wf_bounds_end, state.is_loop_src)
+            state.view_peaks, view_offset, view_item_length, wf_source_len, view_start, view_length, ruler_y, item_vol, wf_reversed, state.view_num_channels, config, pixel_step, state.wf_bounds_start, state.wf_bounds_end, state.is_loop_src, state.modulation)
 
           -- Unified coordinate conversion (used by all subsequent code)
           local function time_to_px(t)

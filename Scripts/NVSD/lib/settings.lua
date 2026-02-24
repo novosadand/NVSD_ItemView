@@ -672,6 +672,7 @@ settings.DEFAULT_LAYOUT = {
   show_fx = true,         -- FX toolbar + list
   show_warp = true,       -- WARP button + dropdowns + Clear
   show_buttons = true,    -- x2, /2, reverse, edit, loop
+  shaped_waveform = false, -- waveform follows fades, volume/pan envelopes
 }
 
 -- Dirty flag: when true, config.refresh_colors() will run next frame

@@ -1992,7 +1992,7 @@ end
 -- peaks: per-view peaks from get_peaks_for_range (each peak maps to one pixel column)
 -- view_start/view_length: pre-computed visible time range
 -- pixel_step: 1 for full resolution, 2 for half (during REAPER interaction)
-function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offset, source_item_length, source_length, view_start, view_length, ruler_y, visual_gain, is_reversed, num_channels, config, pixel_step, bounds_start, bounds_end, is_loop_src)
+function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offset, source_item_length, source_length, view_start, view_length, ruler_y, visual_gain, is_reversed, num_channels, config, pixel_step, bounds_start, bounds_end, is_loop_src, modulation)
   if not peaks or peaks.count == 0 or source_length <= 0 then return 0, 0 end
 
   visual_gain = visual_gain or 1.0
@@ -2188,6 +2188,91 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
     wf_cache.is_loop_src = is_loop_src
   end
 
+  -- Shaped waveform: apply per-pixel modulation from fades, volume/pan envelopes
+  local mod_tops = col_tops
+  local mod_bots = col_bots
+
+  if modulation then
+    local time_per_px = view_length / num_samples
+    local channel_h = height / num_channels
+    local item_start = start_offset
+    local item_end_t = start_offset + source_item_length
+    local pr = modulation.playrate or 1
+
+    -- Fade LUTs (internally cached, essentially free)
+    local fi_len = modulation.fade_in_len * pr  -- convert project time to source time
+    local fo_len = modulation.fade_out_len * pr
+    local fi_lut = fi_len > 0 and get_fade_lut(
+        modulation.fade_in_shape, modulation.fade_in_dir, false) or nil
+    local fo_lut = fo_len > 0 and get_fade_lut(
+        modulation.fade_out_shape, modulation.fade_out_dir, true) or nil
+
+    -- Envelope handles
+    local vol_env = modulation.vol_env
+    local vol_scaling = vol_env and reaper.GetEnvelopeScalingMode(vol_env) or 0
+    local pan_env = modulation.pan_env
+    local pan_value = modulation.pan_value or 0
+    local is_stereo = num_channels >= 2
+    local has_pan = is_stereo and (pan_value ~= 0 or pan_env ~= nil)
+
+    -- Only call Envelope_Evaluate when there are actual points
+    local vol_env_active = vol_env and reaper.CountEnvelopePoints(vol_env) > 0
+    local pan_env_active = pan_env and reaper.CountEnvelopePoints(pan_env) > 0
+
+    mod_tops = {}
+    mod_bots = {}
+    for ch = 1, num_channels do
+      mod_tops[ch] = {}
+      mod_bots[ch] = {}
+    end
+
+    for i = 0, num_samples - 1 do
+      local t = view_start + i * time_per_px
+      local gain = 1.0
+
+      -- Fades (only within item bounds)
+      if t >= item_start and t <= item_end_t then
+        if fi_lut and t < item_start + fi_len then
+          gain = fade_lut_lookup(fi_lut, (t - item_start) / fi_len)
+        end
+        if fo_lut and t > item_end_t - fo_len then
+          gain = gain * fade_lut_lookup(fo_lut, (t - (item_end_t - fo_len)) / fo_len)
+        end
+      end
+
+      -- Volume envelope (time in project seconds from item start)
+      if vol_env_active then
+        local env_t = (t - item_start) / pr
+        local _, val = reaper.Envelope_Evaluate(vol_env, env_t, 0, 0)
+        gain = gain * reaper.ScaleFromEnvelopeMode(vol_scaling, val)
+      end
+
+      -- Pan (stereo only, balance mode: L attenuates when panned R, vice versa)
+      local pan_l, pan_r
+      if has_pan then
+        local pan = pan_value
+        if pan_env_active then
+          local env_t = (t - item_start) / pr
+          local _, pv = reaper.Envelope_Evaluate(pan_env, env_t, 0, 0)
+          pan = pv  -- envelope overrides knob
+        end
+        pan_l = math.min(1, 1 - pan)
+        pan_r = math.min(1, 1 + pan)
+      end
+
+      -- Scale distance from center per channel
+      for ch = 1, num_channels do
+        local center_y = y + (ch - 1) * channel_h + channel_h * 0.5
+        local ch_gain = gain
+        if has_pan then
+          ch_gain = ch_gain * (ch == 1 and pan_l or pan_r)
+        end
+        mod_tops[ch][i] = center_y - (center_y - col_tops[ch][i]) * ch_gain
+        mod_bots[ch][i] = center_y + (col_bots[ch][i] - center_y) * ch_gain
+      end
+    end
+  end
+
   -- Phase 3: Render (always runs — ImGui immediate mode requires redrawing every frame)
   local fill_lut = {[1] = FILL_ACTIVE, [2] = FILL_INACTIVE, [3] = FILL_LOOPED}
   local outline_lut = {[1] = OUTLINE_ACTIVE, [2] = OUTLINE_INACTIVE, [3] = OUTLINE_LOOPED}
@@ -2198,8 +2283,8 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
     local outline_color = outline_lut[segments[si][3]]
 
     for ch = 1, num_channels do
-      local tops = col_tops[ch]
-      local bots = col_bots[ch]
+      local tops = mod_tops[ch]
+      local bots = mod_bots[ch]
 
       -- Fill: quads connecting adjacent columns for smooth waveform shape
       if s_stop > s_start then
