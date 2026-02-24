@@ -2293,10 +2293,9 @@ end
 function drawing.draw_marker(draw_list, x, y, height, is_start, is_hovered, is_dragging, config)
   local color = (is_hovered or is_dragging) and config.COLOR_MARKER_HOVER or config.COLOR_MARKER
 
-  reaper.ImGui_DrawList_AddLine(draw_list, x, y, x, y + height, color, 3)
+  reaper.ImGui_DrawList_AddLine(draw_list, x, y, x, y + height, color, 2)
 
-  local handle_size = 7
-  -- Anchor triangles at the outer edge of the 3px line (not the center)
+  local handle_size = 5
   local bx = is_start and (x + 1) or (x - 1)
   local dir = is_start and 1 or -1
 

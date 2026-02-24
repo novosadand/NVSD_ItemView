@@ -5316,6 +5316,8 @@ local function loop()
             state.dragging_zone = false
             state.drag_alt_latched = false
             state.marker_drag_activated = false
+            state.drag_virtual_x = 0
+            state.drag_last_mouse_x = 0
             state.dragging_fade_in = false
             state.dragging_fade_out = false
             state.fade_drag_xfade_item = nil
@@ -5541,12 +5543,35 @@ local function loop()
               and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
             if math.abs(mouse_x - state.drag_start_mouse_x) >= state.marker_drag_threshold then
               state.marker_drag_activated = true
+              state.drag_virtual_x = mouse_x
+              state.drag_last_mouse_x = mouse_x
+            end
+          end
+
+          -- Ctrl fine-tune: virtual position advances at 25% speed, cursor warps to match
+          local drag_mouse_x = mouse_x
+          if (state.dragging_start or state.dragging_end) and state.marker_drag_activated
+              and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
+            local raw_delta = mouse_x - state.drag_last_mouse_x
+            local scale = ctrl_held and 0.25 or 1.0
+            state.drag_virtual_x = state.drag_virtual_x + raw_delta * scale
+            drag_mouse_x = state.drag_virtual_x
+
+            if state.has_js_extension then
+              local warp_offset = mouse_x - state.drag_virtual_x
+              if math.abs(warp_offset) > 0.5 then
+                local screen_x, screen_y = reaper.GetMousePosition()
+                reaper.JS_Mouse_SetPosition(math.floor(screen_x - warp_offset + 0.5), screen_y)
+              end
+              state.drag_last_mouse_x = state.drag_virtual_x
+            else
+              state.drag_last_mouse_x = mouse_x
             end
           end
 
           -- Alt+drag: slide both markers (alt latched at drag start, releasing alt mid-drag keeps sliding)
           if (state.dragging_start or state.dragging_end) and state.marker_drag_activated and state.drag_alt_latched and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
-            local mouse_delta_px = mouse_x - state.drag_start_mouse_x
+            local mouse_delta_px = drag_mouse_x - state.drag_start_mouse_x
             local mouse_delta_time = (mouse_delta_px / waveform_width) * state.drag_start_view_length
 
             if is_warped_view and state.drag_start_warp_markers then
@@ -5679,12 +5704,12 @@ local function loop()
             end
             local frozen_vs = state.drag_start_view_start
             local new_start
-            if mouse_x < wave_x then
+            if drag_mouse_x < wave_x then
               new_start = frozen_vs
-            elseif mouse_x > wave_x + waveform_width then
+            elseif drag_mouse_x > wave_x + waveform_width then
               new_start = frozen_vs + frozen_vl
             else
-              new_start = frozen_vs + ((mouse_x - wave_x) / waveform_width) * frozen_vl
+              new_start = frozen_vs + ((drag_mouse_x - wave_x) / waveform_width) * frozen_vl
             end
 
             if is_warped_view and state.drag_start_warp_markers then
@@ -5834,12 +5859,12 @@ local function loop()
             end
             local frozen_vs = state.drag_start_view_start
             local new_end
-            if mouse_x < wave_x then
+            if drag_mouse_x < wave_x then
               new_end = frozen_vs
-            elseif mouse_x > wave_x + waveform_width then
+            elseif drag_mouse_x > wave_x + waveform_width then
               new_end = frozen_vs + frozen_vl
             else
-              new_end = frozen_vs + ((mouse_x - wave_x) / waveform_width) * frozen_vl
+              new_end = frozen_vs + ((drag_mouse_x - wave_x) / waveform_width) * frozen_vl
             end
 
             if is_warped_view then

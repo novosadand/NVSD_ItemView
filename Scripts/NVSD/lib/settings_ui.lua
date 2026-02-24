@@ -1724,7 +1724,7 @@ local HELP_SECTIONS = {
       "2. Run the script (Actions > NVSD_ItemView)",
       "3. Drag the colored markers to adjust start/end points",
       "4. Use the left panel for gain, pitch, reverse, WARP, and FX",
-      "5. Press S for settings, Esc to close",
+      "5. Press Alt+S for settings, Esc to close",
     },
   },
   {
@@ -1755,6 +1755,7 @@ local HELP_SECTIONS = {
     header = "Markers & Regions",
     lines = {
       "- Drag start/end markers to adjust playback region",
+      {key = "Ctrl+drag marker", desc = "Fine-tune (4x slower movement)"},
       {key = "Double-click", desc = "Slide both markers to cursor"},
       {key = "Alt+drag marker", desc = "Slide both markers (preserve length)"},
       {key = "Mouse4 / Mouse5", desc = "Jump start/end to cursor"},
@@ -1940,6 +1941,7 @@ local HELP_SECTIONS = {
       {key = "Ctrl+Shift+Scroll", desc = "Vertical amplitude zoom"},
       {key = "Middle-drag", desc = "Pan"},
       {key = "Ctrl+Alt+drag", desc = "Pan (alt. to middle)"},
+      {key = "Ctrl+drag marker", desc = "Fine-tune drag (4x slower)"},
       {key = "Double-click", desc = "Slide markers to cursor / reset knob"},
     },
   },

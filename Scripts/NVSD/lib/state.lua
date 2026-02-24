@@ -30,6 +30,8 @@ state.drag_start_playrate = 1
 state.drag_current_start = 0
 state.drag_current_end = 0
 state.drag_start_view_start = 0
+state.drag_virtual_x = 0             -- virtual mouse x for ctrl fine-tune (advances at 25% speed)
+state.drag_last_mouse_x = 0         -- previous frame mouse_x for fine-tune delta
 
 -- Fade handle state
 state.fade_in_hovered = false
