@@ -2201,10 +2201,20 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
       local tops = col_tops[ch]
       local bots = col_bots[ch]
 
-      -- Fill: vertical bars from top to bottom per pixel column
-      for i = s_start, s_stop do
-        local px = x + i * pixel_step
-        DL_AddLine(draw_list, px, tops[i], px, bots[i], fill_color, pixel_step)
+      -- Fill: quads connecting adjacent columns for smooth waveform shape
+      if s_stop > s_start then
+        for i = s_start, s_stop - 1 do
+          local px1 = x + i * pixel_step
+          local px2 = x + (i + 1) * pixel_step
+          DL_QuadFilled(draw_list,
+            px1, tops[i], px2, tops[i + 1],
+            px2, bots[i + 1], px1, bots[i],
+            fill_color)
+        end
+      else
+        -- Single pixel segment: draw a vertical line
+        local px = x + s_start * pixel_step
+        DL_AddLine(draw_list, px, tops[s_start], px, bots[s_start], fill_color, pixel_step)
       end
 
       -- Outlines: batched via path API (reduces GPU draw commands)
