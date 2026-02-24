@@ -6081,18 +6081,22 @@ local function loop()
           end
 
           -- Draw fade overlays (before markers, after all position vars are computed)
-          -- Curves map over the actual fade region. When fades touch, curves touch.
-          if fade_in_len > 0 then
-            drawing.draw_fade_overlay(draw_list, start_marker_x, fade_in_end_x,
-              fade_top_y, wave_y, waveform_height, fade_in_shape, true,
-              state.fade_in_hovered or state.dragging_fade_in or state.dragging_fade_curve_in
-              or (alt_held and mouse_in_fade_in_body), fade_in_dir)
-          end
-          if fade_out_len > 0 then
-            drawing.draw_fade_overlay(draw_list, fade_out_start_x, end_marker_x,
-              fade_top_y, wave_y, waveform_height, fade_out_shape, false,
-              state.fade_out_hovered or state.dragging_fade_out or state.dragging_fade_curve_out
-              or (alt_held and mouse_in_fade_out_body), fade_out_dir)
+          -- Clip to waveform area so fades don't bleed when zoomed in
+          if fade_in_len > 0 or fade_out_len > 0 then
+            reaper.ImGui_DrawList_PushClipRect(draw_list, wave_x, wave_y, wave_x + waveform_width, wave_y + waveform_height, true)
+            if fade_in_len > 0 then
+              drawing.draw_fade_overlay(draw_list, start_marker_x, fade_in_end_x,
+                fade_top_y, wave_y, waveform_height, fade_in_shape, true,
+                state.fade_in_hovered or state.dragging_fade_in or state.dragging_fade_curve_in
+                or (alt_held and mouse_in_fade_in_body), fade_in_dir)
+            end
+            if fade_out_len > 0 then
+              drawing.draw_fade_overlay(draw_list, fade_out_start_x, end_marker_x,
+                fade_top_y, wave_y, waveform_height, fade_out_shape, false,
+                state.fade_out_hovered or state.dragging_fade_out or state.dragging_fade_curve_out
+                or (alt_held and mouse_in_fade_out_body), fade_out_dir)
+            end
+            reaper.ImGui_DrawList_PopClipRect(draw_list)
           end
 
           -- Slope curves and handles at warp markers (warp mode only)
