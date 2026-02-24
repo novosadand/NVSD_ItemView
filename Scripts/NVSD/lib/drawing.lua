@@ -2868,6 +2868,43 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
     drawing.tooltip(ctx, "ghost_markers_btn", ghost_tip)
   end
 
+  -- Shaped waveform toggle button (waveform icon, to the right of ghost button)
+  local shape_btn_w = 22
+  local shape_gap = 3
+  local shape_btn_x = ghost_btn_x + ghost_btn_w + shape_gap
+  local shape_btn_y = btn_y
+  local shape_btn_h = btn_h
+  local mouse_in_shape = mouse_x >= shape_btn_x and mouse_x <= shape_btn_x + shape_btn_w
+                        and mouse_y >= shape_btn_y and mouse_y <= shape_btn_y + shape_btn_h
+  local shape_active = settings and settings.current.layout.shaped_waveform
+  local shape_bg = shape_active and config.COLOR_BTN_ON or (mouse_in_shape and 0x505050FF or 0x303030FF)
+  local shape_border = shape_active and config.COLOR_BTN_ON or 0x555555FF
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, shape_btn_x, shape_btn_y,
+      shape_btn_x + shape_btn_w, shape_btn_y + shape_btn_h, shape_bg, 2)
+  reaper.ImGui_DrawList_AddRect(draw_list, shape_btn_x, shape_btn_y,
+      shape_btn_x + shape_btn_w, shape_btn_y + shape_btn_h, shape_border, 2)
+
+  -- Draw waveform icon (sine-like curve)
+  local scx = shape_btn_x + shape_btn_w / 2
+  local scy = shape_btn_y + shape_btn_h / 2
+  local wave_color = shape_active and 0x202020FF or 0xCCCCCCFF
+  local ww = 7  -- half-width
+  local wh = 4  -- amplitude
+  reaper.ImGui_DrawList_AddLine(draw_list, scx - ww, scy, scx - ww * 0.5, scy - wh, wave_color, 1.5)
+  reaper.ImGui_DrawList_AddLine(draw_list, scx - ww * 0.5, scy - wh, scx, scy, wave_color, 1.5)
+  reaper.ImGui_DrawList_AddLine(draw_list, scx, scy, scx + ww * 0.5, scy + wh, wave_color, 1.5)
+  reaper.ImGui_DrawList_AddLine(draw_list, scx + ww * 0.5, scy + wh, scx + ww, scy, wave_color, 1.5)
+
+  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_shape then
+    if settings then
+      settings.current.layout.shaped_waveform = not settings.current.layout.shaped_waveform
+      settings.save()
+    end
+  end
+  if mouse_in_shape then
+    drawing.tooltip(ctx, "shaped_waveform_btn", "Shaped waveform: fades, volume and pan envelopes")
+  end
+
 end
 
 -- Draw envelope dropdown menu (called AFTER overlay so it renders on top)
