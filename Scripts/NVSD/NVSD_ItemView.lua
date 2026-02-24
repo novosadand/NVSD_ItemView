@@ -2139,12 +2139,17 @@ local function loop()
 
           -- Helper: snap source time to finest visible grid subdivision
           -- snap_offset: override start_offset for snapping (use drag_start_offset during marker drags)
-          local function snap_to_grid_if_enabled(source_t, snap_offset, item_pos_override)
+          local function snap_to_grid_if_enabled(source_t, snap_offset, item_pos_override, pos_time_mode)
             if not state.env_snap_enabled then return source_t end
 
             local offset = snap_offset or start_offset
             local pos = item_pos_override or item_position
-            local project_t = utils.source_to_project_time(source_t, pos, offset, playrate)
+            local project_t
+            if pos_time_mode then
+              project_t = pos + source_t  -- pos-time: already in arrange seconds
+            else
+              project_t = utils.source_to_project_time(source_t, pos, offset, playrate)
+            end
 
             -- Compute finest visible grid subdivision (same logic as grid display)
             local bpm, bpi = reaper.GetProjectTimeSignature2(0, project_t)
@@ -2170,7 +2175,11 @@ local function loop()
             end
 
             local snapped_project_t = reaper.TimeMap2_beatsToTime(0, snapped_beat, snapped_measure)
-            return utils.project_to_source_time(snapped_project_t, pos, offset, playrate)
+            if pos_time_mode then
+              return snapped_project_t - pos
+            else
+              return utils.project_to_source_time(snapped_project_t, pos, offset, playrate)
+            end
           end
 
           -- Helper: snap with both grid and source boundary, pick closest to raw position
@@ -3376,29 +3385,7 @@ local function loop()
               local new_pos = state.warp_drag_start_pos + mouse_delta_time
 
               -- Snap pos to grid when snap is enabled
-              if state.env_snap_enabled then
-                local proj_t = item_position + new_pos
-                local bpm, bpi = reaper.GetProjectTimeSignature2(0, proj_t)
-                local beats_per_bar = math.floor(bpi)
-                if beats_per_bar < 1 then beats_per_bar = 4 end
-                local avg_bar_duration = 60 / bpm * beats_per_bar
-                local px_per_bar = (avg_bar_duration / view_length) * waveform_width
-                local px_per_beat = px_per_bar / beats_per_bar
-                local finest_sub = 1
-                while (px_per_beat / (finest_sub * 2)) >= 42 do
-                  finest_sub = finest_sub * 2
-                end
-                local snap_unit = 1 / finest_sub
-                local beat_in_measure, measure = reaper.TimeMap2_timeToBeats(0, proj_t)
-                local snapped_beat = math.floor(beat_in_measure / snap_unit + 0.5) * snap_unit
-                local snapped_measure = measure
-                if snapped_beat >= beats_per_bar then
-                  snapped_beat = snapped_beat - beats_per_bar
-                  snapped_measure = measure + 1
-                end
-                local snapped_proj_t = reaper.TimeMap2_beatsToTime(0, snapped_beat, snapped_measure)
-                new_pos = snapped_proj_t - item_position
-              end
+              new_pos = snap_to_grid_if_enabled(new_pos, 0, item_position, true)
 
               -- Constrain: don't cross adjacent markers
               local sm_count = reaper.GetTakeNumStretchMarkers(take)
@@ -5569,6 +5556,17 @@ local function loop()
             end
           end
 
+          -- Safety: abort drag if take was deleted or changed externally (undo, take switch)
+          if (state.dragging_start or state.dragging_end) and state.marker_drag_activated and not take then
+            state.reset_all_drags()
+            state.marker_drag_activated = false
+            state.drag_alt_latched = false
+            if state.undo_block_open then
+              reaper.Undo_EndBlock("NVSD_ItemView: Error recovery", -1)
+              state.undo_block_open = nil
+            end
+          end
+
           -- Alt+drag: slide both markers (alt latched at drag start, releasing alt mid-drag keeps sliding)
           if (state.dragging_start or state.dragging_end) and state.marker_drag_activated and state.drag_alt_latched and reaper_is_active and reaper.ImGui_IsMouseDown(ctx, 0) then
             local mouse_delta_px = drag_mouse_x - state.drag_start_mouse_x
@@ -5717,31 +5715,8 @@ local function loop()
               -- Allow extending left past source start (like non-warp mode).
               new_start = math.min(new_start, state.drag_start_length - 0.01)
               -- Snap to grid in pos-time
-              if state.env_snap_enabled then
-                local drag_item_pos = state.drag_start_item_position
-                local proj_t = drag_item_pos + new_start
-                local bpm, bpi = reaper.GetProjectTimeSignature2(0)
-                local beats_per_bar = math.floor(bpi)
-                if beats_per_bar < 1 then beats_per_bar = 4 end
-                local avg_bar_duration = 60 / bpm * beats_per_bar
-                local px_per_bar = (avg_bar_duration / view_length) * waveform_width
-                local px_per_beat = px_per_bar / beats_per_bar
-                local finest_sub = 1
-                while (px_per_beat / (finest_sub * 2)) >= 42 do
-                  finest_sub = finest_sub * 2
-                end
-                local snap_unit = 1 / finest_sub
-                local beat_in_measure, measure = reaper.TimeMap2_timeToBeats(0, proj_t)
-                local snapped_beat = math.floor(beat_in_measure / snap_unit + 0.5) * snap_unit
-                local snapped_measure = measure
-                if snapped_beat >= beats_per_bar then
-                  snapped_beat = snapped_beat - beats_per_bar
-                  snapped_measure = measure + 1
-                end
-                local snapped_proj_t = reaper.TimeMap2_beatsToTime(0, snapped_beat, snapped_measure)
-                new_start = snapped_proj_t - drag_item_pos
-                new_start = math.min(new_start, state.drag_start_length - 0.01)
-              end
+              new_start = snap_to_grid_if_enabled(new_start, 0, state.drag_start_item_position, true)
+              new_start = math.min(new_start, state.drag_start_length - 0.01)
               local delta = new_start
               -- Clear all existing stretch markers
               local sm_count = reaper.GetTakeNumStretchMarkers(take)
@@ -5871,29 +5846,7 @@ local function loop()
               -- In warp mode: new_end is already in pos-time, set D_LENGTH directly
               new_end = math.max(0.01, new_end)
               -- Snap to grid in pos-time
-              if state.env_snap_enabled then
-                local proj_t = item_position + new_end
-                local bpm, bpi = reaper.GetProjectTimeSignature2(0)
-                local beats_per_bar = math.floor(bpi)
-                if beats_per_bar < 1 then beats_per_bar = 4 end
-                local avg_bar_duration = 60 / bpm * beats_per_bar
-                local px_per_bar = (avg_bar_duration / view_length) * waveform_width
-                local px_per_beat = px_per_bar / beats_per_bar
-                local finest_sub = 1
-                while (px_per_beat / (finest_sub * 2)) >= 42 do
-                  finest_sub = finest_sub * 2
-                end
-                local snap_unit = 1 / finest_sub
-                local beat_in_measure, measure = reaper.TimeMap2_timeToBeats(0, proj_t)
-                local snapped_beat = math.floor(beat_in_measure / snap_unit + 0.5) * snap_unit
-                local snapped_measure = measure
-                if snapped_beat >= beats_per_bar then
-                  snapped_beat = snapped_beat - beats_per_bar
-                  snapped_measure = measure + 1
-                end
-                local snapped_proj_t = reaper.TimeMap2_beatsToTime(0, snapped_beat, snapped_measure)
-                new_end = math.max(0.01, snapped_proj_t - item_position)
-              end
+              new_end = math.max(0.01, snap_to_grid_if_enabled(new_end, 0, item_position, true))
               state.drag_current_start = 0  -- start stays at pos=0
               state.drag_current_end = new_end
               reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_end)
@@ -6270,6 +6223,14 @@ local function loop()
                 if handle then
                   reaper.CF_Preview_SetValue(handle, "D_POSITION", source_pos)
                   reaper.CF_Preview_SetValue(handle, "D_VOLUME", item_vol)
+                  -- Match take's playrate and pitch so preview sounds like actual playback
+                  if playrate ~= 1 then
+                    reaper.CF_Preview_SetValue(handle, "D_PLAYRATE", playrate)
+                  end
+                  local take_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH")
+                  if take_pitch ~= 0 then
+                    reaper.CF_Preview_SetValue(handle, "D_PITCH", take_pitch)
+                  end
                   -- Loop when playing in a looped/extended item so preview crosses source boundaries
                   local needs_loop = is_extended_view
                   reaper.CF_Preview_SetValue(handle, "B_LOOP", needs_loop and 1 or 0)
@@ -6327,6 +6288,7 @@ local function loop()
                 end
               else
                 -- Handle became invalid (preview ended)
+                pcall(reaper.CF_Preview_Stop, state.preview_handle)
                 state.preview_handle = nil
                 state.preview_active = false
               end
@@ -6428,6 +6390,26 @@ local function loop()
     state.env_multi_drag_start_positions = {}
     state.env_multi_drag_all_points = {}
     state.env_selected_nodes = {}
+    -- Restore stretch markers if a warp-mode drag was interrupted mid-frame
+    if state.drag_start_warp_markers and state.remembered_item then
+      local ri = state.remembered_item
+      if reaper.ValidatePtr(ri, "MediaItem*") then
+        local rt = reaper.GetActiveTake(ri)
+        if rt then
+          local sm_count = reaper.GetTakeNumStretchMarkers(rt)
+          for si = sm_count - 1, 0, -1 do
+            reaper.DeleteTakeStretchMarkers(rt, si)
+          end
+          for _, sm in ipairs(state.drag_start_warp_markers) do
+            reaper.SetTakeStretchMarker(rt, -1, sm.pos, sm.srcpos)
+          end
+        end
+      end
+      state.drag_start_warp_markers = nil
+    end
+    if state.undo_block_open then
+      reaper.Undo_EndBlock("NVSD_ItemView: Error recovery", -1)
+    end
     state.undo_block_open = nil
     state.sticky_item = nil
     state.sticky_item_valid = false
