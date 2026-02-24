@@ -3,7 +3,7 @@
 
 local settings_ui = {}
 
--- Flag: set to true when defaults tab checkboxes change (main loop applies to live state)
+-- Flag: set to true when preferences tab checkboxes change (main loop applies to live state)
 settings_ui.defaults_changed = false
 
 -- Drawing module reference (set via set_drawing, needed for shared icon picker)
@@ -1960,7 +1960,7 @@ local HELP_SECTIONS = {
       "- Scroll over dropdowns (Algorithm, Mode, Options) to cycle values",
       "- JS_ReaScriptAPI improves knob/slider drag range",
       "- Hover any element for a tooltip",
-      "- Use the Defaults tab to control initial toggle states (CUE markers, ghost markers, envelopes)",
+      "- Use the Preferences tab to control initial toggle states and hide UI panels",
     },
   },
 }
@@ -2031,34 +2031,53 @@ local DEFAULTS_ITEMS = {
   {key = "env_snap_enabled",    label = "Snap envelope to grid", tip = "Snap pitch envelope points to semitone values"},
 }
 
--- Draw Defaults tab content
-local function draw_defaults_tab(ctx, settings)
+-- Layout items: which UI panels can be hidden
+local LAYOUT_ITEMS = {
+  {key = "show_warp",     label = "Warp section",    tip = "WARP button, algorithm dropdowns, Clear"},
+  {key = "show_buttons",  label = "Utility buttons",  tip = "x2, /2, Reverse, Edit, Loop buttons"},
+  {key = "show_fx",       label = "FX section",      tip = "FX chain toolbar and bypass list"},
+  {key = "show_controls", label = "Controls panel",  tip = "Gain slider, pan knob, pitch knob"},
+}
+
+-- Draw Preferences tab content (formerly Defaults)
+local function draw_preferences_tab(ctx, settings)
   -- Cancel listening when switching tabs
   if ui_state.listening_for then
     stop_listening(settings)
   end
 
-  reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Initial visibility when selecting items")
+  reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Toggle Defaults")
   reaper.ImGui_Dummy(ctx, 0, 4)
-  reaper.ImGui_Separator(ctx)
-  reaper.ImGui_Dummy(ctx, 0, 6)
 
-  local changed = false
   for _, item in ipairs(DEFAULTS_ITEMS) do
     local val = settings.current.defaults[item.key]
     local rv, new_val = reaper.ImGui_Checkbox(ctx, item.label, val)
     if rv then
       settings.current.defaults[item.key] = new_val
-      changed = true
+      settings.save_default(item.key)
+      settings_ui.defaults_changed = true
     end
     if reaper.ImGui_IsItemHovered(ctx) then
       reaper.ImGui_SetTooltip(ctx, item.tip)
     end
   end
 
-  if changed then
-    settings.save()
-    settings_ui.defaults_changed = true
+  reaper.ImGui_Dummy(ctx, 0, 10)
+  reaper.ImGui_Separator(ctx)
+  reaper.ImGui_Dummy(ctx, 0, 6)
+  reaper.ImGui_TextColored(ctx, COLORS.text_dim, "Layout")
+  reaper.ImGui_Dummy(ctx, 0, 4)
+
+  for _, item in ipairs(LAYOUT_ITEMS) do
+    local val = settings.current.layout[item.key]
+    local rv, new_val = reaper.ImGui_Checkbox(ctx, item.label, val)
+    if rv then
+      settings.current.layout[item.key] = new_val
+      settings.save_layout(item.key)
+    end
+    if reaper.ImGui_IsItemHovered(ctx) then
+      reaper.ImGui_SetTooltip(ctx, item.tip)
+    end
   end
 end
 
@@ -2177,9 +2196,9 @@ function settings_ui.draw(ctx, settings)
         draw_toolbar_tab(ctx, settings)
         reaper.ImGui_EndTabItem(ctx)
       end
-      if reaper.ImGui_BeginTabItem(ctx, "Defaults") then
+      if reaper.ImGui_BeginTabItem(ctx, "Preferences") then
         reaper.ImGui_Spacing(ctx)
-        draw_defaults_tab(ctx, settings)
+        draw_preferences_tab(ctx, settings)
         reaper.ImGui_EndTabItem(ctx)
       end
       if reaper.ImGui_BeginTabItem(ctx, "Help") then

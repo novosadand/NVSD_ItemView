@@ -375,8 +375,18 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     end
   end
 
-  -- WARP button
+  -- Layout visibility flags
+  local show_warp = settings.current.layout.show_warp
+  local show_buttons = settings.current.layout.show_buttons
   local warp_btn_width = config.LEFT_COLUMN_WIDTH - (btn_padding * 2)
+  local any_dropdown_menu_open = false
+  local warp_end_y = row_y
+  local last_bottom = row_y
+  state._dropdown_menu_open = false
+
+  if show_warp then
+
+  -- WARP button
   local warp_btn_x = left_col_x + btn_padding
   local warp_btn_y = row_y
 
@@ -631,7 +641,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
   -- Capture before any close handlers run (used to block clicks on buttons underneath)
   -- Must be before any dropdown button handler so the snapshot is available
-  local any_dropdown_menu_open = state.warp_dropdown_open or state.warp_submode_dropdown_open or state.warp_mode_dropdown_open
+  any_dropdown_menu_open = state.warp_dropdown_open or state.warp_submode_dropdown_open or state.warp_mode_dropdown_open
   state._dropdown_menu_open = any_dropdown_menu_open
 
   if mouse_in_dropdown and dropdown_enabled and not state.warp_dropdown_open then
@@ -1435,10 +1445,18 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     end
   end
 
+  warp_end_y = warp_btn_y + btn_height + 4 + dropdown_height
+  else
+    -- When warp hidden, ensure dropdown state is clean
+    state.warp_dropdown_open = false
+    state.warp_submode_dropdown_open = false
+    state.warp_mode_dropdown_open = false
+  end -- if show_warp
+
   -- Progressive overflow: buttons that don't fit in col 1 move to col 2
   local panel_bottom = left_col_y + panel_height
   local cursor_x = left_col_x
-  local cursor_y = warp_btn_y + btn_height + 4 + dropdown_height
+  local cursor_y = warp_end_y
   local col1_end, overflowed
   local gap = 6
 
@@ -1452,6 +1470,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   end
 
   -- CLEAR button (reset to default state)
+  if show_warp then
   try_overflow(20)
   local clear_btn_y = cursor_y
   local clear_btn_x = cursor_x + btn_padding
@@ -1489,8 +1508,12 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     end
   end
 
+  last_bottom = clear_btn_y + clear_btn_height
+  cursor_y = last_bottom + 4
+  end -- if show_warp (clear button)
+
+  if show_buttons then
   -- Stretch x2 / /2 buttons (Ableton-style double/half speed)
-  cursor_y = clear_btn_y + clear_btn_height + 4
   try_overflow(20)
   local stretch_row_y = cursor_y
   local stretch_btn_width = math.floor((warp_btn_width - gap) / 2)
@@ -1657,7 +1680,9 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     end
   end
 
-  local last_bottom = row3_y + btn_height
+  last_bottom = row3_y + btn_height
+  end -- if show_buttons
+
   return col1_end or last_bottom, overflowed and last_bottom or nil
 end
 

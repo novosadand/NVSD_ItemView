@@ -666,6 +666,14 @@ settings.DEFAULT_DEFAULTS = {
   env_snap_enabled = true,
 }
 
+-- Default layout visibility (which UI panels are shown)
+settings.DEFAULT_LAYOUT = {
+  show_controls = true,   -- gain/pan/pitch panel
+  show_fx = true,         -- FX toolbar + list
+  show_warp = true,       -- WARP button + dropdowns + Clear
+  show_buttons = true,    -- x2, /2, reverse, edit, loop
+}
+
 -- Dirty flag: when true, config.refresh_colors() will run next frame
 settings.colors_dirty = true  -- Start dirty so initial load applies colors
 
@@ -675,6 +683,7 @@ settings.current = {
   shortcuts = {},
   toolbar_buttons = {},  -- {label, cmd} entries for custom info bar buttons
   defaults = {},         -- toggle defaults (loaded from DEFAULT_DEFAULTS)
+  layout = {},           -- layout visibility (loaded from DEFAULT_LAYOUT)
 }
 
 -- Save custom theme colors to ExtState
@@ -903,6 +912,27 @@ function settings.load()
       settings.current.defaults[name] = default_val
     end
   end
+
+  -- Load layout visibility
+  settings.current.layout = {}
+  for name, default_val in pairs(settings.DEFAULT_LAYOUT) do
+    local saved = reaper.GetExtState(EXT_SECTION, "layout_" .. name)
+    if saved ~= "" then
+      settings.current.layout[name] = (saved == "true")
+    else
+      settings.current.layout[name] = default_val
+    end
+  end
+end
+
+-- Save a single default toggle to ExtState (avoids full save overhead)
+function settings.save_default(name)
+  reaper.SetExtState(EXT_SECTION, "default_" .. name, tostring(settings.current.defaults[name]), true)
+end
+
+-- Save a single layout toggle to ExtState (avoids full save overhead)
+function settings.save_layout(name)
+  reaper.SetExtState(EXT_SECTION, "layout_" .. name, tostring(settings.current.layout[name]), true)
 end
 
 -- Save settings to ExtState
@@ -922,6 +952,11 @@ function settings.save()
   for name, val in pairs(settings.current.defaults) do
     reaper.SetExtState(EXT_SECTION, "default_" .. name, tostring(val), true)
   end
+
+  -- Save layout visibility
+  for name, val in pairs(settings.current.layout) do
+    reaper.SetExtState(EXT_SECTION, "layout_" .. name, tostring(val), true)
+  end
 end
 
 -- Apply settings (update current and save)
@@ -930,6 +965,9 @@ function settings.apply(new_settings)
   settings.current.shortcuts = new_settings.shortcuts
   if new_settings.defaults then
     settings.current.defaults = new_settings.defaults
+  end
+  if new_settings.layout then
+    settings.current.layout = new_settings.layout
   end
   settings.colors_dirty = true
   settings.save()
@@ -951,6 +989,11 @@ function settings.reset_all()
   settings.current.defaults = {}
   for name, default_val in pairs(settings.DEFAULT_DEFAULTS) do
     settings.current.defaults[name] = default_val
+  end
+  -- Reset layout visibility
+  settings.current.layout = {}
+  for name, default_val in pairs(settings.DEFAULT_LAYOUT) do
+    settings.current.layout[name] = default_val
   end
   settings.colors_dirty = true
   settings.save()

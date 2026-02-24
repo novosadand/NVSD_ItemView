@@ -1062,8 +1062,9 @@ local function loop()
 
           -- Get available space for waveform
           local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
+          local layout = settings.current.layout
           local envelope_bar_height = config.ENVELOPE_BAR_HEIGHT
-          local warp_bar_height = state.warp_mode and config.WARP_BAR_HEIGHT or 0
+          local warp_bar_height = (state.warp_mode and layout.show_warp) and config.WARP_BAR_HEIGHT or 0
           state.is_loop_src = item and reaper.GetMediaItemInfo_Value(item, "B_LOOPSRC") == 1
           state.toolbar_buttons = settings.current.toolbar_buttons or {}
           state.info_bar_height = #state.toolbar_buttons > 0
@@ -1089,9 +1090,13 @@ local function loop()
           local effective_panel_width = two_col_panel
               and (config.LEFT_PANEL_WIDTH * 2)
               or config.LEFT_PANEL_WIDTH
+          if not layout.show_controls then effective_panel_width = 0 end
 
           -- FX column mode: when vertical space is too tight, FX gets its own column
-          local total_left_width = config.LEFT_COLUMN_WIDTH + (state.needs_fx_col and config.LEFT_COLUMN_WIDTH or 0) + effective_panel_width
+          local left_col_has_content = layout.show_warp or layout.show_buttons or layout.show_fx
+          local effective_left_col = left_col_has_content and config.LEFT_COLUMN_WIDTH or 0
+          local effective_fx_col = (layout.show_fx and state.needs_fx_col) and config.LEFT_COLUMN_WIDTH or 0
+          local total_left_width = effective_left_col + effective_fx_col + effective_panel_width
           local pitch_gutter = state.envelopes_visible and config.PITCH_LABEL_WIDTH or 0
           local waveform_width = math.max(100, avail_w - (config.WAVEFORM_MARGIN_H * 2) - total_left_width - pitch_gutter)
 
@@ -1105,7 +1110,7 @@ local function loop()
 
           local left_col_x = cursor_x + config.WINDOW_PADDING
           local left_col_y = cursor_y + state.strip_h + config.WAVEFORM_MARGIN_V
-          local panel_x = left_col_x + config.LEFT_COLUMN_WIDTH + (state.needs_fx_col and config.LEFT_COLUMN_WIDTH or 0)
+          local panel_x = left_col_x + effective_left_col + effective_fx_col
           local panel_y = cursor_y + state.strip_h + config.WAVEFORM_MARGIN_V
           local wave_x = cursor_x + total_left_width + config.WAVEFORM_MARGIN_H + pitch_gutter
           local info_bar_y = cursor_y + state.strip_h + config.WAVEFORM_MARGIN_V
@@ -1864,10 +1869,10 @@ local function loop()
           drawing.draw_ruler_and_grid(draw_list, wave_x, ruler_y, wave_y, waveform_width, config.RULER_HEIGHT, waveform_height,
             grid_view_start, view_length, item_position, grid_offset, grid_playrate, config, utils)
 
-          -- Draw warp bar (only when WARP mode is active)
+          -- Draw warp bar (only when WARP mode is active and warp section visible)
           state.warp_marker_hovered_idx = -1
           state.transient_hovered_idx = -1
-          if state.warp_mode then
+          if state.warp_mode and layout.show_warp then
             drawing.draw_warp_bar(draw_list, wave_x, warp_bar_y, waveform_width, warp_bar_height, config)
 
             -- Hover detection for stretch markers in warp bar
@@ -2331,13 +2336,14 @@ local function loop()
           end
 
           -- Left column: buttons + FX (scoped to free register slots)
+          if left_col_has_content then
           do
             local bg = config.COLOR_WAVEFORM_BG
             reaper.ImGui_DrawList_AddRectFilled(draw_list, left_col_x, left_col_y,
               left_col_x + config.LEFT_COLUMN_WIDTH - 2, left_col_y + panel_height, bg)
 
             -- Column 2 position (only when previous frame detected overflow)
-            local c2x = state.needs_fx_col and (left_col_x + config.LEFT_COLUMN_WIDTH) or nil
+            local c2x = (layout.show_fx and state.needs_fx_col) and (left_col_x + config.LEFT_COLUMN_WIDTH) or nil
             if c2x then
               reaper.ImGui_DrawList_AddRectFilled(draw_list, c2x, left_col_y,
                 c2x + config.LEFT_COLUMN_WIDTH - 2, left_col_y + panel_height, bg)
@@ -2349,9 +2355,10 @@ local function loop()
               panel_height, c2x)
 
             -- Update state for next frame: need FX column if buttons + FX don't fit in col 1
-            state.needs_fx_col = (left_col_y + panel_height - 14 - c1b) < 50
+            state.needs_fx_col = layout.show_fx and (left_col_y + panel_height - 14 - c1b) < 50
 
             -- Draw FX in column 2 (if active) or below buttons in column 1
+            if layout.show_fx then
             if c2x then
               local fy = c2b and (c2b + 6) or (left_col_y + 10)
               local tb = controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
@@ -2371,8 +2378,13 @@ local function loop()
             end
 
             controls.draw_fx_context_menu(ctx, state)
+            end -- if layout.show_fx
           end
+          else
+            state.needs_fx_col = false
+          end -- if left_col_has_content
 
+          if layout.show_controls then
           local COLOR_PANEL_BG = config.COLOR_INFO_BAR_BG
           reaper.ImGui_DrawList_AddRectFilled(draw_list, panel_x, panel_y,
               panel_x + effective_panel_width - 4, panel_y + panel_height, COLOR_PANEL_BG)
@@ -2426,9 +2438,10 @@ local function loop()
             controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y,
                 panel_x, knob_cy, take, take_pitch, config, state, utils, drawing)
           end
+          end -- if layout.show_controls
 
           -- Hide and lock cursor while dragging any control
-          if state.is_any_control_dragging() then
+          if layout.show_controls and state.is_any_control_dragging() then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
             -- Accumulate delta from screen coords (works on all platforms)
             local cur_screen_x, cur_screen_y = reaper.GetMousePosition()
