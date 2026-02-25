@@ -959,8 +959,10 @@ function utils.clamp_fades_to_length(item, new_length)
   local eff_fo = math.max(fo, foa)
 
   if eff_fi + eff_fo > new_length then
-    eff_fo = math.max(0, new_length - eff_fi)
-    if eff_fo == 0 then eff_fi = math.min(eff_fi, new_length) end
+    -- Proportional scaling (uniform length change, no specific edge)
+    local scale = new_length / (eff_fi + eff_fo)
+    eff_fi = eff_fi * scale
+    eff_fo = eff_fo * scale
 
     reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", math.min(fi, eff_fi))
     reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", math.min(fo, eff_fo))
