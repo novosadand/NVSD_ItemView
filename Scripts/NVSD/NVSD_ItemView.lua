@@ -1060,6 +1060,38 @@ local function loop()
             end
           end
 
+          -- Detect external item resize (e.g. dragging item edge in arrange view)
+          -- and clamp fades so the near-edge fade shrinks first
+          if not state.dragging_start and not state.dragging_end
+              and not state.dragging_fade_in and not state.dragging_fade_out then
+            local cur_len = item_length
+            local cur_pos = item_position
+            local prev_len = state._prev_item_length
+            local prev_pos = state._prev_item_position
+            if prev_len and math.abs(cur_len - prev_len) > 0.0001 then
+              local fi = fade_in_len
+              local fo = fade_out_len
+              if fi + fo > cur_len then
+                local left_edge_moved = prev_pos and math.abs(cur_pos - prev_pos) > 0.0001
+                if left_edge_moved then
+                  -- Left edge moved: shrink fade-in first
+                  fi = math.max(0, cur_len - fo)
+                  if fi == 0 then fo = math.min(fo, cur_len) end
+                else
+                  -- Right edge moved: shrink fade-out first
+                  fo = math.max(0, cur_len - fi)
+                  if fo == 0 then fi = math.min(fi, cur_len) end
+                end
+                reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
+                reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
+                fade_in_len = fi
+                fade_out_len = fo
+              end
+            end
+            state._prev_item_length = cur_len
+            state._prev_item_position = cur_pos
+          end
+
           -- Get available space for waveform
           local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
           local layout = settings.current.layout
@@ -1466,11 +1498,12 @@ local function loop()
                 new_take_offset = new_take_offset % source_length
               end
 
-              -- Fade adjustment
+              -- Fade adjustment (crop removes from both sides, scale proportionally)
               local fi, fo = fade_in_len, fade_out_len
               if fi + fo > new_item_length then
-                fo = math.max(0, new_item_length - fi)
-                if fo == 0 then fi = math.min(fi, new_item_length) end
+                local scale = new_item_length / (fi + fo)
+                fi = fi * scale
+                fo = fo * scale
               end
 
               -- Remap envelope points to new take coordinate space
@@ -5487,11 +5520,11 @@ local function loop()
                     new_take_offset = new_take_offset % source_length
                   end
 
-                  -- Fade adjustment: preserve fade-in, shrink fade-out first
+                  -- Fade adjustment: shrink fade-in first (near the edge being moved), then fade-out
                   local fi, fo = fade_in_len, fade_out_len
                   if fi + fo > new_item_length then
-                    fo = math.max(0, new_item_length - fi)
-                    if fo == 0 then fi = math.min(fi, new_item_length) end
+                    fi = math.max(0, new_item_length - fo)
+                    if fi == 0 then fo = math.min(fo, new_item_length) end
                   end
 
                   -- Keep item left edge fixed, only adjust where sound starts (matches drag behavior)
@@ -5536,11 +5569,11 @@ local function loop()
                   local new_source_length = new_end - effective_start
                   local new_item_length = new_source_length / playrate
 
-                  -- Fade adjustment: preserve fade-out, shrink fade-in first
+                  -- Fade adjustment: shrink fade-out first (near the edge being moved), then fade-in
                   local fi, fo = fade_in_len, fade_out_len
                   if fi + fo > new_item_length then
-                    fi = math.max(0, new_item_length - fo)
-                    if fi == 0 then fo = math.min(fo, new_item_length) end
+                    fo = math.max(0, new_item_length - fi)
+                    if fo == 0 then fi = math.min(fi, new_item_length) end
                   end
 
                   reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_item_length)
@@ -5793,13 +5826,13 @@ local function loop()
               state.drag_current_start = new_start
               state.drag_current_end = original_source_end
 
-              -- Fade adjustment: preserve fade-in, shrink fade-out first
+              -- Fade adjustment: shrink fade-in first (near the edge being moved), then fade-out
               local fi = state.drag_start_fade_in
               local fo = state.drag_start_fade_out
               if fi + fo > new_item_length then
-                fo = math.max(0, new_item_length - fi)
-                if fo == 0 then
-                  fi = math.min(fi, new_item_length)
+                fi = math.max(0, new_item_length - fo)
+                if fi == 0 then
+                  fo = math.min(fo, new_item_length)
                 end
               end
 
@@ -5897,13 +5930,13 @@ local function loop()
               state.drag_current_start = state.drag_start_offset
               state.drag_current_end = new_end
 
-              -- Fade adjustment: preserve fade-out, shrink fade-in first
+              -- Fade adjustment: shrink fade-out first (near the edge being moved), then fade-in
               local fi = state.drag_start_fade_in
               local fo = state.drag_start_fade_out
               if fi + fo > new_item_length then
-                fi = math.max(0, new_item_length - fo)
-                if fi == 0 then
-                  fo = math.min(fo, new_item_length)
+                fo = math.max(0, new_item_length - fi)
+                if fo == 0 then
+                  fi = math.min(fi, new_item_length)
                 end
               end
 
