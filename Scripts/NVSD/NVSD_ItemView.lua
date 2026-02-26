@@ -1183,6 +1183,21 @@ local function loop()
           -- so source-space coordinates work identically and avoid a visual jump.
           local is_warped_view = state.warp_mode and state.warp_map ~= nil and #state.warp_map >= 2
 
+          -- Deferred selection remap (from quantize action on previous frame)
+          if state._pending_sel_src_start then
+            if is_warped_view and state.warp_map then
+              state.region_sel_start = utils.warp_src_to_pos(state.warp_map, state._pending_sel_src_start, playrate)
+              state.region_sel_end = utils.warp_src_to_pos(state.warp_map, state._pending_sel_src_end, playrate)
+            else
+              state.region_sel_start = state._pending_sel_src_start
+              state.region_sel_end = state._pending_sel_src_end
+            end
+            state.selection_start_time = state.region_sel_start
+            state.selection_end_time = state.region_sel_end
+            state._pending_sel_src_start = nil
+            state._pending_sel_src_end = nil
+          end
+
           -- Reset unwrap tracking when item changes
           if state.unwrap_tracked_item ~= item then
             state.unwrapped_start_offset = nil
@@ -1558,8 +1573,13 @@ local function loop()
           local function do_quantize_action()
             if not take then return end
             -- Selection range in source time (nil = entire item)
+            -- Convert from pos-space to source-space when in warped view
             local sel_start = state.region_selected and math.min(state.selection_start_time, state.selection_end_time) or nil
             local sel_end = state.region_selected and math.max(state.selection_start_time, state.selection_end_time) or nil
+            if sel_start and is_warped_view and state.warp_map then
+              sel_start = utils.warp_pos_to_src(state.warp_map, sel_start, playrate)
+              sel_end = utils.warp_pos_to_src(state.warp_map, sel_end, playrate)
+            end
             reaper.Undo_BeginBlock()
             local n = 0
             if state.transients and #state.transients > 0 then
@@ -1579,6 +1599,11 @@ local function loop()
             reaper.UpdateArrange()
             reaper.Undo_EndBlock("NVSD_ItemView: Quantize warp markers (+" .. n .. " new, " .. q .. " snapped)", -1)
             state.warp_markers = utils.get_stretch_markers(take)
+            -- Defer selection remap to next frame (current frame still uses old warp map)
+            if sel_start then
+              state._pending_sel_src_start = sel_start
+              state._pending_sel_src_end = sel_end
+            end
           end
 
           -- Add markers at all transients + quantize all to grid (Ctrl+U)
