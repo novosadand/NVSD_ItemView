@@ -620,30 +620,21 @@ function utils.get_peaks_for_range_warped(source, pos_start, pos_length, num_sam
     src_positions[i] = src
   end
 
-  -- For looped sources: load the FULL source range (wrapping means any position is valid)
-  local src_min, src_max, src_duration
-
-  if is_looped then
-    src_min = 0
-    src_max = source_length
-    src_duration = source_length
-  else
-    -- Only include positions within [0, source_length] for peak loading.
-    -- Pixels mapping outside this range will output silence.
-    src_min = math.huge
-    src_max = -math.huge
-    for i = 0, num_samples do
-      local s = src_positions[i]
-      if s >= 0 and s <= source_length then
-        if s < src_min then src_min = s end
-        if s > src_max then src_max = s end
-      end
+  -- Find actual visible source range from mapped positions.
+  -- For both looped and non-looped: scan positions to find the range we need.
+  local src_min = math.huge
+  local src_max = -math.huge
+  for i = 0, num_samples do
+    local s = src_positions[i]
+    if s >= 0 and s <= source_length then
+      if s < src_min then src_min = s end
+      if s > src_max then src_max = s end
     end
-    if src_min == math.huge then src_min = 0; src_max = 0 end
-    src_min = math.max(0, src_min)
-    src_max = math.min(source_length, src_max)
-    src_duration = src_max - src_min
   end
+  if src_min == math.huge then src_min = 0; src_max = 0 end
+  src_min = math.max(0, src_min)
+  src_max = math.min(source_length, src_max)
+  local src_duration = src_max - src_min
   if src_duration <= 0.0001 then return nil end
 
   -- Load source peaks at resolution proportional to the stretch ratio.
@@ -658,6 +649,7 @@ function utils.get_peaks_for_range_warped(source, pos_start, pos_length, num_sam
   local num_ch = src_peaks.channels
   local src_count = src_peaks.count
   if src_count < 1 then return nil end
+
 
   -- For each output pixel, map to source range and find min/max
   local mins = {}

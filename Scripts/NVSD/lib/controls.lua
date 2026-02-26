@@ -2174,17 +2174,9 @@ function controls.draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, pan
 
   local pitch_double_clicked = reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_knob
   if pitch_double_clicked then
-    if take then
+    if take and math.abs(take_pitch) > 0.01 then
       reaper.Undo_BeginBlock()
-      -- If no stretch markers, fully disable warp when resetting pitch to 0
-      local sm_count = reaper.GetTakeNumStretchMarkers(take)
-      if state.warp_mode and sm_count == 0 then
-        reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", 0)
-        reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 0)
-        state.warp_mode = false
-      else
-        set_take_pitch(take, 0, state, utils)
-      end
+      set_take_pitch(take, 0, state, utils)
       reaper.UpdateArrange()
       reaper.Undo_EndBlock("NVSD_ItemView: Reset pitch to 0", -1)
     end

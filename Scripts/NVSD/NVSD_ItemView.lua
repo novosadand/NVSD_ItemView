@@ -3859,6 +3859,17 @@ local function loop()
             end
           end
 
+          -- Double-click start/end marker: select the region between markers
+          if reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_marker_area
+              and (near_start or near_end) then
+            state.region_selected = true
+            state.region_sel_start = render_start
+            state.region_sel_end = render_end
+            state.selection_start_time = render_start
+            state.selection_end_time = render_end
+            state.region_sel_item = item
+          end
+
           -- Start marker dragging (skip if fade drag already started this click, or Ctrl+envelope freehand)
           if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_marker_area
               and not state.dragging_fade_in and not state.dragging_fade_out
