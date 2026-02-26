@@ -48,6 +48,7 @@ local EDITABLE_SHORTCUTS = {
   {name = "toggle_auto_fit", label = "Toggle Autozoom"},
   {name = "scroll_zoom", label = "Scroll zoom (horizontal)"},
   {name = "scroll_vzoom", label = "Scroll zoom (vertical)"},
+  {name = "scroll_hpan", label = "Scroll pan (horizontal)"},
 }
 
 -- Reference shortcuts (not editable)
@@ -1892,6 +1893,10 @@ local HELP_SECTIONS = {
       "- Lock, Snap, Ghost markers, Shaped waveform, Autozoom toggles",
       "- All toggle buttons remember their state across REAPER restarts",
       {key = "Shaped waveform", desc = "Waveform shape follows fades, volume and pan envelopes"},
+      "",
+      "## Horizontal scroll",
+      "- Shift+Scroll (default) to pan the waveform view left/right",
+      "- Rebindable in Preferences > Shortcuts as 'Scroll pan (horizontal)'",
       "",
       "## Scrollbar (enable in Preferences > Layout)",
       "- Horizontal scrollbar below waveform for panning and zooming",

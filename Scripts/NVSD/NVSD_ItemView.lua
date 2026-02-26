@@ -383,7 +383,8 @@ local function loop()
         and (ctrl_held or alt_held or shift_held)
         and reaper.ImGui_IsWindowHovered(ctx, reaper.ImGui_HoveredFlags_ChildWindows())
         and (settings.check_scroll_modifiers("scroll_zoom", ctrl_held, shift_held, alt_held)
-          or settings.check_scroll_modifiers("scroll_vzoom", ctrl_held, shift_held, alt_held))
+          or settings.check_scroll_modifiers("scroll_vzoom", ctrl_held, shift_held, alt_held)
+          or settings.check_scroll_modifiers("scroll_hpan", ctrl_held, shift_held, alt_held))
         and not reaper.ImGui_IsWindowFocused(ctx) then
       reaper.ImGui_SetWindowFocus(ctx)
     end
@@ -2968,7 +2969,10 @@ local function loop()
             elseif not state.envelopes_visible and mouse_in_waveform
                 and not near_start and not near_end
                 and not near_fade_in and not near_fade_out then
-              drawing.tooltip(ctx, "waveform", settings.format_shortcut_by_name("scroll_zoom") .. ": zoom\nMiddle-drag: pan")
+              local tip = settings.format_shortcut_by_name("scroll_zoom") .. ": zoom"
+              local hpan_sc = settings.format_shortcut_by_name("scroll_hpan")
+              if hpan_sc ~= "" then tip = tip .. "\n" .. hpan_sc .. ": scroll" end
+              drawing.tooltip(ctx, "waveform", tip .. "\nMiddle-drag: pan")
             end
           end
 
@@ -3238,6 +3242,16 @@ local function loop()
               local zoom_factor = 1.3
               local new_zoom = wheel > 0 and (state.zoom_level * zoom_factor) or (state.zoom_level / zoom_factor)
               zoom_to_cursor(new_zoom, mouse_x)
+            elseif settings.check_scroll_modifiers("scroll_hpan", ctrl_held, shift_held, alt_held) then
+              -- Horizontal scroll pan
+              local scroll_step = view_length * config.SCROLL_HPAN_SPEED
+              state.pan_offset = state.pan_offset - wheel * scroll_step
+              local new_view_length = zoom_base_view_length / state.zoom_level
+              local half_view = new_view_length / 2
+              local hpan_min = ext_start - range_center + half_view
+              local hpan_max = ext_end - range_center - half_view
+              if hpan_min > hpan_max then hpan_min, hpan_max = hpan_max, hpan_min end
+              state.pan_offset = math.max(hpan_min, math.min(hpan_max, state.pan_offset))
             elseif state.envelope_type == "Pitch" and state.envelopes_visible and mouse_in_waveform then
               state.pitch_view_offset = state.pitch_view_offset + wheel * config.PITCH_SCROLL_SPEED
               state.pitch_view_offset = math.max(-24, math.min(24, state.pitch_view_offset))

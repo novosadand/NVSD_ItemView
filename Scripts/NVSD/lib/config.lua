@@ -53,6 +53,7 @@ config.SCROLLBAR_ARROW_WIDTH = 16
 config.SCROLLBAR_ZOOM_BTN_WIDTH = 16
 config.SCROLLBAR_ZOOM_HANDLE_WIDTH = 8
 config.SCROLLBAR_SCROLL_SPEED = 0.05  -- fraction of view_length per click
+config.SCROLL_HPAN_SPEED = 0.08      -- fraction of view_length per wheel tick
 
 -- Envelope editor
 config.ENVELOPE_BAR_HEIGHT = 18

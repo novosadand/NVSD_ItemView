@@ -51,6 +51,7 @@ settings.DEFAULT_SHORTCUTS = {
   toggle_auto_fit = {ctrl = false, shift = false, alt = false, key = "A"},
   scroll_zoom = {ctrl = true, shift = false, alt = false, key = "Scroll"},
   scroll_vzoom = {ctrl = true, shift = true, alt = false, key = "Scroll"},
+  scroll_hpan = {ctrl = false, shift = true, alt = false, key = "Scroll"},
 }
 
 -- Map key names to ImGui key getter function names (created once at module load)
