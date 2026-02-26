@@ -268,12 +268,16 @@ end
 -- Waveform computation cache (avoids recomputing Phase 1+2 when inputs unchanged)
 local wf_cache = { valid = false }
 
+-- Modulation cache (avoids per-pixel Envelope_Evaluate calls when inputs unchanged)
+local mod_cache = { valid = false }
+
 -- Info bar metadata cache (avoids per-frame REAPER API calls)
 local info_cache = { source = false }
 
 -- Invalidate waveform computation cache (call when item changes, peaks reload, etc.)
 function drawing.invalidate_wf_cache()
   wf_cache.valid = false
+  mod_cache.valid = false
 end
 
 -- Clear toolbar icon cache (call when ImGui context is recreated)
@@ -2390,84 +2394,125 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
   local mod_bots = col_bots
 
   if modulation then
-    local time_per_px = view_length / num_samples
-    local channel_h = height / num_channels
-    local item_start = start_offset
-    local item_end_t = start_offset + source_item_length
-    local pr = modulation.playrate or 1
-
-    -- Fade LUTs (internally cached, essentially free)
-    local fi_len = modulation.fade_in_len * pr  -- convert project time to source time
-    local fo_len = modulation.fade_out_len * pr
-    local fi_lut = fi_len > 0 and get_fade_lut(
-        modulation.fade_in_shape, modulation.fade_in_dir, false) or nil
-    local fo_lut = fo_len > 0 and get_fade_lut(
-        modulation.fade_out_shape, modulation.fade_out_dir, true) or nil
-
-    -- Envelope handles
+    -- Cheap change-detection keys for envelope state
     local vol_env = modulation.vol_env
-    local vol_scaling = vol_env and reaper.GetEnvelopeScalingMode(vol_env) or 0
     local pan_env = modulation.pan_env
-    local pan_value = modulation.pan_value or 0
-    local is_stereo = num_channels >= 2
-    local has_pan = is_stereo and (pan_value ~= 0 or pan_env ~= nil)
+    local vol_n = vol_env and reaper.CountEnvelopePoints(vol_env) or 0
+    local pan_n = pan_env and reaper.CountEnvelopePoints(pan_env) or 0
 
-    -- Only call Envelope_Evaluate when there are actual points
-    local vol_env_active = vol_env and reaper.CountEnvelopePoints(vol_env) > 0
-    local pan_env_active = pan_env and reaper.CountEnvelopePoints(pan_env) > 0
+    -- Check modulation cache
+    local mc = mod_cache
+    if mc.valid
+        and mc.view_start == view_start and mc.view_length == view_length
+        and mc.num_samples == num_samples and mc.num_channels == num_channels
+        and mc.start_offset == start_offset and mc.item_end == (start_offset + source_item_length)
+        and mc.height == height and mc.y == y
+        and mc.fi_len == modulation.fade_in_len and mc.fi_shape == modulation.fade_in_shape
+        and mc.fi_dir == modulation.fade_in_dir
+        and mc.fo_len == modulation.fade_out_len and mc.fo_shape == modulation.fade_out_shape
+        and mc.fo_dir == modulation.fade_out_dir
+        and mc.pan_value == (modulation.pan_value or 0)
+        and mc.playrate == (modulation.playrate or 1)
+        and mc.vol_n == vol_n and mc.pan_n == pan_n then
+      -- Cache hit: reuse previous modulation result
+      mod_tops = mc.mod_tops
+      mod_bots = mc.mod_bots
+    else
+      -- Cache miss: compute modulation
+      local time_per_px = view_length / num_samples
+      local channel_h = height / num_channels
+      local item_start = start_offset
+      local item_end_t = start_offset + source_item_length
+      local pr = modulation.playrate or 1
 
-    mod_tops = {}
-    mod_bots = {}
-    for ch = 1, num_channels do
-      mod_tops[ch] = {}
-      mod_bots[ch] = {}
-    end
+      -- Fade LUTs (internally cached, essentially free)
+      local fi_len = modulation.fade_in_len * pr  -- convert project time to source time
+      local fo_len = modulation.fade_out_len * pr
+      local fi_lut = fi_len > 0 and get_fade_lut(
+          modulation.fade_in_shape, modulation.fade_in_dir, false) or nil
+      local fo_lut = fo_len > 0 and get_fade_lut(
+          modulation.fade_out_shape, modulation.fade_out_dir, true) or nil
 
-    for i = 0, num_samples - 1 do
-      local t = view_start + i * time_per_px
-      local gain = 1.0
+      -- Envelope handles
+      local vol_scaling = vol_env and reaper.GetEnvelopeScalingMode(vol_env) or 0
+      local pan_value = modulation.pan_value or 0
+      local is_stereo = num_channels >= 2
+      local has_pan = is_stereo and (pan_value ~= 0 or pan_env ~= nil)
 
-      -- Fades (only within item bounds)
-      if t >= item_start and t <= item_end_t then
-        if fi_lut and t < item_start + fi_len then
-          gain = fade_lut_lookup(fi_lut, (t - item_start) / fi_len)
-        end
-        if fo_lut and t > item_end_t - fo_len then
-          gain = gain * fade_lut_lookup(fo_lut, (t - (item_end_t - fo_len)) / fo_len)
-        end
-      end
+      -- Only call Envelope_Evaluate when there are actual points
+      local vol_env_active = vol_n > 0
+      local pan_env_active = pan_n > 0
 
-      -- Volume envelope (time in project seconds from item start)
-      if vol_env_active then
-        local env_t = (t - item_start) / pr
-        local _, val = reaper.Envelope_Evaluate(vol_env, env_t, 0, 0)
-        gain = gain * reaper.ScaleFromEnvelopeMode(vol_scaling, val)
-      end
-
-      -- Pan (stereo only, balance mode: L attenuates when panned R, vice versa)
-      local pan_l, pan_r
-      if has_pan then
-        local pan = pan_value
-        if pan_env_active then
-          local env_t = (t - item_start) / pr
-          local _, pv = reaper.Envelope_Evaluate(pan_env, env_t, 0, 0)
-          pan = pv  -- envelope overrides knob
-        end
-        pan_l = math.min(1, 1 - pan)
-        pan_r = math.min(1, 1 + pan)
-      end
-
-      -- Scale distance from center per channel
+      mod_tops = mc.mod_tops or {}
+      mod_bots = mc.mod_bots or {}
       for ch = 1, num_channels do
-        local center_y = y + (ch - 1) * channel_h + channel_h * 0.5
-        local ch_gain = gain
-        if has_pan then
-          ch_gain = ch_gain * (ch == 1 and pan_l or pan_r)
-        end
-        mod_tops[ch][i] = center_y - (center_y - col_tops[ch][i]) * ch_gain
-        mod_bots[ch][i] = center_y + (col_bots[ch][i] - center_y) * ch_gain
+        mod_tops[ch] = mod_tops[ch] or {}
+        mod_bots[ch] = mod_bots[ch] or {}
       end
+
+      for i = 0, num_samples - 1 do
+        local t = view_start + i * time_per_px
+        local gain = 1.0
+
+        -- Fades (only within item bounds)
+        if t >= item_start and t <= item_end_t then
+          if fi_lut and t < item_start + fi_len then
+            gain = fade_lut_lookup(fi_lut, (t - item_start) / fi_len)
+          end
+          if fo_lut and t > item_end_t - fo_len then
+            gain = gain * fade_lut_lookup(fo_lut, (t - (item_end_t - fo_len)) / fo_len)
+          end
+        end
+
+        -- Volume envelope (time in project seconds from item start)
+        if vol_env_active then
+          local env_t = (t - item_start) / pr
+          local _, val = reaper.Envelope_Evaluate(vol_env, env_t, 0, 0)
+          gain = gain * reaper.ScaleFromEnvelopeMode(vol_scaling, val)
+        end
+
+        -- Pan (stereo only, balance mode: L attenuates when panned R, vice versa)
+        local pan_l, pan_r
+        if has_pan then
+          local pan = pan_value
+          if pan_env_active then
+            local env_t = (t - item_start) / pr
+            local _, pv = reaper.Envelope_Evaluate(pan_env, env_t, 0, 0)
+            pan = pv  -- envelope overrides knob
+          end
+          pan_l = math.min(1, 1 - pan)
+          pan_r = math.min(1, 1 + pan)
+        end
+
+        -- Scale distance from center per channel
+        for ch = 1, num_channels do
+          local center_y = y + (ch - 1) * channel_h + channel_h * 0.5
+          local ch_gain = gain
+          if has_pan then
+            ch_gain = ch_gain * (ch == 1 and pan_l or pan_r)
+          end
+          mod_tops[ch][i] = center_y - (center_y - col_tops[ch][i]) * ch_gain
+          mod_bots[ch][i] = center_y + (col_bots[ch][i] - center_y) * ch_gain
+        end
+      end
+
+      -- Store in cache
+      mc.valid = true
+      mc.view_start = view_start; mc.view_length = view_length
+      mc.num_samples = num_samples; mc.num_channels = num_channels
+      mc.start_offset = start_offset; mc.item_end = start_offset + source_item_length
+      mc.height = height; mc.y = y
+      mc.fi_len = modulation.fade_in_len; mc.fi_shape = modulation.fade_in_shape
+      mc.fi_dir = modulation.fade_in_dir
+      mc.fo_len = modulation.fade_out_len; mc.fo_shape = modulation.fade_out_shape
+      mc.fo_dir = modulation.fade_out_dir
+      mc.pan_value = modulation.pan_value or 0
+      mc.playrate = modulation.playrate or 1
+      mc.vol_n = vol_n; mc.pan_n = pan_n
+      mc.mod_tops = mod_tops; mc.mod_bots = mod_bots
     end
+  else
+    mod_cache.valid = false
   end
 
   -- Phase 3: Render (always runs — ImGui immediate mode requires redrawing every frame)
@@ -3798,6 +3843,15 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
     DL_PathStroke(draw_list, env_colors.line, 0, config.ENV_LINE_THICKNESS)
   end
 
+  -- Build selection hash set for O(1) lookup (avoids O(n_pts × n_sel) in node drawing)
+  local sel_set = {}
+  if state.env_selected_nodes and #state.env_selected_nodes > 0 then
+    for _, sel in ipairs(state.env_selected_nodes) do
+      local key = math.floor(sel.src_time * 10000 + 0.5) .. ":" .. math.floor(sel.value * 10000 + 0.5)
+      sel_set[key] = true
+    end
+  end
+
   -- 3. Segment hover detection: find closest line segment to mouse
   local mouse_in_waveform = mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
                             and mouse_y >= wave_y and mouse_y <= wave_y + waveform_height
@@ -3829,14 +3883,11 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
       end
     end
 
-    -- Check if hovered node is in the selection
-    if state.env_node_hovered_idx >= 0 and best_pts_i > 0 and #state.env_selected_nodes > 0 then
-      for _, sel in ipairs(state.env_selected_nodes) do
-        if math.abs(pts[best_pts_i].time - sel.src_time) < 0.0001
-            and math.abs(pts[best_pts_i].value - sel.value) < 0.0001 then
-          state.env_node_hovered_is_selected = true
-          break
-        end
+    -- Check if hovered node is in the selection (O(1) via hash set)
+    if state.env_node_hovered_idx >= 0 and best_pts_i > 0 then
+      local key = math.floor(pts[best_pts_i].time * 10000 + 0.5) .. ":" .. math.floor(pts[best_pts_i].value * 10000 + 0.5)
+      if sel_set[key] then
+        state.env_node_hovered_is_selected = true
       end
     end
 
@@ -3969,15 +4020,9 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
       local node_py = value_to_y(pts[i].value)
       if node_px >= wave_x - config.ENV_NODE_RADIUS and node_px <= wave_x + waveform_width + config.ENV_NODE_RADIUS then
         local is_hovered = (pts[i].idx == state.env_node_hovered_idx)
-        -- Check if this node is in the selection
-        local is_selected = false
-        for _, sel in ipairs(state.env_selected_nodes) do
-          if math.abs(pts[i].time - sel.src_time) < 0.0001
-              and math.abs(pts[i].value - sel.value) < 0.0001 then
-            is_selected = true
-            break
-          end
-        end
+        -- Check if this node is in the selection (O(1) via hash set)
+        local key = math.floor(pts[i].time * 10000 + 0.5) .. ":" .. math.floor(pts[i].value * 10000 + 0.5)
+        local is_selected = sel_set[key] or false
         local fill
         if is_hovered then fill = env_colors.node_hover
         elseif is_selected then fill = config.COLOR_ENV_NODE_SELECTED
