@@ -2041,7 +2041,6 @@ local LAYOUT_ITEMS = {
   {key = "show_buttons",  label = "Utility buttons",  tip = "x2, /2, Reverse, Edit, Loop buttons"},
   {key = "show_fx",       label = "FX section",      tip = "FX chain toolbar and bypass list"},
   {key = "show_controls", label = "Controls panel",  tip = "Gain slider, pan knob, pitch knob"},
-  {key = "shaped_waveform", label = "Shaped waveform", tip = "Waveform shape follows fades, volume and pan envelopes"},
 }
 
 -- Draw Preferences tab content (formerly Defaults)
