@@ -149,7 +149,7 @@ end
 -- fade_dir: curvature bend from D_FADEINDIR/D_FADEOUTDIR (-1 to 1), default 0
 function drawing.draw_fade_overlay(draw_list, fade_start_px, fade_end_px,
                                     fade_top_y, wave_y, wave_height,
-                                    fade_shape, is_fade_in, is_hovered, fade_dir)
+                                    fade_shape, is_fade_in, is_hovered, fade_dir, vis_left, vis_right)
   local width = fade_end_px - fade_start_px
   if width < 2 then return end
 
@@ -163,10 +163,15 @@ function drawing.draw_fade_overlay(draw_list, fade_start_px, fade_end_px,
   -- Curve spans from fade_top_y (vol=0, fully attenuated) to wave_y+wave_height (vol=1, full volume)
   local curve_range = wave_y + wave_height - fade_top_y
 
+  -- Clip drawing range to visible area to avoid O(fade_width_px) loops at extreme zoom
+  local vis_start = math.max(0, math.floor((vis_left or fade_start_px) - fade_start_px))
+  local vis_end = math.min(math.floor(width), math.ceil((vis_right or fade_end_px) - fade_start_px))
+
   -- Darken only above the curve (the attenuated region)
   local step = 2  -- 2px columns for performance
-  local width_floor = math.floor(width)
-  for px = 0, width_floor, step do
+  -- Align vis_start to step boundary
+  vis_start = math.floor(vis_start / step) * step
+  for px = vis_start, vis_end, step do
     local t = px / width
     if t > 1 then t = 1 end
     local vol = fade_lut_lookup(lut, t)
@@ -175,25 +180,22 @@ function drawing.draw_fade_overlay(draw_list, fade_start_px, fade_end_px,
       DL_AddLine(draw_list, fade_start_px + px, fade_top_y, fade_start_px + px, curve_y, tint_alpha, step)
     end
   end
-  -- Final column at t=1
-  do
-    local vol = lut[FADE_LUT_SIZE]
-    local curve_y = fade_top_y + curve_range * (1 - vol)
-    if curve_y > fade_top_y then
-      DL_AddLine(draw_list, fade_start_px + width_floor, fade_top_y, fade_start_px + width_floor, curve_y, tint_alpha, step)
-    end
-  end
 
   -- Draw curve line on top (brighter when hovered)
   if DL_PathLineTo and width > 4 then
     local line_step = math.max(1, math.floor(width / 200))
-    for px = 0, width_floor, line_step do
+    -- Clip path to visible range too
+    local path_start = math.max(0, math.floor(((vis_left or fade_start_px) - fade_start_px) / line_step) * line_step)
+    local path_end = math.min(math.floor(width), math.ceil((vis_right or fade_end_px) - fade_start_px))
+    for px = path_start, path_end, line_step do
       local t = px / width
       if t > 1 then t = 1 end
       DL_PathLineTo(draw_list, fade_start_px + px, fade_top_y + curve_range * (1 - fade_lut_lookup(lut, t)))
     end
-    -- Always include the final point at t=1
-    DL_PathLineTo(draw_list, fade_end_px, fade_top_y + curve_range * (1 - lut[FADE_LUT_SIZE]))
+    -- Always include the final point at t=1 if visible
+    if not vis_right or fade_end_px <= vis_right then
+      DL_PathLineTo(draw_list, fade_end_px, fade_top_y + curve_range * (1 - lut[FADE_LUT_SIZE]))
+    end
     local line_color = is_hovered and 0xFFFFFFCC or 0xFFFFFF80
     local line_width = is_hovered and 2.0 or 1.5
     DL_PathStroke(draw_list, line_color, 0, line_width)
@@ -772,17 +774,17 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   local grid_btn_h = has_toolbar and 30 or 14
   local grid_settings = settings and settings.current.grid
   local grid_label = ""
-  if grid_settings then
-    if grid_settings.mode == "adaptive" then
-      for _, lvl in ipairs(config.GRID_ADAPTIVE_LEVELS) do
-        if lvl.id == grid_settings.adaptive then grid_label = lvl.label; break end
-      end
-    else
+  if grid_settings and utils then
+    -- Always show the real effective division (for adaptive, this changes with zoom)
+    local eff_qn = state and state.effective_grid_qn
+    if eff_qn then
+      grid_label = utils.qn_to_grid_label(eff_qn)
+    elseif grid_settings.mode ~= "adaptive" then
       for _, opt in ipairs(config.GRID_FIXED_OPTIONS) do
         if opt.id == grid_settings.fixed then grid_label = opt.label; break end
       end
     end
-    if grid_settings.triplet and grid_label:sub(-1) ~= "T" then
+    if grid_settings.triplet and grid_label ~= "" and grid_label:sub(-1) ~= "T" then
       grid_label = grid_label .. "T"
     end
   end
@@ -2150,7 +2152,7 @@ end
 -- Draw quantize grid overlay on the waveform area based on grid settings.
 -- item_pos: project time of item start. view_start/view_length: in item-local time.
 function drawing.draw_quantize_grid(draw_list, x, y, width, height, item_pos,
-                                     view_start, view_length, config, utils, settings)
+                                     view_start, view_length, config, utils, settings, state)
   local grid = settings and settings.current and settings.current.grid
   if not grid or not utils or grid.enabled == false then return end
 
@@ -2163,17 +2165,23 @@ function drawing.draw_quantize_grid(draw_list, x, y, width, height, item_pos,
   if view_length_qn <= 0 then return end
 
   local division_qn = utils.get_effective_grid_qn(grid, config, view_length_qn, width)
+  -- Store effective division on state so the info bar button can show the real value
+  if state then state.effective_grid_qn = division_qn end
   local triplet = grid.triplet
   local div = triplet and (division_qn * 2 / 3) or division_qn
   if div <= 0 then return end
 
-  -- Find first grid line at or before view start
-  local first_qn = math.floor(view_start_qn / div) * div
   local px_per_qn = width / view_length_qn
+  -- Skip drawing if lines would be sub-pixel (invisible and wastes CPU)
+  local spacing_px = div * px_per_qn
+  if spacing_px < 1 then return end
+
+  -- Start from the first grid line inside (or just before) the visible area
+  local first_qn = math.ceil(view_start_qn / div) * div
+  if first_qn - div >= view_start_qn then first_qn = first_qn - div end
   local color = config.COLOR_GRID_LINE
 
-  -- Draw only at the selected grid division — uniform lines, no bar/beat distinction
-  for qn = first_qn, view_end_qn + div, div do
+  for qn = first_qn, view_end_qn, div do
     local px = x + (qn - view_start_qn) * px_per_qn
     if px >= x and px <= x + width then
       reaper.ImGui_DrawList_AddLine(draw_list, px, y, px, y + height, color, 1)
@@ -3281,7 +3289,7 @@ function drawing.draw_scrollbar(draw_list, ctx, x, y, width, height,
   reaper.ImGui_DrawList_AddLine(draw_list, zpx_c - 4, zpy, zpx_c + 4, zpy, zpc, 1.5)
   reaper.ImGui_DrawList_AddLine(draw_list, zpx_c, zpy - 4, zpx_c, zpy + 4, zpc, 1.5)
   if mouse_in_zp and mouse_clicked then
-    state.zoom_level = math.min(500.0, state.zoom_level * 1.3)
+    state.zoom_level = math.min(config.MAX_ZOOM, state.zoom_level * 1.3)
     state.zoom_toggle_active = false
   end
 
@@ -3322,7 +3330,7 @@ function drawing.draw_scrollbar(draw_list, ctx, x, y, width, height,
       -- Left = zoom in, right = zoom out (negative sign)
       local zoom_sensitivity = -0.005
       local zoom_mult = math.exp(state.sb_zoom_handle_cumulative * zoom_sensitivity)
-      state.zoom_level = math.max(1.0, math.min(500.0,
+      state.zoom_level = math.max(1.0, math.min(config.MAX_ZOOM,
           state.sb_zoom_handle_start_zoom * zoom_mult))
       state.zoom_toggle_active = false
       -- Lock cursor in place for infinite drag range

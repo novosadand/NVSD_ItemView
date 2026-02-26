@@ -54,6 +54,7 @@ config.SCROLLBAR_ZOOM_BTN_WIDTH = 16
 config.SCROLLBAR_ZOOM_HANDLE_WIDTH = 8
 config.SCROLLBAR_SCROLL_SPEED = 0.05  -- fraction of view_length per click
 config.SCROLL_HPAN_SPEED = 0.08      -- fraction of view_length per wheel tick
+config.MAX_ZOOM = 100000             -- allows sample-level zoom on clips up to ~5 minutes
 
 -- Grid system
 config.COLOR_GRID_LINE = 0x44444455         -- subtle grid lines
@@ -80,9 +81,18 @@ config.GRID_FIXED_OPTIONS = {
 config.GRID_ADAPTIVE_LEVELS = {
   {id = "widest",    label = "Widest",    target_px = 200},
   {id = "wide",      label = "Wide",      target_px = 100},
-  {id = "medium",    label = "Medium",    target_px = 60},
-  {id = "narrow",    label = "Narrow",    target_px = 35},
-  {id = "narrowest", label = "Narrowest", target_px = 20},
+  {id = "medium",    label = "Medium",    target_px = 50},
+  {id = "narrow",    label = "Narrow",    target_px = 24},
+  {id = "narrowest", label = "Narrowest", target_px = 5},
+}
+
+-- Extended divisions for adaptive grid (includes finer subdivisions for deep zoom)
+-- Goes down to 1/16384 QN for sample-level visibility at extreme zoom
+config.GRID_ADAPTIVE_DIVISIONS = {
+  32, 16, 8, 4, 2, 1, 0.5, 0.25, 0.125,           -- 8bars .. 1/32
+  0.0625, 0.03125, 0.015625, 0.0078125,             -- 1/64 .. 1/512
+  0.00390625, 0.001953125, 0.0009765625,             -- 1/1024 .. 1/4096
+  0.000244140625,                                     -- 1/16384
 }
 
 -- Envelope editor

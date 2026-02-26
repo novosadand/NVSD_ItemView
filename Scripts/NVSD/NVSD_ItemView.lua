@@ -439,7 +439,7 @@ local function loop()
 
     -- Zoom shortcuts
     if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "zoom_in") then
-      state.zoom_level = math.min(500.0, state.zoom_level * 1.5)
+      state.zoom_level = math.min(config.MAX_ZOOM, state.zoom_level * 1.5)
       state.zoom_toggle_active = false
     elseif reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "zoom_out") then
       state.zoom_level = math.max(1.0, state.zoom_level / 1.5)
@@ -1443,7 +1443,7 @@ local function loop()
           if state.item_just_changed and state.auto_fit_markers and source_item_length > 0 then
             local so = start_offset
             if source_length > 0 and state.is_loop_src and so >= source_length then so = so % source_length end
-            state.zoom_level = math.min(500.0, ext_length / source_item_length)
+            state.zoom_level = math.min(config.MAX_ZOOM, ext_length / source_item_length)
             state.pan_offset = (so + source_item_length / 2) - (ext_start + ext_end) / 2
           end
 
@@ -1495,7 +1495,7 @@ local function loop()
                   state.pan_before_toggle = state.pan_offset
                 end
                 local target_len = target_end - target_start
-                state.zoom_level = math.min(500.0, ext_length / target_len)
+                state.zoom_level = math.min(config.MAX_ZOOM, ext_length / target_len)
                 local target_center = (target_start + target_end) / 2
                 state.pan_offset = target_center - (ext_start + ext_end) / 2
                 state.zoom_toggle_active = true
@@ -1728,12 +1728,11 @@ local function loop()
 
           -- Per-view peak loading: load exactly screen-width peaks for the visible range.
           -- PCM_Source_GetPeaks uses pre-indexed .reapeaks files → <1ms regardless of file size.
-          -- Only reduce resolution when dragging outside our window (in REAPER arrange),
-          -- not when clicking our own UI controls (which would cause unnecessary peak reloads).
-          local pixel_step = (user_dragging_in_reaper
-              and not reaper.ImGui_IsWindowHovered(ctx, reaper.ImGui_HoveredFlags_ChildWindows()
-                  + reaper.ImGui_HoveredFlags_AllowWhenBlockedByActiveItem())) and 2 or 1
-          local num_view_samples = math.max(1, math.floor(waveform_width / pixel_step))
+          -- Always use 1:1 pixel resolution — the old pixel_step=2 "optimization" during
+          -- arrange drags caused constant cache invalidation (peaks + wf_cache + modulation),
+          -- which is far more expensive than the marginal savings from halving resolution.
+          local pixel_step = 1
+          local num_view_samples = math.max(1, math.floor(waveform_width))
 
           -- Single source of truth: does the ext range extend past source boundaries?
           -- Replaces the old is_extended_drag / is_post_drag_looped / is_looped_item checks
@@ -1748,14 +1747,14 @@ local function loop()
                   or view_start + view_length > source_length + 0.0001)))
 
           local need_reload = state.view_peaks == nil
-              or source ~= state.view_source
-              or is_reversed ~= state.view_reversed
-              or view_start ~= state.view_start
-              or view_length ~= state.view_length
-              or num_view_samples ~= state.view_num_samples
-              or (is_warped_view and state.view_warp_hash ~= state.warp_hash)
-              or (is_warped_view ~= (state.view_warped or false))
-              or (state.is_loop_src ~= state.view_loop_src)
+            or source ~= state.view_source
+            or is_reversed ~= state.view_reversed
+            or not state.view_start
+            or math.abs(view_start - (state.view_start or 0)) > view_length * 1e-9
+            or math.abs(view_length - (state.view_length or 0)) > view_length * 1e-9
+            or (is_warped_view and state.view_warp_hash ~= state.warp_hash)
+            or is_warped_view ~= (state.view_warped or false)
+            or state.is_loop_src ~= state.view_loop_src
 
           if need_reload and view_length > 0 then
             local peaks_result, num_ch
@@ -1833,8 +1832,8 @@ local function loop()
 
           -- Waveform background, then grid lines, then waveform on top
           reaper.ImGui_DrawList_AddRectFilled(draw_list, wave_x, wave_y, wave_x + waveform_width, wave_y + waveform_height, config.COLOR_WAVEFORM_BG)
-          drawing.draw_grid_lines(draw_list, wave_x, wave_y, waveform_width, waveform_height,
-            grid_view_start, view_length, item_position, grid_offset, grid_playrate, config, utils)
+          drawing.draw_quantize_grid(draw_list, wave_x, wave_y, waveform_width, waveform_height,
+            item_position, view_start, view_length, config, utils, settings, state)
 
           -- In warped view: pass ext_end as source_length so draw_waveform doesn't
           -- flag active pixels as looped, and is_reversed=false since warping handles everything
@@ -1875,10 +1874,6 @@ local function loop()
           else
             state.modulation = nil
           end
-          -- Quantize grid overlay (drawn behind waveform)
-          drawing.draw_quantize_grid(draw_list, wave_x, wave_y, waveform_width, waveform_height,
-            item_position, view_start, view_length, config, utils, settings)
-
           local start_px, end_px = drawing.draw_waveform(draw_list, wave_x, wave_y,
             waveform_width, waveform_height,
             state.view_peaks, view_offset, view_item_length, wf_source_len, view_start, view_length, ruler_y, item_vol, wf_reversed, state.view_num_channels, config, pixel_step, state.wf_bounds_start, state.wf_bounds_end, state.is_loop_src, state.modulation)
@@ -2000,30 +1995,41 @@ local function loop()
             end
 
             -- Draw transients (skip those that have a stretch marker nearby)
-            if state.transients_computed then
-              local best_dist = config.WARP_MARKER_HIT_RADIUS
-              local px_per_sec = view_length > 0 and (waveform_width / view_length) or 0
-              local transient_zoomed = px_per_sec > 500
-              for i, t in ipairs(state.transients) do
-                -- Map transient source-time to display coordinate
-                local t_display = is_warped_view and utils.warp_src_to_pos(state.warp_map, t, playrate) or t
-                if t_display >= view_start and t_display <= view_start + view_length then
-                  local has_sm = false
-                  for _, sm in ipairs(state.warp_markers) do
-                    if math.abs(sm.srcpos - t) < 0.005 then has_sm = true; break end
-                  end
-                  if not has_sm then
-                    local t_px = time_to_px(t_display)
-                    if t_px >= wave_x - 2 and t_px <= wave_x + waveform_width + 2 then
-                      if mouse_in_warp_bar and not state.any_drag_active() and state.warp_marker_hovered_idx == -1 then
-                        local dist = math.abs(mouse_x - t_px)
-                        if dist < best_dist then
-                          best_dist = dist
-                          state.transient_hovered_idx = i
+            -- Uses binary search to only iterate visible transients (O(log n + visible))
+            if state.transients_computed and #state.transients > 0 then
+              state._tr_best_dist = config.WARP_MARKER_HIT_RADIUS
+              state._tr_zoomed = view_length > 0 and (waveform_width / view_length) > 500
+              -- Build a quick lookup set of stretch marker source positions (once per frame)
+              state._sm_set = {}
+              for _, sm in ipairs(state.warp_markers) do
+                state._sm_set[math.floor(sm.srcpos * 200 + 0.5)] = true
+              end
+              -- Binary search for first/last visible transient (transients are sorted)
+              state._tr_lo = utils.lower_bound(state.transients, view_start)
+              state._tr_hi = utils.lower_bound(state.transients, view_start + view_length + 0.001)
+              -- In warped view, source-time range may differ from display range,
+              -- so expand search window generously
+              if is_warped_view then
+                state._tr_lo = math.max(1, state._tr_lo - 50)
+                state._tr_hi = math.min(#state.transients, state._tr_hi + 50)
+              end
+              for i = state._tr_lo, state._tr_hi do
+                state._tr_t = state.transients[i]
+                if state._tr_t then
+                  state._tr_display = is_warped_view and utils.warp_src_to_pos(state.warp_map, state._tr_t, playrate) or state._tr_t
+                  if state._tr_display >= view_start and state._tr_display <= view_start + view_length then
+                    if not state._sm_set[math.floor(state._tr_t * 200 + 0.5)] then
+                      state._tr_px = time_to_px(state._tr_display)
+                      if state._tr_px >= wave_x - 2 and state._tr_px <= wave_x + waveform_width + 2 then
+                        if mouse_in_warp_bar and not state.any_drag_active() and state.warp_marker_hovered_idx == -1 then
+                          if math.abs(mouse_x - state._tr_px) < state._tr_best_dist then
+                            state._tr_best_dist = math.abs(mouse_x - state._tr_px)
+                            state.transient_hovered_idx = i
+                          end
                         end
+                        drawing.draw_transient(draw_list, state._tr_px, warp_bar_y, warp_bar_height,
+                            state.transient_hovered_idx == i, config, state._tr_zoomed)
                       end
-                      drawing.draw_transient(draw_list, t_px, warp_bar_y, warp_bar_height,
-                          state.transient_hovered_idx == i, config, transient_zoomed)
                     end
                   end
                 end
@@ -3268,7 +3274,7 @@ local function loop()
 
             local time_under_cursor = view_start + cursor_fraction * view_length
 
-            state.zoom_level = math.max(min_zoom, math.min(500.0, new_zoom))
+            state.zoom_level = math.max(min_zoom, math.min(config.MAX_ZOOM, new_zoom))
             state.zoom_toggle_active = false
 
             local new_view_length = zoom_base_view_length / state.zoom_level
@@ -6224,13 +6230,13 @@ local function loop()
               drawing.draw_fade_overlay(draw_list, start_marker_x, fade_in_end_x,
                 fade_top_y, wave_y, waveform_height, fade_in_shape, true,
                 state.fade_in_hovered or state.dragging_fade_in or state.dragging_fade_curve_in
-                or (alt_held and mouse_in_fade_in_body), fade_in_dir)
+                or (alt_held and mouse_in_fade_in_body), fade_in_dir, wave_x, wave_x + waveform_width)
             end
             if fade_out_len > 0 then
               drawing.draw_fade_overlay(draw_list, fade_out_start_x, end_marker_x,
                 fade_top_y, wave_y, waveform_height, fade_out_shape, false,
                 state.fade_out_hovered or state.dragging_fade_out or state.dragging_fade_curve_out
-                or (alt_held and mouse_in_fade_out_body), fade_out_dir)
+                or (alt_held and mouse_in_fade_out_body), fade_out_dir, wave_x, wave_x + waveform_width)
             end
             reaper.ImGui_DrawList_PopClipRect(draw_list)
           end

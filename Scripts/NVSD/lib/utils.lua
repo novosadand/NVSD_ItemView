@@ -3,6 +3,16 @@
 
 local utils = {}
 
+-- Binary search: find first index in sorted array where arr[i] >= value
+function utils.lower_bound(arr, value)
+  local lo, hi = 1, #arr
+  while lo <= hi do
+    local mid = math.floor((lo + hi) / 2)
+    if arr[mid] < value then lo = mid + 1 else hi = mid - 1 end
+  end
+  return lo
+end
+
 -- Pitch/playrate conversions
 function utils.semitones_to_playrate(semitones)
   return 2 ^ (semitones / 12)
@@ -476,26 +486,32 @@ function utils.warp_pos_to_src(warp_map, pos, playrate)
   if not warp_map or #warp_map == 0 then
     return pos * (playrate or 1)
   end
+  local n = #warp_map
   local first = warp_map[1]
   if pos <= first.pos then
     return first.srcpos + (pos - first.pos) * (playrate or 1)
   end
-  local last = warp_map[#warp_map]
+  local last = warp_map[n]
   if pos >= last.pos then
     return last.srcpos + (pos - last.pos) * (playrate or 1)
   end
-  for i = 1, #warp_map - 1 do
-    if pos >= warp_map[i].pos and pos <= warp_map[i+1].pos then
-      local span = warp_map[i+1].pos - warp_map[i].pos
-      if span < 0.000001 then return warp_map[i].srcpos end
-      local t = (pos - warp_map[i].pos) / span
-      local slope = warp_map[i].slope or 0
-      local delta_src = warp_map[i+1].srcpos - warp_map[i].srcpos
-      if math.abs(slope) < 0.001 then
-        return warp_map[i].srcpos + t * delta_src
-      else
-        return warp_map[i].srcpos + t * (1 - slope * (1 - t)) * delta_src
-      end
+  -- Binary search for the segment containing pos
+  local lo, hi = 1, n - 1
+  while lo < hi do
+    local mid = math.floor((lo + hi) / 2)
+    if pos < warp_map[mid + 1].pos then hi = mid else lo = mid + 1 end
+  end
+  local i = lo
+  if pos >= warp_map[i].pos and pos <= warp_map[i+1].pos then
+    local span = warp_map[i+1].pos - warp_map[i].pos
+    if span < 0.000001 then return warp_map[i].srcpos end
+    local t = (pos - warp_map[i].pos) / span
+    local slope = warp_map[i].slope or 0
+    local delta_src = warp_map[i+1].srcpos - warp_map[i].srcpos
+    if math.abs(slope) < 0.001 then
+      return warp_map[i].srcpos + t * delta_src
+    else
+      return warp_map[i].srcpos + t * (1 - slope * (1 - t)) * delta_src
     end
   end
   return pos * (playrate or 1)
@@ -506,33 +522,39 @@ function utils.warp_src_to_pos(warp_map, srcpos, playrate)
   if not warp_map or #warp_map == 0 then
     return srcpos / (playrate or 1)
   end
+  local n = #warp_map
   local first = warp_map[1]
   if srcpos <= first.srcpos then
     return first.pos + (srcpos - first.srcpos) / (playrate or 1)
   end
-  local last = warp_map[#warp_map]
+  local last = warp_map[n]
   if srcpos >= last.srcpos then
     return last.pos + (srcpos - last.srcpos) / (playrate or 1)
   end
-  for i = 1, #warp_map - 1 do
-    if srcpos >= warp_map[i].srcpos and srcpos <= warp_map[i+1].srcpos then
-      local delta_src = warp_map[i+1].srcpos - warp_map[i].srcpos
-      local pos_span = warp_map[i+1].pos - warp_map[i].pos
-      if math.abs(delta_src) < 0.000001 then return warp_map[i].pos end
-      local slope = warp_map[i].slope or 0
-      if math.abs(slope) < 0.001 then
-        local t = (srcpos - warp_map[i].srcpos) / delta_src
-        return warp_map[i].pos + t * pos_span
-      else
-        local a = slope * delta_src
-        local b = (1 - slope) * delta_src
-        local c = -(srcpos - warp_map[i].srcpos)
-        local disc = b*b - 4*a*c
-        if disc < 0 then disc = 0 end
-        local t = (-b + math.sqrt(disc)) / (2 * a)
-        t = math.max(0, math.min(1, t))
-        return warp_map[i].pos + t * pos_span
-      end
+  -- Binary search for the segment containing srcpos
+  local lo, hi = 1, n - 1
+  while lo < hi do
+    local mid = math.floor((lo + hi) / 2)
+    if srcpos < warp_map[mid + 1].srcpos then hi = mid else lo = mid + 1 end
+  end
+  local i = lo
+  if srcpos >= warp_map[i].srcpos and srcpos <= warp_map[i+1].srcpos then
+    local delta_src = warp_map[i+1].srcpos - warp_map[i].srcpos
+    local pos_span = warp_map[i+1].pos - warp_map[i].pos
+    if math.abs(delta_src) < 0.000001 then return warp_map[i].pos end
+    local slope = warp_map[i].slope or 0
+    if math.abs(slope) < 0.001 then
+      local t = (srcpos - warp_map[i].srcpos) / delta_src
+      return warp_map[i].pos + t * pos_span
+    else
+      local a = slope * delta_src
+      local b = (1 - slope) * delta_src
+      local c = -(srcpos - warp_map[i].srcpos)
+      local disc = b*b - 4*a*c
+      if disc < 0 then disc = 0 end
+      local t = (-b + math.sqrt(disc)) / (2 * a)
+      t = math.max(0, math.min(1, t))
+      return warp_map[i].pos + t * pos_span
     end
   end
   return srcpos / (playrate or 1)
@@ -918,23 +940,40 @@ end
 -- target_px pixels apart (like Ableton's adaptive grid algorithm).
 -- Options are sorted coarsest-first (32, 16, 8, 4, 2, 1, 0.5, 0.25, 0.125).
 function utils.get_adaptive_grid_qn(level_id, config, view_length_qn, waveform_width_px)
-  local target_px = 60  -- default (medium)
+  local target_px = 50  -- default (medium)
   for _, lvl in ipairs(config.GRID_ADAPTIVE_LEVELS) do
     if lvl.id == level_id then target_px = lvl.target_px; break end
   end
   if waveform_width_px <= 0 or view_length_qn <= 0 then return 1 end
   local px_per_qn = waveform_width_px / view_length_qn
   -- Walk from finest to coarsest, pick the finest that meets the spacing threshold
-  local opts = config.GRID_FIXED_OPTIONS
-  local best_qn = opts[1].qn  -- fallback to coarsest
-  for i = #opts, 1, -1 do
-    local spacing = opts[i].qn * px_per_qn
+  -- Uses extended divisions (includes 1/64, 1/128) for finer adaptive resolution
+  local divs = config.GRID_ADAPTIVE_DIVISIONS
+  local best_qn = divs[1]  -- fallback to coarsest (32 QN = 8 bars)
+  for i = #divs, 1, -1 do
+    local spacing = divs[i] * px_per_qn
     if spacing >= target_px then
-      best_qn = opts[i].qn
+      best_qn = divs[i]
       break
     end
   end
   return best_qn
+end
+
+-- Convert a QN division value to a human-readable label (e.g. 4 -> "1 Bar", 0.5 -> "1/8")
+function utils.qn_to_grid_label(qn)
+  -- Map QN value to denominator: 1 QN = 1/4, so denom = 4/qn
+  if qn >= 32 then return "8 Bars"
+  elseif qn >= 16 then return "4 Bars"
+  elseif qn >= 8 then return "2 Bars"
+  elseif qn >= 4 then return "1 Bar"
+  elseif qn >= 2 then return "1/2"
+  elseif qn >= 1 then return "1/4"
+  else
+    -- For fine divisions, compute denominator from QN (1 QN = quarter note = 1/4)
+    local denom = math.floor(4 / qn + 0.5)
+    return "1/" .. tostring(denom)
+  end
 end
 
 -- Step grid narrower (direction=-1) or wider (direction=+1).
@@ -998,20 +1037,7 @@ function utils.get_quantize_snap_fn(quantize_settings, grid_settings, config, vi
     division_qn = utils.get_fixed_grid_qn(qgrid, config) or 0.5
   end
 
-  -- Check for compound triplet mode (quantize panel buttons like "1/8+1/8T")
-  local is_compound = qgrid:find("+") ~= nil
-  if is_compound then
-    -- Extract base division: "1/8+1/8T" -> "1/8"
-    local base = qgrid:match("^([^+]+)")
-    division_qn = utils.get_fixed_grid_qn(base, config) or 0.5
-    return function(t) return utils.snap_to_compound_division(t, division_qn) end
-  end
-
-  if triplet and qgrid ~= "grid" then
-    return function(t) return utils.snap_to_division(t, division_qn, true) end
-  end
-
-  return function(t) return utils.snap_to_division(t, division_qn, false) end
+  return function(t) return utils.snap_to_division(t, division_qn, triplet) end
 end
 
 -- Quantize all existing stretch markers using a custom snap function and amount.
