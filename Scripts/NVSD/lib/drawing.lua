@@ -2967,7 +2967,7 @@ function drawing.draw_scrollbar(draw_list, ctx, x, y, width, height,
   -- Background
   reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, bg_color)
 
-  -- Layout:  [◄] [====thumb====] [►]  [−] [|] [+]
+  -- Layout:  [◄] [====thumb====] [►]  [+] [|] [−]
   local aw = config.SCROLLBAR_ARROW_WIDTH
   local zw = config.SCROLLBAR_ZOOM_BTN_WIDTH
   local zh = config.SCROLLBAR_ZOOM_HANDLE_WIDTH
@@ -3077,22 +3077,24 @@ function drawing.draw_scrollbar(draw_list, ctx, x, y, width, height,
     reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
   end
 
-  -- == ZOOM MINUS BUTTON ==
-  local zm_x = ra_x + aw
-  local mouse_in_zm = mouse_in_bar and mouse_x >= zm_x and mouse_x < zm_x + zw
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, zm_x, y, zm_x + zw, y + height,
-      mouse_in_zm and btn_hover_color or btn_color)
-  -- Draw − sign
-  local zmc = mouse_in_zm and arrow_hover_color or arrow_color
-  local zmy = y + height / 2
-  reaper.ImGui_DrawList_AddLine(draw_list, zm_x + 4, zmy, zm_x + zw - 4, zmy, zmc, 1.5)
-  if mouse_in_zm and mouse_clicked then
-    state.zoom_level = math.max(1.0, state.zoom_level / 1.3)
+  -- == ZOOM PLUS BUTTON ==
+  local zp_x = ra_x + aw
+  local mouse_in_zp = mouse_in_bar and mouse_x >= zp_x and mouse_x < zp_x + zw
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, zp_x, y, zp_x + zw, y + height,
+      mouse_in_zp and btn_hover_color or btn_color)
+  -- Draw + sign
+  local zpc = mouse_in_zp and arrow_hover_color or arrow_color
+  local zpy = y + height / 2
+  local zpx_c = zp_x + zw / 2
+  reaper.ImGui_DrawList_AddLine(draw_list, zpx_c - 4, zpy, zpx_c + 4, zpy, zpc, 1.5)
+  reaper.ImGui_DrawList_AddLine(draw_list, zpx_c, zpy - 4, zpx_c, zpy + 4, zpc, 1.5)
+  if mouse_in_zp and mouse_clicked then
+    state.zoom_level = math.min(500.0, state.zoom_level * 1.3)
     state.zoom_toggle_active = false
   end
 
   -- == ZOOM HANDLE ==
-  local zhx = zm_x + zw
+  local zhx = zp_x + zw
   local mouse_in_zh = mouse_in_bar and mouse_x >= zhx and mouse_x < zhx + zh
   local zhc = handle_color
   if state.sb_zoom_handle_dragging then
@@ -3149,19 +3151,17 @@ function drawing.draw_scrollbar(draw_list, ctx, x, y, width, height,
     reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
   end
 
-  -- == ZOOM PLUS BUTTON ==
-  local zp_x = zhx + zh
-  local mouse_in_zp = mouse_in_bar and mouse_x >= zp_x and mouse_x < zp_x + zw
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, zp_x, y, zp_x + zw, y + height,
-      mouse_in_zp and btn_hover_color or btn_color)
-  -- Draw + sign
-  local zpc = mouse_in_zp and arrow_hover_color or arrow_color
-  local zpy = y + height / 2
-  local zpx_c = zp_x + zw / 2
-  reaper.ImGui_DrawList_AddLine(draw_list, zpx_c - 4, zpy, zpx_c + 4, zpy, zpc, 1.5)
-  reaper.ImGui_DrawList_AddLine(draw_list, zpx_c, zpy - 4, zpx_c, zpy + 4, zpc, 1.5)
-  if mouse_in_zp and mouse_clicked then
-    state.zoom_level = math.min(500.0, state.zoom_level * 1.3)
+  -- == ZOOM MINUS BUTTON ==
+  local zm_x = zhx + zh
+  local mouse_in_zm = mouse_in_bar and mouse_x >= zm_x and mouse_x < zm_x + zw
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, zm_x, y, zm_x + zw, y + height,
+      mouse_in_zm and btn_hover_color or btn_color)
+  -- Draw − sign
+  local zmc = mouse_in_zm and arrow_hover_color or arrow_color
+  local zmy = y + height / 2
+  reaper.ImGui_DrawList_AddLine(draw_list, zm_x + 4, zmy, zm_x + zw - 4, zmy, zmc, 1.5)
+  if mouse_in_zm and mouse_clicked then
+    state.zoom_level = math.max(1.0, state.zoom_level / 1.3)
     state.zoom_toggle_active = false
   end
 end

@@ -1993,13 +1993,15 @@ function controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, p
   reaper.ImGui_DrawList_AddRectFilled(draw_list, box_left_x, box_y, box_left_x + box_width, box_y + box_height, COLOR_BOX_BG)
   reaper.ImGui_DrawList_AddRect(draw_list, box_left_x, box_y, box_left_x + box_width, box_y + box_height, semitones_border)
   local semitones_text = tostring(display_semitones)
-  reaper.ImGui_DrawList_AddText(draw_list, box_left_x + box_width / 2 - (#semitones_text * 3), box_y + 2, COLOR_BOX_TEXT, semitones_text)
+  local st_tw, st_th = reaper.ImGui_CalcTextSize(ctx, semitones_text)
+  reaper.ImGui_DrawList_AddText(draw_list, box_left_x + (box_width - st_tw) / 2, box_y + (box_height - st_th) / 2, COLOR_BOX_TEXT, semitones_text)
 
   local cents_border = (mouse_in_cents_box or state.is_dragging("cents")) and COLOR_BOX_HOVER or COLOR_BOX_BORDER
   reaper.ImGui_DrawList_AddRectFilled(draw_list, box_right_x, box_y, box_right_x + box_width, box_y + box_height, COLOR_BOX_BG)
   reaper.ImGui_DrawList_AddRect(draw_list, box_right_x, box_y, box_right_x + box_width, box_y + box_height, cents_border)
   local cents_text = tostring(display_cents)
-  reaper.ImGui_DrawList_AddText(draw_list, box_right_x + box_width / 2 - (#cents_text * 3), box_y + 2, COLOR_BOX_TEXT, cents_text)
+  local ct_tw, ct_th = reaper.ImGui_CalcTextSize(ctx, cents_text)
+  reaper.ImGui_DrawList_AddText(draw_list, box_right_x + (box_width - ct_tw) / 2, box_y + (box_height - ct_th) / 2, COLOR_BOX_TEXT, cents_text)
 
   local semitones_double_clicked = reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_semitones_box
   if semitones_double_clicked then
