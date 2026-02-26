@@ -41,6 +41,8 @@ settings.DEFAULT_SHORTCUTS = {
   insert_warp_marker = {ctrl = true, shift = false, alt = false, key = "I"},
   add_transient = {ctrl = true, shift = true, alt = false, key = "I"},
   preview_from_start = {ctrl = false, shift = false, alt = false, key = "Enter"},
+  scroll_zoom = {ctrl = true, shift = false, alt = false, key = "Scroll"},
+  scroll_vzoom = {ctrl = true, shift = true, alt = false, key = "Scroll"},
 }
 
 -- Map key names to ImGui key getter function names (created once at module load)
@@ -87,6 +89,8 @@ local KEY_NAME_TO_FUNC = {
   ["Num."] = "ImGui_Key_KeypadDecimal", ["NumEnter"] = "ImGui_Key_KeypadEnter",
   -- Mouse buttons (handled specially via IsMouseClicked, not IsKeyPressed)
   Mouse4 = "MOUSE_4", Mouse5 = "MOUSE_5",
+  -- Scroll wheel (modifier-only shortcut, checked via GetMouseWheel)
+  Scroll = "SCROLL",
 }
 
 -- Cache resolved ImGui key integer values (populated on first use, avoids repeated C calls)
@@ -118,7 +122,7 @@ local BINDABLE_KEYS = {
   "[","]","-","=",";","'",",",".","/","\\","`",
   "Up","Down","Left","Right",
   "Num+","Num-","Num*","Num/","Num.","NumEnter",
-  "Mouse4","Mouse5",
+  "Mouse4","Mouse5","Scroll",
 }
 
 -- Check which bindable key was pressed this frame (for capture mode)
@@ -127,9 +131,11 @@ function settings.capture_pressed_key(ctx)
   -- Check mouse buttons first
   if reaper.ImGui_IsMouseClicked(ctx, 4) then return "Mouse4" end
   if reaper.ImGui_IsMouseClicked(ctx, 3) then return "Mouse5" end
+  -- Check scroll wheel
+  if reaper.ImGui_GetMouseWheel(ctx) ~= 0 then return "Scroll" end
   -- Check keyboard keys
   for _, key_name in ipairs(BINDABLE_KEYS) do
-    if key_name ~= "Mouse4" and key_name ~= "Mouse5" then
+    if key_name ~= "Mouse4" and key_name ~= "Mouse5" and key_name ~= "Scroll" then
       local imgui_key = get_imgui_key(key_name)
       if imgui_key and reaper.ImGui_IsKeyPressed(ctx, imgui_key) then
         return key_name
@@ -1062,6 +1068,17 @@ function settings.check_shortcut(ctx, name)
   if not imgui_key then return false end
 
   return reaper.ImGui_IsKeyPressed(ctx, imgui_key)
+end
+
+-- Check if a scroll shortcut's modifiers match the current modifier state.
+-- For scroll shortcuts (key="Scroll"), we only check modifier match.
+-- If key="" (unbound), returns false.
+function settings.check_scroll_modifiers(name, ctrl_held, shift_held, alt_held)
+  local shortcut = settings.current.shortcuts[name]
+  if not shortcut or shortcut.key ~= "Scroll" then return false end
+  return shortcut.ctrl == ctrl_held
+    and shortcut.shift == shift_held
+    and shortcut.alt == alt_held
 end
 
 -- Scan REAPER's toolbar_icons directory for available icon PNGs

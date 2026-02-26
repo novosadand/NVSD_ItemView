@@ -45,6 +45,8 @@ local EDITABLE_SHORTCUTS = {
   {name = "clear", label = "Clear pitch/speed/WARP"},
   {name = "insert_warp_marker", label = "Insert warp marker at cursor"},
   {name = "add_transient", label = "Insert transient at cursor"},
+  {name = "scroll_zoom", label = "Scroll zoom (horizontal)"},
+  {name = "scroll_vzoom", label = "Scroll zoom (vertical)"},
 }
 
 -- Reference shortcuts (not editable)
@@ -57,7 +59,6 @@ local REFERENCE_SHORTCUTS = {
   {"Delete",         "Delete selected nodes"},
   {"Ctrl+C",         "Copy region to clipboard"},
   -- Mouse (not rebindable)
-  {"Ctrl + Scroll",  "Zoom in/out"},
   {"Middle Drag",    "Pan waveform"},
   {"Ruler Drag",     "Zoom + Pan"},
   {"Left Drag",      "Select time region"},
@@ -67,7 +68,6 @@ local REFERENCE_SHORTCUTS = {
   {"Double-click waveform", "Slide markers to cursor"},
   {"Ctrl + Drag",    "Fine control on knobs/sliders"},
   {"Ctrl+Alt + Drag", "Pan waveform (alt. to middle)"},
-  {"Ctrl+Shift+Scroll", "Vertical amplitude zoom"},
   {"Right-click fade", "Pick fade shape"},
   {"Alt+click fade body", "Adjust fade curve bias"},
   {"Right Drag",     "Select envelope nodes"},
@@ -696,7 +696,7 @@ local function draw_shortcuts_tab(ctx, settings)
       local btn_label
       local btn_color
       if is_listening then
-        btn_label = "Press a key..."
+        btn_label = shortcut.key == "Scroll" and "Hold + scroll..." or "Press a key..."
         btn_color = COLORS.accent
       elseif is_unbound then
         btn_label = "---"
@@ -1733,8 +1733,8 @@ local HELP_SECTIONS = {
   {
     header = "Waveform & Navigation",
     lines = {
-      {key = "Ctrl+Scroll", desc = "Zoom in/out"},
-      {key = "Ctrl+Shift+Scroll", desc = "Vertical amplitude zoom"},
+      {key = "Ctrl+Scroll", desc = "Zoom in/out (rebindable in Shortcuts)"},
+      {key = "Ctrl+Shift+Scroll", desc = "Vertical amplitude zoom (rebindable in Shortcuts)"},
       {key = "Middle-drag", desc = "Pan waveform"},
       {key = "Ctrl+Alt+drag", desc = "Pan waveform (alt. to middle)"},
       {key = "Ruler drag", desc = "Vertical zooms, horizontal pans"},
@@ -1945,8 +1945,8 @@ local HELP_SECTIONS = {
       {key = "Ctrl+C", desc = "Copy selected region as new item"},
       {key = "Escape", desc = "Clear nodes, then selection, then close"},
       {key = "Delete", desc = "Delete selected nodes / hovered warp marker"},
-      {key = "Ctrl+Scroll", desc = "Zoom"},
-      {key = "Ctrl+Shift+Scroll", desc = "Vertical amplitude zoom"},
+      {key = "Ctrl+Scroll", desc = "Zoom (rebindable in Shortcuts)"},
+      {key = "Ctrl+Shift+Scroll", desc = "Vertical amplitude zoom (rebindable in Shortcuts)"},
       {key = "Middle-drag", desc = "Pan"},
       {key = "Ctrl+Alt+drag", desc = "Pan (alt. to middle)"},
       {key = "Ctrl+drag marker", desc = "Fine-tune drag (4x slower)"},
@@ -2084,6 +2084,7 @@ local function draw_preferences_tab(ctx, settings)
       reaper.ImGui_SetTooltip(ctx, item.tip)
     end
   end
+
 end
 
 -- Draw Help tab content

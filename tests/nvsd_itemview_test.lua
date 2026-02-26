@@ -426,7 +426,7 @@ function TestNVSDItemView:test_default_shortcuts_complete()
         "set_start_marker", "set_end_marker", "set_fade_in", "set_fade_out",
         "zoom_to_markers", "unzoom_all", "toggle_cue_markers", "toggle_ghost_markers",
         "show_in_explorer", "quantize_transients", "insert_warp_marker", "add_transient",
-        "preview_from_start",
+        "preview_from_start", "scroll_zoom", "scroll_vzoom",
     }
 
     for _, name in ipairs(expected_names) do
@@ -1038,4 +1038,65 @@ function TestNVSDItemView:test_cbez_y_boundary_clamp()
     -- t <= 0 returns by1, t >= 1 returns by4
     lu.assertEquals(cbez_y(0, 0.3, 0.5, 0.5, 0.5, 0.5, 1, 0.9, -1), 0.3)
     lu.assertEquals(cbez_y(0, 0.3, 0.5, 0.5, 0.5, 0.5, 1, 0.9, 2), 0.9)
+end
+
+-- Test scroll_zoom and scroll_vzoom default shortcuts
+function TestNVSDItemView:test_scroll_zoom_defaults()
+    local sz = settings.DEFAULT_SHORTCUTS.scroll_zoom
+    lu.assertNotNil(sz)
+    lu.assertEquals(sz.key, "Scroll")
+    lu.assertTrue(sz.ctrl)
+    lu.assertFalse(sz.shift)
+    lu.assertFalse(sz.alt)
+
+    local sv = settings.DEFAULT_SHORTCUTS.scroll_vzoom
+    lu.assertNotNil(sv)
+    lu.assertEquals(sv.key, "Scroll")
+    lu.assertTrue(sv.ctrl)
+    lu.assertTrue(sv.shift)
+    lu.assertFalse(sv.alt)
+end
+
+-- Test check_scroll_modifiers helper
+function TestNVSDItemView:test_check_scroll_modifiers()
+    -- Save originals
+    local orig_zoom = settings.current.shortcuts.scroll_zoom
+    local orig_vzoom = settings.current.shortcuts.scroll_vzoom
+
+    -- Ctrl+Scroll (default)
+    settings.current.shortcuts.scroll_zoom = {ctrl = true, shift = false, alt = false, key = "Scroll"}
+    lu.assertTrue(settings.check_scroll_modifiers("scroll_zoom", true, false, false))
+    lu.assertFalse(settings.check_scroll_modifiers("scroll_zoom", false, false, false))
+    lu.assertFalse(settings.check_scroll_modifiers("scroll_zoom", true, true, false))
+
+    -- Alt+Scroll
+    settings.current.shortcuts.scroll_zoom = {ctrl = false, shift = false, alt = true, key = "Scroll"}
+    lu.assertTrue(settings.check_scroll_modifiers("scroll_zoom", false, false, true))
+    lu.assertFalse(settings.check_scroll_modifiers("scroll_zoom", true, false, false))
+
+    -- Scroll (no modifier)
+    settings.current.shortcuts.scroll_zoom = {ctrl = false, shift = false, alt = false, key = "Scroll"}
+    lu.assertTrue(settings.check_scroll_modifiers("scroll_zoom", false, false, false))
+    lu.assertFalse(settings.check_scroll_modifiers("scroll_zoom", true, false, false))
+
+    -- Unbound (key="")
+    settings.current.shortcuts.scroll_zoom = {ctrl = false, shift = false, alt = false, key = ""}
+    lu.assertFalse(settings.check_scroll_modifiers("scroll_zoom", false, false, false))
+
+    -- Ctrl+Shift+Scroll (vzoom)
+    settings.current.shortcuts.scroll_vzoom = {ctrl = true, shift = true, alt = false, key = "Scroll"}
+    lu.assertTrue(settings.check_scroll_modifiers("scroll_vzoom", true, true, false))
+    lu.assertFalse(settings.check_scroll_modifiers("scroll_vzoom", true, false, false))
+
+    -- Restore
+    settings.current.shortcuts.scroll_zoom = orig_zoom
+    settings.current.shortcuts.scroll_vzoom = orig_vzoom
+end
+
+-- Test format_shortcut with Scroll key
+function TestNVSDItemView:test_format_shortcut_scroll()
+    lu.assertEquals(settings.format_shortcut({ctrl = true, shift = false, alt = false, key = "Scroll"}), "Ctrl+Scroll")
+    lu.assertEquals(settings.format_shortcut({ctrl = true, shift = true, alt = false, key = "Scroll"}), "Ctrl+Shift+Scroll")
+    lu.assertEquals(settings.format_shortcut({ctrl = false, shift = false, alt = true, key = "Scroll"}), "Alt+Scroll")
+    lu.assertEquals(settings.format_shortcut({ctrl = false, shift = false, alt = false, key = "Scroll"}), "Scroll")
 end

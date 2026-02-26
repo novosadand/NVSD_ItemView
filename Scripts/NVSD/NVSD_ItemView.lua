@@ -375,10 +375,14 @@ local function loop()
     -- When a popup modal is open, suppress waveform mouse interaction so popup gets full input
     if text_input_active then reaper_is_active = false end
 
-    -- Auto-focus window when hovered with Ctrl held (enables scroll-to-zoom without clicking first)
+    -- Auto-focus window when hovered with scroll-zoom modifier held (enables scroll-to-zoom without clicking first)
     -- Skip when a popup modal is open (SetWindowFocus would steal focus from the popup)
-    local is_hovered = reaper.ImGui_IsWindowHovered(ctx, reaper.ImGui_HoveredFlags_ChildWindows())
-    if reaper_is_active and is_hovered and ctrl_held and not text_input_active
+    -- Requires at least one modifier held to avoid stealing focus on every hover
+    if reaper_is_active and not text_input_active
+        and (ctrl_held or alt_held or shift_held)
+        and reaper.ImGui_IsWindowHovered(ctx, reaper.ImGui_HoveredFlags_ChildWindows())
+        and (settings.check_scroll_modifiers("scroll_zoom", ctrl_held, shift_held, alt_held)
+          or settings.check_scroll_modifiers("scroll_vzoom", ctrl_held, shift_held, alt_held))
         and not reaper.ImGui_IsWindowFocused(ctx) then
       reaper.ImGui_SetWindowFocus(ctx)
     end
@@ -2938,7 +2942,7 @@ local function loop()
             elseif not state.envelopes_visible and mouse_in_waveform
                 and not near_start and not near_end
                 and not near_fade_in and not near_fade_out then
-              drawing.tooltip(ctx, "waveform", "Ctrl+scroll: zoom\nMiddle-drag: pan")
+              drawing.tooltip(ctx, "waveform", settings.format_shortcut_by_name("scroll_zoom") .. ": zoom\nMiddle-drag: pan")
             end
           end
 
@@ -3190,10 +3194,10 @@ local function loop()
             state.pan_offset = math.max(min_pan, math.min(max_pan, state.pan_offset))
           end
 
-          -- Ctrl+mouse wheel zoom / pitch vertical scroll
+          -- Mouse wheel zoom / pitch vertical scroll
           local wheel = reaper.ImGui_GetMouseWheel(ctx)
           if wheel ~= 0 and mouse_in_view then
-            if ctrl_held and shift_held then
+            if settings.check_scroll_modifiers("scroll_vzoom", ctrl_held, shift_held, alt_held) then
               -- Vertical waveform zoom (display-only, debounced undo)
               if not state.wf_zoom_scroll_anchor then
                 state.wf_zoom_scroll_anchor = state.waveform_zoom
@@ -3204,7 +3208,7 @@ local function loop()
                 and (state.waveform_zoom * wf_zoom_factor)
                 or (state.waveform_zoom / wf_zoom_factor)
               state.waveform_zoom = math.max(0.1, math.min(20, new_wf_zoom))
-            elseif ctrl_held then
+            elseif settings.check_scroll_modifiers("scroll_zoom", ctrl_held, shift_held, alt_held) then
               local zoom_factor = 1.3
               local new_zoom = wheel > 0 and (state.zoom_level * zoom_factor) or (state.zoom_level / zoom_factor)
               zoom_to_cursor(new_zoom, mouse_x)
