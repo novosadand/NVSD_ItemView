@@ -41,6 +41,7 @@ settings.DEFAULT_SHORTCUTS = {
   insert_warp_marker = {ctrl = true, shift = false, alt = false, key = "I"},
   add_transient = {ctrl = true, shift = true, alt = false, key = "I"},
   preview_from_start = {ctrl = false, shift = false, alt = false, key = "Enter"},
+  toggle_auto_fit = {ctrl = false, shift = false, alt = false, key = "A"},
   scroll_zoom = {ctrl = true, shift = false, alt = false, key = "Scroll"},
   scroll_vzoom = {ctrl = true, shift = true, alt = false, key = "Scroll"},
 }
@@ -670,6 +671,7 @@ settings.DEFAULT_DEFAULTS = {
   auto_show_envelopes = true,
   envelope_lock = false,
   env_snap_enabled = true,
+  auto_fit_markers = false,
 }
 
 -- Default layout visibility (which UI panels are shown)

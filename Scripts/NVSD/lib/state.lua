@@ -294,6 +294,9 @@ state.cached_cue_markers = nil       -- Cached cue marker data: {{time=, name=},
 state.cached_cue_source = nil        -- Source pointer for which cue markers were loaded
 state.cue_label_hovered = false      -- cue marker label is being hovered
 
+-- Auto-fit zoom to markers on item selection
+state.auto_fit_markers = false
+
 -- Ghost marker state (other selected items' regions)
 state.show_ghost_markers = true
 state.ghost_marker_regions = nil       -- {{src_start, src_end}, ...}
@@ -613,6 +616,7 @@ function state.apply_defaults(s)
   state.show_ghost_markers = d.show_ghost_markers
   state.envelope_lock = d.envelope_lock
   state.env_snap_enabled = d.env_snap_enabled
+  state.auto_fit_markers = d.auto_fit_markers
   -- envelopes_visible is handled per-item-switch, not here
 end
 

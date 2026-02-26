@@ -2905,6 +2905,47 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
     drawing.tooltip(ctx, "shaped_waveform_btn", "Shaped waveform: fades, volume and pan envelopes")
   end
 
+  -- Auto-fit to markers toggle button (to the right of shaped waveform button)
+  local fit_btn_w = 22
+  local fit_gap = 3
+  local fit_btn_x = shape_btn_x + shape_btn_w + fit_gap
+  local fit_btn_y = btn_y
+  local fit_btn_h = btn_h
+  local mouse_in_fit = mouse_x >= fit_btn_x and mouse_x <= fit_btn_x + fit_btn_w
+                        and mouse_y >= fit_btn_y and mouse_y <= fit_btn_y + fit_btn_h
+  local fit_active = state.auto_fit_markers
+  local fit_bg = fit_active and config.COLOR_BTN_ON or (mouse_in_fit and 0x505050FF or 0x303030FF)
+  local fit_border = fit_active and config.COLOR_BTN_ON or 0x555555FF
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, fit_btn_x, fit_btn_y,
+      fit_btn_x + fit_btn_w, fit_btn_y + fit_btn_h, fit_bg, 2)
+  reaper.ImGui_DrawList_AddRect(draw_list, fit_btn_x, fit_btn_y,
+      fit_btn_x + fit_btn_w, fit_btn_y + fit_btn_h, fit_border, 2)
+
+  -- Draw fit-to-markers icon: two inward-pointing arrows  >|<
+  local fcx = fit_btn_x + fit_btn_w / 2
+  local fcy = fit_btn_y + fit_btn_h / 2
+  local fit_color = fit_active and 0x202020FF or 0xCCCCCCFF
+  -- Left arrow >
+  reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
+    fcx - 6, fcy - 4, fcx - 6, fcy + 4, fcx - 2, fcy, fit_color)
+  -- Right arrow <
+  reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
+    fcx + 6, fcy - 4, fcx + 6, fcy + 4, fcx + 2, fcy, fit_color)
+
+  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_fit then
+    state.auto_fit_markers = not state.auto_fit_markers
+  end
+  if mouse_in_fit then
+    local fit_tip = "Autozoom: fit view to markers on item selection"
+    if settings then
+      local sc = settings.current.shortcuts.toggle_auto_fit
+      if sc and sc.key ~= "" then
+        fit_tip = fit_tip .. " (" .. settings.format_shortcut(sc) .. ")"
+      end
+    end
+    drawing.tooltip(ctx, "auto_fit_btn", fit_tip)
+  end
+
 end
 
 -- Draw envelope dropdown menu (called AFTER overlay so it renders on top)

@@ -45,6 +45,7 @@ local EDITABLE_SHORTCUTS = {
   {name = "clear", label = "Clear pitch/speed/WARP"},
   {name = "insert_warp_marker", label = "Insert warp marker at cursor"},
   {name = "add_transient", label = "Insert transient at cursor"},
+  {name = "toggle_auto_fit", label = "Toggle Autozoom"},
   {name = "scroll_zoom", label = "Scroll zoom (horizontal)"},
   {name = "scroll_vzoom", label = "Scroll zoom (vertical)"},
 }
@@ -1741,6 +1742,7 @@ local HELP_SECTIONS = {
       {key = "F", desc = "Fit zoom to source"},
       {key = "Z", desc = "Zoom to selection/markers (toggle)"},
       {key = "Alt+Z", desc = "Zoom out to full source"},
+      {key = "A", desc = "Toggle Autozoom (fit view to markers on item select)"},
       "",
       {key = "Click", desc = "Place preview cursor"},
       {key = "Double-click", desc = "Slide both markers to cursor"},
@@ -2033,6 +2035,7 @@ local DEFAULTS_ITEMS = {
   {key = "auto_show_envelopes", label = "Auto-show envelopes",   tip = "Show envelope overlay when an item has volume, pitch, or pan envelopes"},
   {key = "envelope_lock",       label = "Lock envelopes",        tip = "Prevent envelope points from moving when dragging item markers"},
   {key = "env_snap_enabled",    label = "Snap envelope to grid", tip = "Snap pitch envelope points to semitone values"},
+  {key = "auto_fit_markers",    label = "Autozoom",               tip = "Zoom to fit between start/end markers when selecting an item"},
 }
 
 -- Layout items: which UI panels can be hidden

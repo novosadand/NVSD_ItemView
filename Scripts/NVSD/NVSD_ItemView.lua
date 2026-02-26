@@ -486,6 +486,11 @@ local function loop()
       state.show_ghost_markers = not state.show_ghost_markers
     end
 
+    -- Toggle Autozoom (configurable shortcut, default A)
+    if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "toggle_auto_fit") then
+      state.auto_fit_markers = not state.auto_fit_markers
+    end
+
     -- Open settings (configurable shortcut, default S)
     if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "open_settings") then
       if not settings_ui.is_open() then settings_ui.open(settings) end
@@ -1119,7 +1124,7 @@ local function loop()
             end
           end
 
-          local waveform_height = math.max(50, avail_h - (config.WAVEFORM_MARGIN_V * 2) - state.info_bar_height - config.RULER_HEIGHT - warp_bar_height - config.TIME_RULER_HEIGHT - envelope_bar_height - state.strip_h)
+          local waveform_height = math.max(50, avail_h - config.WAVEFORM_MARGIN_V - state.info_bar_height - config.RULER_HEIGHT - warp_bar_height - config.TIME_RULER_HEIGHT - envelope_bar_height - state.strip_h)
           local panel_height = state.strip_h + state.info_bar_height + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height
 
           local two_col_panel = panel_height < 270
@@ -1134,7 +1139,7 @@ local function loop()
           local effective_fx_col = (layout.show_fx and state.needs_fx_col) and config.LEFT_COLUMN_WIDTH or 0
           local total_left_width = effective_left_col + effective_fx_col + effective_panel_width
           local pitch_gutter = state.envelopes_visible and config.PITCH_LABEL_WIDTH or 0
-          local waveform_width = math.max(100, avail_w - (config.WAVEFORM_MARGIN_H * 2) - total_left_width - pitch_gutter)
+          local waveform_width = math.max(100, avail_w - config.WAVEFORM_MARGIN_LEFT - config.WAVEFORM_MARGIN_RIGHT - total_left_width - pitch_gutter)
 
           local cursor_x, cursor_y = reaper.ImGui_GetCursorScreenPos(ctx)
 
@@ -1148,7 +1153,7 @@ local function loop()
           local left_col_y = cursor_y + state.strip_h + config.WAVEFORM_MARGIN_V
           local panel_x = left_col_x + effective_left_col + effective_fx_col
           local panel_y = cursor_y + state.strip_h + config.WAVEFORM_MARGIN_V
-          local wave_x = cursor_x + total_left_width + config.WAVEFORM_MARGIN_H + pitch_gutter
+          local wave_x = cursor_x + total_left_width + config.WAVEFORM_MARGIN_LEFT + pitch_gutter
           local info_bar_y = cursor_y + state.strip_h + config.WAVEFORM_MARGIN_V
           local ruler_y = info_bar_y + state.info_bar_height
           local warp_bar_y = ruler_y + config.RULER_HEIGHT
@@ -1157,7 +1162,7 @@ local function loop()
           local envelope_bar_y = time_ruler_y + config.TIME_RULER_HEIGHT
 
           -- Reserve the full area
-          local total_height = state.strip_h + config.WAVEFORM_MARGIN_V + state.info_bar_height + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height + config.WAVEFORM_MARGIN_V
+          local total_height = state.strip_h + config.WAVEFORM_MARGIN_V + state.info_bar_height + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height
           reaper.ImGui_InvisibleButton(ctx, "waveform_area", avail_w, math.max(avail_h, total_height))
 
           local mouse_x, mouse_y = reaper.ImGui_GetMousePos(ctx)
@@ -1396,7 +1401,9 @@ local function loop()
 
           -- Reset zoom and pan when item changes - show full source
           -- Skip when REAPER is unfocused to prevent view jumping on alt-tab
+          state.item_just_changed = false
           if reaper_is_active and (item ~= state.last_zoomed_item or item ~= state.last_panned_item) then
+            state.item_just_changed = true
             state.zoom_level = 1.0
             state.pan_offset = 0
             state.last_panned_item = item
@@ -1429,6 +1436,14 @@ local function loop()
           end
           state.prev_ext_start = ext_start
           state.prev_ext_end = ext_end
+
+          -- Autozoom: fit view to markers when item changes (if enabled)
+          if state.item_just_changed and state.auto_fit_markers and source_item_length > 0 then
+            local so = start_offset
+            if source_length > 0 and state.is_loop_src and so >= source_length then so = so % source_length end
+            state.zoom_level = math.min(500.0, ext_length / source_item_length)
+            state.pan_offset = (so + source_item_length / 2) - (ext_start + ext_end) / 2
+          end
 
           -- Zoom (Z): toggle. New selection/markers zooms in, same target or no selection restores.
           if reaper_is_active and settings.check_shortcut(ctx, "zoom_to_markers") then

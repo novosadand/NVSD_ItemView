@@ -8,8 +8,9 @@ config.settings = nil
 
 -- Layout dimensions
 config.MARKER_WIDTH = 12
-config.WINDOW_PADDING = 2
-config.WAVEFORM_MARGIN_H = 12
+config.WINDOW_PADDING = 0
+config.WAVEFORM_MARGIN_LEFT = 0
+config.WAVEFORM_MARGIN_RIGHT = 12
 config.WAVEFORM_MARGIN_V = 2
 config.COLOR_STRIP_HEIGHT = 4
 config.INFO_BAR_HEIGHT = 18

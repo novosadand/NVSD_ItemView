@@ -426,7 +426,7 @@ function TestNVSDItemView:test_default_shortcuts_complete()
         "set_start_marker", "set_end_marker", "set_fade_in", "set_fade_out",
         "zoom_to_markers", "unzoom_all", "toggle_cue_markers", "toggle_ghost_markers",
         "show_in_explorer", "quantize_transients", "insert_warp_marker", "add_transient",
-        "preview_from_start", "scroll_zoom", "scroll_vzoom",
+        "preview_from_start", "toggle_auto_fit", "scroll_zoom", "scroll_vzoom",
     }
 
     for _, name in ipairs(expected_names) do
