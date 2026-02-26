@@ -831,22 +831,19 @@ local function snap_to_grid(project_time)
   return reaper.SnapToGrid(0, project_time)
 end
 
--- Add stretch markers at transient positions, quantized to nearest grid
--- Optional range_start/range_end in SOURCE time to limit to a region
--- Optional warp_map/playrate for correct pos computation in warped view
+-- Add stretch markers at transient positions (one per transient, no pre-snapping).
+-- Optional range_start/range_end in SOURCE time to limit to a region.
+-- Optional warp_map/playrate for correct pos computation in warped view.
+-- Snapping to grid is handled separately by quantize_warp_markers_ex.
 function utils.add_markers_at_transients(take, transients, range_start, range_end, warp_map, playrate)
-  local item = reaper.GetMediaItemTake_Item(take)
-  local item_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
   local sm_count = reaper.GetTakeNumStretchMarkers(take)
-  -- Build list of existing srcpos for fast lookup
+  -- Build list of existing srcpos for fast duplicate check
   local existing = {}
   for i = 0, sm_count - 1 do
     local _, _, srcpos = reaper.GetTakeStretchMarker(take, i)
     existing[#existing + 1] = srcpos
   end
-  -- First pass: compute snap destination for each candidate and pick the closest
-  -- transient per grid point (avoids multiple markers at the same position)
-  local grid_best = {}  -- snapped_pos -> {srcpos, pos, dist}
+  local count = 0
   for _, srcpos in ipairs(transients) do
     if (not range_start or srcpos >= range_start) and (not range_end or srcpos <= range_end) then
       local has = false
@@ -855,20 +852,10 @@ function utils.add_markers_at_transients(take, transients, range_start, range_en
       end
       if not has then
         local pos = warp_map and utils.warp_src_to_pos(warp_map, srcpos, playrate or 1) or srcpos
-        local snapped = snap_to_grid(item_pos + pos) - item_pos
-        local dist = math.abs(pos - snapped)
-        local key = string.format("%.8f", snapped)
-        if not grid_best[key] or dist < grid_best[key].dist then
-          grid_best[key] = {srcpos = srcpos, pos = snapped, dist = dist}
-        end
+        reaper.SetTakeStretchMarker(take, -1, pos, srcpos)
+        count = count + 1
       end
     end
-  end
-  -- Second pass: create markers (one per grid point)
-  local count = 0
-  for _, entry in pairs(grid_best) do
-    reaper.SetTakeStretchMarker(take, -1, entry.pos, entry.srcpos)
-    count = count + 1
   end
   return count
 end
@@ -900,6 +887,160 @@ function utils.quantize_warp_markers(take)
   end
   if moved > 0 then
     -- Delete all and re-add with snapped positions
+    reaper.DeleteTakeStretchMarkers(take, 0, sm_count)
+    for _, m in ipairs(markers) do
+      reaper.SetTakeStretchMarker(take, -1, m.pos, m.srcpos)
+    end
+  end
+  return moved
+end
+
+-- Look up the QN value for a fixed grid division id (e.g. "1/8" -> 0.5).
+-- Returns nil if not found.
+function utils.get_fixed_grid_qn(division_id, config)
+  for _, opt in ipairs(config.GRID_FIXED_OPTIONS) do
+    if opt.id == division_id then return opt.qn end
+  end
+  return nil
+end
+
+-- Get the effective grid division in QN for the current settings.
+-- For adaptive mode, requires view_length_qn and waveform_width_px.
+function utils.get_effective_grid_qn(grid_settings, config, view_length_qn, waveform_width_px)
+  if grid_settings.mode == "adaptive" then
+    return utils.get_adaptive_grid_qn(grid_settings.adaptive, config, view_length_qn, waveform_width_px)
+  else
+    return utils.get_fixed_grid_qn(grid_settings.fixed, config) or 0.5
+  end
+end
+
+-- For adaptive grid, pick the finest division whose lines are at least
+-- target_px pixels apart (like Ableton's adaptive grid algorithm).
+-- Options are sorted coarsest-first (32, 16, 8, 4, 2, 1, 0.5, 0.25, 0.125).
+function utils.get_adaptive_grid_qn(level_id, config, view_length_qn, waveform_width_px)
+  local target_px = 60  -- default (medium)
+  for _, lvl in ipairs(config.GRID_ADAPTIVE_LEVELS) do
+    if lvl.id == level_id then target_px = lvl.target_px; break end
+  end
+  if waveform_width_px <= 0 or view_length_qn <= 0 then return 1 end
+  local px_per_qn = waveform_width_px / view_length_qn
+  -- Walk from finest to coarsest, pick the finest that meets the spacing threshold
+  local opts = config.GRID_FIXED_OPTIONS
+  local best_qn = opts[1].qn  -- fallback to coarsest
+  for i = #opts, 1, -1 do
+    local spacing = opts[i].qn * px_per_qn
+    if spacing >= target_px then
+      best_qn = opts[i].qn
+      break
+    end
+  end
+  return best_qn
+end
+
+-- Step grid narrower (direction=-1) or wider (direction=+1).
+-- In fixed mode: steps through GRID_FIXED_OPTIONS. In adaptive mode: steps through GRID_ADAPTIVE_LEVELS.
+function utils.step_grid(settings, config, direction)
+  local grid = settings.current.grid
+  if grid.mode == "fixed" then
+    local opts = config.GRID_FIXED_OPTIONS
+    local cur_idx = 1
+    for i, opt in ipairs(opts) do
+      if opt.id == grid.fixed then cur_idx = i; break end
+    end
+    -- Narrower = smaller QN = higher index, Wider = larger QN = lower index
+    local new_idx = math.max(1, math.min(#opts, cur_idx - direction))
+    settings.current.grid.fixed = opts[new_idx].id
+    settings.save_grid("fixed")
+  else
+    local lvls = config.GRID_ADAPTIVE_LEVELS
+    local cur_idx = 1
+    for i, lvl in ipairs(lvls) do
+      if lvl.id == grid.adaptive then cur_idx = i; break end
+    end
+    -- Narrower = smaller target_px = higher index, Wider = larger target_px = lower index
+    local new_idx = math.max(1, math.min(#lvls, cur_idx - direction))
+    settings.current.grid.adaptive = lvls[new_idx].id
+    settings.save_grid("adaptive")
+  end
+end
+
+-- Snap a project time to the nearest grid line at a given QN division.
+-- If triplet is true, the division is multiplied by 2/3.
+function utils.snap_to_division(project_time, division_qn, triplet)
+  local div = triplet and (division_qn * 2 / 3) or division_qn
+  local qn = reaper.TimeMap2_timeToQN(0, project_time)
+  local snapped_qn = math.floor(qn / div + 0.5) * div
+  return reaper.TimeMap2_QNToTime(0, snapped_qn)
+end
+
+-- Snap to compound division (straight + triplet, e.g. 1/8 + 1/8T).
+-- Snaps to whichever grid line is nearest.
+function utils.snap_to_compound_division(project_time, division_qn)
+  local straight = utils.snap_to_division(project_time, division_qn, false)
+  local triplet = utils.snap_to_division(project_time, division_qn, true)
+  if math.abs(straight - project_time) <= math.abs(triplet - project_time) then
+    return straight
+  end
+  return triplet
+end
+
+-- Resolve quantize panel grid selection to a snap function.
+-- Returns a function(project_time) -> snapped_time
+function utils.get_quantize_snap_fn(quantize_settings, grid_settings, config, view_length_qn, waveform_width_px)
+  local qgrid = quantize_settings.grid
+  local triplet = grid_settings.triplet
+
+  -- "grid" = use info bar grid setting
+  local division_qn
+  if qgrid == "grid" then
+    division_qn = utils.get_effective_grid_qn(grid_settings, config, view_length_qn, waveform_width_px)
+  else
+    division_qn = utils.get_fixed_grid_qn(qgrid, config) or 0.5
+  end
+
+  -- Check for compound triplet mode (quantize panel buttons like "1/8+1/8T")
+  local is_compound = qgrid:find("+") ~= nil
+  if is_compound then
+    -- Extract base division: "1/8+1/8T" -> "1/8"
+    local base = qgrid:match("^([^+]+)")
+    division_qn = utils.get_fixed_grid_qn(base, config) or 0.5
+    return function(t) return utils.snap_to_compound_division(t, division_qn) end
+  end
+
+  if triplet and qgrid ~= "grid" then
+    return function(t) return utils.snap_to_division(t, division_qn, true) end
+  end
+
+  return function(t) return utils.snap_to_division(t, division_qn, false) end
+end
+
+-- Quantize all existing stretch markers using a custom snap function and amount.
+-- snap_fn(project_time) -> snapped_time
+-- amount: 0-100 (0 = no change, 100 = full snap)
+function utils.quantize_warp_markers_ex(take, snap_fn, amount)
+  local item = reaper.GetMediaItemTake_Item(take)
+  local item_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
+  local sm_count = reaper.GetTakeNumStretchMarkers(take)
+  if sm_count == 0 then return 0 end
+  local markers = {}
+  for i = 0, sm_count - 1 do
+    local _, pos, srcpos = reaper.GetTakeStretchMarker(take, i)
+    markers[#markers + 1] = {pos = pos, srcpos = srcpos}
+  end
+  local frac = (amount or 100) / 100
+  local moved = 0
+  for _, m in ipairs(markers) do
+    local project_time = item_pos + m.pos
+    local snapped_time = snap_fn(project_time)
+    local snapped_pos = snapped_time - item_pos
+    -- Apply amount: lerp between original and snapped
+    local new_pos = m.pos + (snapped_pos - m.pos) * frac
+    if math.abs(new_pos - m.pos) > 0.0001 then
+      m.pos = new_pos
+      moved = moved + 1
+    end
+  end
+  if moved > 0 then
     reaper.DeleteTakeStretchMarkers(take, 0, sm_count)
     for _, m in ipairs(markers) do
       reaper.SetTakeStretchMarker(take, -1, m.pos, m.srcpos)

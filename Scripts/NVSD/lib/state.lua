@@ -113,6 +113,13 @@ state.sb_zoom_handle_cumulative = 0
 state.sb_zoom_handle_screen_x = 0  -- Screen X for cursor lock
 state.sb_zoom_handle_screen_y = 0  -- Screen Y for cursor lock
 
+-- Grid dropdown (info bar)
+state.grid_dropdown_open = false
+
+-- Left panel tab ("warp" or "quantize")
+state.left_panel_tab = "warp"
+state.quantize_apply_clicked = false
+
 -- Looped item wrap tracking
 state.prev_raw_start_offset = nil  -- Previous frame's raw start_offset (for wrap detection)
 state.unwrapped_start_offset = nil -- Accumulated unwrapped start_offset
@@ -428,6 +435,7 @@ state.drag_controls = {
   pitch = { active = false, start_y = 0, start_value = 0, fine_held = false },
   semitones = { active = false, start_y = 0, start_value = 0 },
   cents = { active = false, start_y = 0, start_value = 0 },
+  quantize_amount = { active = false, start_y = 0, start_value = 0, fine_held = false },
 }
 
 -- Start a drag operation
@@ -474,6 +482,7 @@ function state.is_any_control_dragging()
   return state.drag_controls.gain.active or state.drag_controls.pan.active
       or state.drag_controls.pitch.active
       or state.drag_controls.semitones.active or state.drag_controls.cents.active
+      or state.drag_controls.quantize_amount.active
 end
 
 -- Get drag delta (in pixels), handling shift modifier for fine control

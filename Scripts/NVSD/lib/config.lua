@@ -55,6 +55,36 @@ config.SCROLLBAR_ZOOM_HANDLE_WIDTH = 8
 config.SCROLLBAR_SCROLL_SPEED = 0.05  -- fraction of view_length per click
 config.SCROLL_HPAN_SPEED = 0.08      -- fraction of view_length per wheel tick
 
+-- Grid system
+config.COLOR_GRID_LINE = 0x44444455         -- subtle grid lines
+config.COLOR_GRID_LINE_BAR = 0x66666677     -- stronger for bar lines
+config.COLOR_GRID_LINE_BEAT = 0x44444466    -- beat lines
+config.COLOR_GRID_ACCENT = 0xE8A020FF       -- orange accent for Grid section header
+config.QUANTIZE_KNOB_RADIUS = 18
+config.TAB_HEIGHT = 18
+
+-- Grid fixed divisions (id, label, quarter-note value)
+config.GRID_FIXED_OPTIONS = {
+  {id = "8bars", label = "8 Bars", qn = 32},
+  {id = "4bars", label = "4 Bars", qn = 16},
+  {id = "2bars", label = "2 Bars", qn = 8},
+  {id = "1bar",  label = "1 Bar",  qn = 4},
+  {id = "1/2",   label = "1/2",    qn = 2},
+  {id = "1/4",   label = "1/4",    qn = 1},
+  {id = "1/8",   label = "1/8",    qn = 0.5},
+  {id = "1/16",  label = "1/16",   qn = 0.25},
+  {id = "1/32",  label = "1/32",   qn = 0.125},
+}
+
+-- Adaptive grid levels (target pixels between grid lines)
+config.GRID_ADAPTIVE_LEVELS = {
+  {id = "widest",    label = "Widest",    target_px = 200},
+  {id = "wide",      label = "Wide",      target_px = 100},
+  {id = "medium",    label = "Medium",    target_px = 60},
+  {id = "narrow",    label = "Narrow",    target_px = 35},
+  {id = "narrowest", label = "Narrowest", target_px = 20},
+}
+
 -- Envelope editor
 config.ENVELOPE_BAR_HEIGHT = 18
 config.COLOR_ENV_LINE = 0x66CCCCFF

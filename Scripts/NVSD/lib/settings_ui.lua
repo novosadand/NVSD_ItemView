@@ -49,6 +49,10 @@ local EDITABLE_SHORTCUTS = {
   {name = "scroll_zoom", label = "Scroll zoom (horizontal)"},
   {name = "scroll_vzoom", label = "Scroll zoom (vertical)"},
   {name = "scroll_hpan", label = "Scroll pan (horizontal)"},
+  {name = "quantize_settings", label = "Open quantize panel"},
+  {name = "narrow_grid", label = "Narrow grid"},
+  {name = "widen_grid", label = "Widen grid"},
+  {name = "triplet_grid", label = "Toggle triplet grid"},
 }
 
 -- Reference shortcuts (not editable)
@@ -1893,6 +1897,15 @@ local HELP_SECTIONS = {
       "- Lock, Snap, Ghost markers, Shaped waveform, Autozoom toggles",
       "- All toggle buttons remember their state across REAPER restarts",
       {key = "Shaped waveform", desc = "Waveform shape follows fades, volume and pan envelopes"},
+      "",
+      "## Grid & Quantize",
+      "- Grid button in info bar: set grid mode (adaptive/fixed) and division",
+      "- Grid lines always visible on waveform based on current grid setting",
+      "- Quantize tab (second tab in left panel): set grid, amount, apply quantization",
+      "- 'Grid' button uses info bar grid, or pick 1/4, 1/8, 1/16, 1/32 overrides",
+      "- Triplets checkbox switches buttons to triplet/compound divisions",
+      "- Amount knob (0-100%): 100% = full snap, lower = partial snap toward grid",
+      "- Apply: creates warp markers from transients and quantizes to selected grid",
       "",
       "## Horizontal scroll",
       "- Shift+Scroll (default) to pan the waveform view left/right",

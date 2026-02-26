@@ -768,11 +768,169 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
     end
   end
 
+  -- Grid button (left of zoom widget)
+  local grid_btn_h = has_toolbar and 30 or 14
+  local grid_settings = settings and settings.current.grid
+  local grid_label = ""
+  if grid_settings then
+    if grid_settings.mode == "adaptive" then
+      for _, lvl in ipairs(config.GRID_ADAPTIVE_LEVELS) do
+        if lvl.id == grid_settings.adaptive then grid_label = lvl.label; break end
+      end
+    else
+      for _, opt in ipairs(config.GRID_FIXED_OPTIONS) do
+        if opt.id == grid_settings.fixed then grid_label = opt.label; break end
+      end
+    end
+    if grid_settings.triplet and grid_label:sub(-1) ~= "T" then
+      grid_label = grid_label .. "T"
+    end
+  end
+  if grid_label == "" then grid_label = "1/8" end
+  grid_label = grid_label .. " \xE2\x96\xBC"  -- ▼
+  local grid_text_w = reaper.ImGui_CalcTextSize(ctx, grid_label)
+  local grid_btn_w = grid_text_w + (has_toolbar and 16 or 10)
+  local grid_btn_x = zoom_btn_x - grid_btn_w - 4
+  local grid_btn_y = y + math.floor((height - grid_btn_h) / 2)
+  local mouse_in_grid_btn = mouse_x >= grid_btn_x and mouse_x <= grid_btn_x + grid_btn_w
+                            and mouse_y >= grid_btn_y and mouse_y <= grid_btn_y + grid_btn_h
+
+  local grid_popup_open = reaper.ImGui_IsPopupOpen(ctx, "grid_dropdown_menu")
+  local grid_text_tw, grid_text_th = reaper.ImGui_CalcTextSize(ctx, grid_label)
+  local grid_tx = grid_btn_x + (grid_btn_w - grid_text_tw) / 2
+  local grid_ty = grid_btn_y + (grid_btn_h - grid_text_th) / 2
+  -- No button background — just text. Subtle highlight on hover/open.
+  local grid_tc = (mouse_in_grid_btn or grid_popup_open) and config.COLOR_BTN_TEXT or config.COLOR_INFO_BAR_TEXT
+  reaper.ImGui_DrawList_AddText(draw_list, grid_tx, grid_ty, grid_tc, grid_label)
+
+  if mouse_in_grid_btn then
+    drawing.tooltip(ctx, "grid_btn", "Grid settings")
+  end
+
+  -- Open grid dropdown popup on click, positioned just below the button
+  if state and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_grid_btn then
+    reaper.ImGui_OpenPopup(ctx, "grid_dropdown_menu")
+    state._grid_popup_x = grid_btn_x
+    state._grid_popup_y = grid_btn_y + grid_btn_h + 2
+  end
+
+  -- Grid dropdown as a proper ImGui popup (renders above all docked windows)
+  reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowPadding(), 8, 6)
+  if state and state._grid_popup_x then
+    reaper.ImGui_SetNextWindowPos(ctx, state._grid_popup_x, state._grid_popup_y)
+    state._grid_popup_x = nil
+  end
+  if state and settings and reaper.ImGui_BeginPopup(ctx, "grid_dropdown_menu") then
+    local TEXT_COL = config.COLOR_INFO_BAR_TEXT
+    local DIM_COL = 0x888888FF
+    local SEL_COL = config.COLOR_MARKER
+    local fmt_sc = settings.format_shortcut_by_name
+
+    -- Snap to Grid toggle (same state as bottom bar snap button)
+    local snap_on = state.env_snap_enabled
+    local snap_label = (snap_on and "\xE2\x9C\x93 " or "   ") .. "Snap to Grid"
+    local snap_sc = fmt_sc("toggle_snap")
+    if snap_on then reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), TEXT_COL)
+    else reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), DIM_COL) end
+    if reaper.ImGui_MenuItem(ctx, snap_label, snap_sc) then
+      settings.toggle_default(state, "env_snap_enabled")
+    end
+    reaper.ImGui_PopStyleColor(ctx)
+
+    reaper.ImGui_Separator(ctx)
+
+    -- Adaptive Grid: label + grid of buttons on same lines
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), DIM_COL)
+    reaper.ImGui_Text(ctx, "Adaptive Grid:")
+    reaper.ImGui_PopStyleColor(ctx)
+    -- Row 1: Widest, Wide, Medium
+    -- Row 2: Narrow, Narrowest
+    local adaptive_rows = {
+      {config.GRID_ADAPTIVE_LEVELS[1], config.GRID_ADAPTIVE_LEVELS[2], config.GRID_ADAPTIVE_LEVELS[3]},
+      {config.GRID_ADAPTIVE_LEVELS[4], config.GRID_ADAPTIVE_LEVELS[5]},
+    }
+    for _, row in ipairs(adaptive_rows) do
+      for ri, lvl in ipairs(row) do
+        if ri > 1 then reaper.ImGui_SameLine(ctx) end
+        local is_sel = grid_settings.mode == "adaptive" and grid_settings.adaptive == lvl.id
+        local tc = is_sel and SEL_COL or TEXT_COL
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), tc)
+        if reaper.ImGui_Selectable(ctx, lvl.label .. "##a_" .. lvl.id, false,
+            reaper.ImGui_SelectableFlags_None(), 70, 0) then
+          settings.current.grid.mode = "adaptive"
+          settings.current.grid.adaptive = lvl.id
+          settings.save_grid("mode"); settings.save_grid("adaptive")
+        end
+        reaper.ImGui_PopStyleColor(ctx)
+      end
+    end
+
+    reaper.ImGui_Separator(ctx)
+
+    -- Fixed Grid: label + grid of buttons
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), DIM_COL)
+    reaper.ImGui_Text(ctx, "Fixed Grid:")
+    reaper.ImGui_PopStyleColor(ctx)
+    -- Row 1: 8 Bars, 4 Bars, 2 Bars, 1 Bar, 1/2
+    -- Row 2: 1/4, 1/8, 1/16, 1/32
+    local fixed_opts = config.GRID_FIXED_OPTIONS
+    local fixed_rows = {
+      {fixed_opts[1], fixed_opts[2], fixed_opts[3], fixed_opts[4], fixed_opts[5]},
+      {fixed_opts[6], fixed_opts[7], fixed_opts[8], fixed_opts[9]},
+    }
+    for _, row in ipairs(fixed_rows) do
+      for ri, opt in ipairs(row) do
+        if ri > 1 then reaper.ImGui_SameLine(ctx) end
+        local is_sel = grid_settings.mode == "fixed" and grid_settings.fixed == opt.id
+        local lbl = opt.label
+        if grid_settings.triplet then lbl = lbl .. "T" end
+        local prefix = is_sel and "\xE2\x9C\x93 " or "  "
+        local tc = is_sel and SEL_COL or TEXT_COL
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), tc)
+        if reaper.ImGui_Selectable(ctx, prefix .. lbl .. "##f_" .. opt.id, false,
+            reaper.ImGui_SelectableFlags_None(), 55, 0) then
+          settings.current.grid.mode = "fixed"
+          settings.current.grid.fixed = opt.id
+          settings.save_grid("mode"); settings.save_grid("fixed")
+        end
+        reaper.ImGui_PopStyleColor(ctx)
+      end
+    end
+
+    reaper.ImGui_Separator(ctx)
+
+    -- Narrow Grid / Widen Grid
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), TEXT_COL)
+    if reaper.ImGui_MenuItem(ctx, "Narrow Grid", fmt_sc("narrow_grid")) then
+      utils.step_grid(settings, config, -1)
+    end
+    if reaper.ImGui_MenuItem(ctx, "Widen Grid", fmt_sc("widen_grid")) then
+      utils.step_grid(settings, config, 1)
+    end
+    reaper.ImGui_PopStyleColor(ctx)
+
+    reaper.ImGui_Separator(ctx)
+
+    -- Triplet Grid toggle
+    local trip_sel = grid_settings.triplet
+    local trip_label = (trip_sel and "\xE2\x9C\x93 " or "   ") .. "Triplet Grid"
+    local trip_tc = trip_sel and SEL_COL or TEXT_COL
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), trip_tc)
+    if reaper.ImGui_MenuItem(ctx, trip_label, fmt_sc("triplet_grid")) then
+      settings.current.grid.triplet = not settings.current.grid.triplet
+      settings.save_grid("triplet")
+    end
+    reaper.ImGui_PopStyleColor(ctx)
+
+    reaper.ImGui_EndPopup(ctx)
+  end
+  reaper.ImGui_PopStyleVar(ctx)
+
   -- Custom toolbar buttons (centered horizontally in the info bar)
   -- Clicked index stored on state.toolbar_clicked to avoid local limit in caller
   if state then state.toolbar_clicked = nil end
   local toolbar_left_edge = x  -- will be updated if buttons are drawn
-  local toolbar_right_edge = zoom_btn_x - 6
+  local toolbar_right_edge = grid_btn_x - 6
 
   if toolbar_buttons and #toolbar_buttons > 0 then
     local tb_btn_h = 30
@@ -1989,6 +2147,40 @@ end
 -- peaks: per-view peaks from get_peaks_for_range (each peak maps to one pixel column)
 -- view_start/view_length: pre-computed visible time range
 -- pixel_step: 1 for full resolution, 2 for half (during REAPER interaction)
+-- Draw quantize grid overlay on the waveform area based on grid settings.
+-- item_pos: project time of item start. view_start/view_length: in item-local time.
+function drawing.draw_quantize_grid(draw_list, x, y, width, height, item_pos,
+                                     view_start, view_length, config, utils, settings)
+  local grid = settings and settings.current and settings.current.grid
+  if not grid or not utils or grid.enabled == false then return end
+
+  -- Calculate view in QN
+  local view_start_time = item_pos + view_start
+  local view_end_time = item_pos + view_start + view_length
+  local view_start_qn = reaper.TimeMap2_timeToQN(0, view_start_time)
+  local view_end_qn = reaper.TimeMap2_timeToQN(0, view_end_time)
+  local view_length_qn = view_end_qn - view_start_qn
+  if view_length_qn <= 0 then return end
+
+  local division_qn = utils.get_effective_grid_qn(grid, config, view_length_qn, width)
+  local triplet = grid.triplet
+  local div = triplet and (division_qn * 2 / 3) or division_qn
+  if div <= 0 then return end
+
+  -- Find first grid line at or before view start
+  local first_qn = math.floor(view_start_qn / div) * div
+  local px_per_qn = width / view_length_qn
+  local color = config.COLOR_GRID_LINE
+
+  -- Draw only at the selected grid division — uniform lines, no bar/beat distinction
+  for qn = first_qn, view_end_qn + div, div do
+    local px = x + (qn - view_start_qn) * px_per_qn
+    if px >= x and px <= x + width then
+      reaper.ImGui_DrawList_AddLine(draw_list, px, y, px, y + height, color, 1)
+    end
+  end
+end
+
 function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offset, source_item_length, source_length, view_start, view_length, ruler_y, visual_gain, is_reversed, num_channels, config, pixel_step, bounds_start, bounds_end, is_loop_src, modulation)
   if not peaks or peaks.count == 0 or source_length <= 0 then return 0, 0 end
 

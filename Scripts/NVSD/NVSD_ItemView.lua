@@ -498,14 +498,12 @@ local function loop()
       if not settings_ui.is_open() then settings_ui.open(settings) end
     end
 
-    -- Escape: clear node selection first, then region selection, then close
+    -- Escape: clear selections (envelope nodes first, then waveform region)
     if not text_input_active and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Escape()) then
       if #state.env_selected_nodes > 0 then
         state.env_selected_nodes = {}
       elseif state.region_selected then
         state.region_selected = false
-      else
-        open = false
       end
     end
 
@@ -1137,7 +1135,7 @@ local function loop()
           if not layout.show_controls then effective_panel_width = 0 end
 
           -- FX column mode: when vertical space is too tight, FX gets its own column
-          local left_col_has_content = layout.show_warp or layout.show_buttons or layout.show_fx
+          local left_col_has_content = layout.show_warp or layout.show_buttons or layout.show_fx or state.left_panel_tab == "quantize"
           local effective_left_col = left_col_has_content and config.LEFT_COLUMN_WIDTH or 0
           local effective_fx_col = (layout.show_fx and state.needs_fx_col) and config.LEFT_COLUMN_WIDTH or 0
           local total_left_width = effective_left_col + effective_fx_col + effective_panel_width
@@ -1588,24 +1586,57 @@ local function loop()
             end
           end
 
+          -- Shared quantize helper (used by Ctrl+U, Apply button, context menu)
+          local function do_quantize_action()
+            if not take then return end
+            state._warp_view_anchor = (ext_start + ext_end) / 2
+            state._warp_keep_view = 3
+            reaper.Undo_BeginBlock()
+            local n = 0
+            if state.transients and #state.transients > 0 then
+              n = utils.add_markers_at_transients(take, state.transients, nil, nil,
+                  is_warped_view and state.warp_map or nil, playrate)
+            end
+            -- Build snap function from current grid + quantize settings
+            -- Approximate view length from ext_length/zoom (view_start/view_length locals not yet computed)
+            local approx_vlen = ext_length / math.max(1, state.zoom_level)
+            local vl_qn_start = reaper.TimeMap2_timeToQN(0, item_position)
+            local vl_qn_end = reaper.TimeMap2_timeToQN(0, item_position + approx_vlen)
+            local snap_fn = utils.get_quantize_snap_fn(
+              settings.current.quantize, settings.current.grid, config,
+              vl_qn_end - vl_qn_start, waveform_width)
+            local q = utils.quantize_warp_markers_ex(take, snap_fn, settings.current.quantize.amount)
+            reaper.UpdateItemInProject(item)
+            reaper.UpdateArrange()
+            reaper.Undo_EndBlock("NVSD_ItemView: Quantize warp markers (+" .. n .. " new, " .. q .. " snapped)", -1)
+            state.warp_markers = utils.get_stretch_markers(take)
+          end
+
           -- Add markers at all transients + quantize all to grid (Ctrl+U)
           if reaper_is_active and settings.check_shortcut(ctx, "quantize_transients") then
-            if take then
-              -- Save view anchor and keep-view flag for mode transition
-              state._warp_view_anchor = (ext_start + ext_end) / 2
-              state._warp_keep_view = 3  -- frames to wait for mode transition
-              reaper.Undo_BeginBlock()
-              local n = 0
-              if #state.transients > 0 then
-                n = utils.add_markers_at_transients(take, state.transients, nil, nil,
-                    is_warped_view and state.warp_map or nil, playrate)
-              end
-              local q = utils.quantize_warp_markers(take)
-              reaper.UpdateItemInProject(item)
-              reaper.UpdateArrange()
-              reaper.Undo_EndBlock("NVSD_ItemView: Quantize warp markers (+" .. n .. " new, " .. q .. " snapped)", -1)
-              state.warp_markers = utils.get_stretch_markers(take)
-            end
+            do_quantize_action()
+          end
+
+          -- Quantize settings shortcut (Ctrl+Shift+U) — switch to quantize tab
+          if reaper_is_active and settings.check_shortcut(ctx, "quantize_settings") then
+            state.left_panel_tab = "quantize"
+          end
+
+          -- Grid shortcuts: narrow, widen, triplet
+          if reaper_is_active and settings.check_shortcut(ctx, "narrow_grid") then
+            utils.step_grid(settings, config, -1)
+          end
+          if reaper_is_active and settings.check_shortcut(ctx, "widen_grid") then
+            utils.step_grid(settings, config, 1)
+          end
+          if reaper_is_active and settings.check_shortcut(ctx, "triplet_grid") then
+            settings.current.grid.triplet = not settings.current.grid.triplet
+            settings.save_grid("triplet")
+          end
+
+          -- Handle quantize Apply button click (set by draw_quantize_panel)
+          if state.quantize_apply_clicked and state.warp_mode then
+            do_quantize_action()
           end
 
           -- Insert warp marker(s) at cursor or selection edges (Ctrl+I)
@@ -1697,7 +1728,11 @@ local function loop()
 
           -- Per-view peak loading: load exactly screen-width peaks for the visible range.
           -- PCM_Source_GetPeaks uses pre-indexed .reapeaks files → <1ms regardless of file size.
-          local pixel_step = user_dragging_in_reaper and 2 or 1
+          -- Only reduce resolution when dragging outside our window (in REAPER arrange),
+          -- not when clicking our own UI controls (which would cause unnecessary peak reloads).
+          local pixel_step = (user_dragging_in_reaper
+              and not reaper.ImGui_IsWindowHovered(ctx, reaper.ImGui_HoveredFlags_ChildWindows()
+                  + reaper.ImGui_HoveredFlags_AllowWhenBlockedByActiveItem())) and 2 or 1
           local num_view_samples = math.max(1, math.floor(waveform_width / pixel_step))
 
           -- Single source of truth: does the ext range extend past source boundaries?
@@ -1840,6 +1875,10 @@ local function loop()
           else
             state.modulation = nil
           end
+          -- Quantize grid overlay (drawn behind waveform)
+          drawing.draw_quantize_grid(draw_list, wave_x, wave_y, waveform_width, waveform_height,
+            item_position, view_start, view_length, config, utils, settings)
+
           local start_px, end_px = drawing.draw_waveform(draw_list, wave_x, wave_y,
             waveform_width, waveform_height,
             state.view_peaks, view_offset, view_item_length, wf_source_len, view_start, view_length, ruler_y, item_vol, wf_reversed, state.view_num_channels, config, pixel_step, state.wf_bounds_start, state.wf_bounds_end, state.is_loop_src, state.modulation)
@@ -2415,50 +2454,65 @@ local function loop()
             end
           end
 
-          -- Left column: buttons + FX (scoped to free register slots)
+          -- Left column: tabs + buttons/quantize + FX (scoped to free register slots)
           if left_col_has_content then
           do
             local bg = config.COLOR_WAVEFORM_BG
             reaper.ImGui_DrawList_AddRectFilled(draw_list, left_col_x, left_col_y,
               left_col_x + config.LEFT_COLUMN_WIDTH - 2, left_col_y + panel_height, bg)
 
-            -- Column 2 position (only when previous frame detected overflow)
-            local c2x = (layout.show_fx and state.needs_fx_col) and (left_col_x + config.LEFT_COLUMN_WIDTH) or nil
-            if c2x then
-              reaper.ImGui_DrawList_AddRectFilled(draw_list, c2x, left_col_y,
-                c2x + config.LEFT_COLUMN_WIDTH - 2, left_col_y + panel_height, bg)
+            -- Draw tabs above content (only when warp/buttons are enabled)
+            local tab_area_h = 0
+            if layout.show_warp or layout.show_buttons then
+              controls.draw_panel_tabs(ctx, draw_list, mouse_x, mouse_y,
+                left_col_x, left_col_y + 6, config, state)
+              tab_area_h = config.TAB_HEIGHT + 6
             end
 
-            -- Draw buttons (may overflow to col 2)
-            local c1b, c2b = controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y,
-              left_col_x, left_col_y, item, take, config, state, utils, drawing, settings,
-              panel_height, c2x)
-
-            -- Update state for next frame: need FX column if buttons + FX don't fit in col 1
-            state.needs_fx_col = layout.show_fx and (left_col_y + panel_height - 14 - c1b) < 50
-
-            -- Draw FX in column 2 (if active) or below buttons in column 1
-            if layout.show_fx then
-            if c2x then
-              local fy = c2b and (c2b + 6) or (left_col_y + 10)
-              local tb = controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
-                c2x + 8, fy, config.LEFT_COLUMN_WIDTH - 16, take, config, state, drawing)
-              local at = tb + 4
-              controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
-                c2x + 4, at, config.LEFT_COLUMN_WIDTH - 10,
-                (left_col_y + panel_height - 4) - at, take, config, state, drawing)
+            if state.left_panel_tab == "quantize" then
+              -- Quantize panel (replaces button panel + FX)
+              controls.draw_quantize_panel(ctx, draw_list, mouse_x, mouse_y,
+                left_col_x, left_col_y + tab_area_h + 4, config, state, utils, drawing, settings)
+              state.needs_fx_col = false
             else
-              local tb = controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
-                left_col_x + 8, c1b + 6, config.LEFT_COLUMN_WIDTH - 16,
-                take, config, state, drawing)
-              local at = tb + 4
-              controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
-                left_col_x + 4, at, config.LEFT_COLUMN_WIDTH - 10,
-                (left_col_y + panel_height - 4) - at, take, config, state, drawing)
-            end
+              -- Column 2 position (only when previous frame detected overflow)
+              local c2x = (layout.show_fx and state.needs_fx_col) and (left_col_x + config.LEFT_COLUMN_WIDTH) or nil
+              if c2x then
+                reaper.ImGui_DrawList_AddRectFilled(draw_list, c2x, left_col_y,
+                  c2x + config.LEFT_COLUMN_WIDTH - 2, left_col_y + panel_height, bg)
+              end
 
-            controls.draw_fx_context_menu(ctx, state)
-            end -- if layout.show_fx
+              -- Draw buttons (may overflow to col 2)
+              local c1b, c2b = controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y,
+                left_col_x, left_col_y + tab_area_h, item, take, config, state, utils, drawing, settings,
+                panel_height - tab_area_h, c2x)
+
+              -- Update state for next frame: need FX column if buttons + FX don't fit in col 1
+              state.needs_fx_col = layout.show_fx and (left_col_y + panel_height - 14 - c1b) < 50
+
+              -- Draw FX in column 2 (if active) or below buttons in column 1
+              if layout.show_fx then
+              if c2x then
+                local fy = c2b and (c2b + 6) or (left_col_y + 10)
+                local tb = controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
+                  c2x + 8, fy, config.LEFT_COLUMN_WIDTH - 16, take, config, state, drawing)
+                local at = tb + 4
+                controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
+                  c2x + 4, at, config.LEFT_COLUMN_WIDTH - 10,
+                  (left_col_y + panel_height - 4) - at, take, config, state, drawing)
+              else
+                local tb = controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
+                  left_col_x + 8, c1b + 6, config.LEFT_COLUMN_WIDTH - 16,
+                  take, config, state, drawing)
+                local at = tb + 4
+                controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
+                  left_col_x + 4, at, config.LEFT_COLUMN_WIDTH - 10,
+                  (left_col_y + panel_height - 4) - at, take, config, state, drawing)
+              end
+
+              controls.draw_fx_context_menu(ctx, state)
+              end -- if layout.show_fx
+            end -- if quantize tab
           end
           else
             state.needs_fx_col = false
@@ -3150,6 +3204,11 @@ local function loop()
 
               reaper.ImGui_Separator(ctx)
             end
+            if reaper.ImGui_MenuItem(ctx, "Quantize settings",
+                settings.format_shortcut_by_name("quantize_settings")) then
+              state.left_panel_tab = "quantize"
+            end
+            reaper.ImGui_Separator(ctx)
             if reaper.ImGui_MenuItem(ctx, "Settings...") then
               settings_ui.open(settings)
             end

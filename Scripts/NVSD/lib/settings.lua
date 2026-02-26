@@ -52,6 +52,10 @@ settings.DEFAULT_SHORTCUTS = {
   scroll_zoom = {ctrl = true, shift = false, alt = false, key = "Scroll"},
   scroll_vzoom = {ctrl = true, shift = true, alt = false, key = "Scroll"},
   scroll_hpan = {ctrl = false, shift = true, alt = false, key = "Scroll"},
+  quantize_settings = {ctrl = true, shift = true, alt = false, key = "U"},
+  narrow_grid = {ctrl = true, shift = false, alt = false, key = "1"},
+  widen_grid = {ctrl = true, shift = false, alt = false, key = "2"},
+  triplet_grid = {ctrl = true, shift = false, alt = false, key = "3"},
 }
 
 -- Map key names to ImGui key getter function names (created once at module load)
@@ -692,6 +696,21 @@ settings.DEFAULT_LAYOUT = {
   show_scrollbar = false,  -- horizontal scrollbar below waveform
 }
 
+-- Default grid settings
+settings.DEFAULT_GRID = {
+  mode = "fixed",        -- "adaptive" or "fixed"
+  adaptive = "medium",   -- adaptive level id
+  fixed = "1/8",         -- fixed division id
+  triplet = false,
+  enabled = true,        -- grid overlay visible
+}
+
+-- Default quantize settings
+settings.DEFAULT_QUANTIZE = {
+  grid = "grid",         -- "grid", "1/4", "1/8", "1/16", "1/32"
+  amount = 100,          -- 0-100 percentage
+}
+
 -- Dirty flag: when true, config.refresh_colors() will run next frame
 settings.colors_dirty = true  -- Start dirty so initial load applies colors
 
@@ -702,6 +721,8 @@ settings.current = {
   toolbar_buttons = {},  -- {label, cmd} entries for custom info bar buttons
   defaults = {},         -- toggle defaults (loaded from DEFAULT_DEFAULTS)
   layout = {},           -- layout visibility (loaded from DEFAULT_LAYOUT)
+  grid = {},             -- grid settings (loaded from DEFAULT_GRID)
+  quantize = {},         -- quantize settings (loaded from DEFAULT_QUANTIZE)
 }
 
 -- Save custom theme colors to ExtState
@@ -941,6 +962,36 @@ function settings.load()
       settings.current.layout[name] = default_val
     end
   end
+
+  -- Load grid settings
+  settings.current.grid = {}
+  for name, default_val in pairs(settings.DEFAULT_GRID) do
+    local saved = reaper.GetExtState(EXT_SECTION, "grid_" .. name)
+    if saved ~= "" then
+      if type(default_val) == "boolean" then
+        settings.current.grid[name] = (saved == "true")
+      else
+        settings.current.grid[name] = saved
+      end
+    else
+      settings.current.grid[name] = default_val
+    end
+  end
+
+  -- Load quantize settings
+  settings.current.quantize = {}
+  for name, default_val in pairs(settings.DEFAULT_QUANTIZE) do
+    local saved = reaper.GetExtState(EXT_SECTION, "quantize_" .. name)
+    if saved ~= "" then
+      if type(default_val) == "number" then
+        settings.current.quantize[name] = tonumber(saved) or default_val
+      else
+        settings.current.quantize[name] = saved
+      end
+    else
+      settings.current.quantize[name] = default_val
+    end
+  end
 end
 
 -- Save a single default toggle to ExtState (avoids full save overhead)
@@ -959,6 +1010,16 @@ end
 -- Save a single layout toggle to ExtState (avoids full save overhead)
 function settings.save_layout(name)
   reaper.SetExtState(EXT_SECTION, "layout_" .. name, tostring(settings.current.layout[name]), true)
+end
+
+-- Save a single grid setting to ExtState
+function settings.save_grid(name)
+  reaper.SetExtState(EXT_SECTION, "grid_" .. name, tostring(settings.current.grid[name]), true)
+end
+
+-- Save a single quantize setting to ExtState
+function settings.save_quantize(name)
+  reaper.SetExtState(EXT_SECTION, "quantize_" .. name, tostring(settings.current.quantize[name]), true)
 end
 
 -- Save settings to ExtState
@@ -982,6 +1043,16 @@ function settings.save()
   -- Save layout visibility
   for name, val in pairs(settings.current.layout) do
     reaper.SetExtState(EXT_SECTION, "layout_" .. name, tostring(val), true)
+  end
+
+  -- Save grid settings
+  for name, val in pairs(settings.current.grid) do
+    reaper.SetExtState(EXT_SECTION, "grid_" .. name, tostring(val), true)
+  end
+
+  -- Save quantize settings
+  for name, val in pairs(settings.current.quantize) do
+    reaper.SetExtState(EXT_SECTION, "quantize_" .. name, tostring(val), true)
   end
 end
 

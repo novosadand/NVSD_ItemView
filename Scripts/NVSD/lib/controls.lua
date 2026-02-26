@@ -340,7 +340,7 @@ end
 
 -- Draw WARP/Reverse/Edit buttons in the left column
 function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take, config, state, utils, drawing, settings, panel_height, col2_x)
-  local btn_height = 24
+  local btn_height = 16
   local btn_margin = 10
   local btn_padding = 8
   local row_y = left_col_y + 10
@@ -1684,6 +1684,231 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   end -- if show_buttons
 
   return col1_end or last_bottom, overflowed and last_bottom or nil
+end
+
+-- Draw two tabs spanning the full column width, split in half
+function controls.draw_panel_tabs(ctx, draw_list, mouse_x, mouse_y, left_col_x, tab_y, config, state)
+  local col_w = config.LEFT_COLUMN_WIDTH - 2  -- match column bg width
+  local tab_h = config.TAB_HEIGHT
+  local half_w = math.floor(col_w / 2)
+  local active = state.left_panel_tab or "warp"
+  local COLOR_ACTIVE_BG = config.COLOR_BTN_OFF       -- slightly highlighted
+  local COLOR_INACTIVE_BG = config.COLOR_WAVEFORM_BG  -- same as column bg
+  local COLOR_HOVER = config.COLOR_BTN_HOVER
+  local COLOR_TEXT = config.COLOR_BTN_TEXT
+  local COLOR_DIM = config.COLOR_INFO_BAR_TEXT
+
+  -- Tab 1: waveform icon (left half)
+  local t1x = left_col_x
+  local in_t1 = mouse_x >= t1x and mouse_x <= t1x + half_w
+                and mouse_y >= tab_y and mouse_y <= tab_y + tab_h
+  local bg1 = active == "warp" and COLOR_ACTIVE_BG or (in_t1 and COLOR_HOVER or COLOR_INACTIVE_BG)
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, t1x, tab_y, t1x + half_w, tab_y + tab_h, bg1)
+  local ic = active == "warp" and COLOR_TEXT or COLOR_DIM
+  local cy1 = tab_y + tab_h / 2
+  local cx1 = t1x + half_w / 2
+  reaper.ImGui_DrawList_AddLine(draw_list, cx1 - 7, cy1, cx1 - 5, cy1 - 4, ic, 1.5)
+  reaper.ImGui_DrawList_AddLine(draw_list, cx1 - 5, cy1 - 4, cx1 - 2, cy1 + 3, ic, 1.5)
+  reaper.ImGui_DrawList_AddLine(draw_list, cx1 - 2, cy1 + 3, cx1 + 2, cy1 - 3, ic, 1.5)
+  reaper.ImGui_DrawList_AddLine(draw_list, cx1 + 2, cy1 - 3, cx1 + 5, cy1 + 4, ic, 1.5)
+  reaper.ImGui_DrawList_AddLine(draw_list, cx1 + 5, cy1 + 4, cx1 + 7, cy1, ic, 1.5)
+
+  -- Tab 2: grid pattern icon (right half)
+  local t2x = t1x + half_w
+  local in_t2 = mouse_x >= t2x and mouse_x <= t2x + (col_w - half_w)
+                and mouse_y >= tab_y and mouse_y <= tab_y + tab_h
+  local bg2 = active == "quantize" and COLOR_ACTIVE_BG or (in_t2 and COLOR_HOVER or COLOR_INACTIVE_BG)
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, t2x, tab_y, t1x + col_w, tab_y + tab_h, bg2)
+  local ic2 = active == "quantize" and COLOR_TEXT or COLOR_DIM
+  local cx2 = t2x + (col_w - half_w) / 2
+  local cy2 = tab_y + tab_h / 2
+  for gx = -1, 1 do
+    for gy = -1, 1 do
+      reaper.ImGui_DrawList_AddCircleFilled(draw_list,
+          cx2 + gx * 4, cy2 + gy * 4, 1.2, ic2, 6)
+    end
+  end
+
+  -- Subtle divider between tabs
+  reaper.ImGui_DrawList_AddLine(draw_list, t2x, tab_y + 2, t2x, tab_y + tab_h - 2, 0x44444488, 1)
+
+  -- Handle clicks
+  if reaper.ImGui_IsMouseClicked(ctx, 0) then
+    if in_t1 then state.left_panel_tab = "warp" end
+    if in_t2 then state.left_panel_tab = "quantize" end
+  end
+end
+
+-- Draw the quantize panel (replaces button panel when quantize tab is active)
+function controls.draw_quantize_panel(ctx, draw_list, mouse_x, mouse_y,
+                                       left_col_x, panel_y, config, state, utils, drawing, settings)
+  local pad = 8
+  local col_w = config.LEFT_COLUMN_WIDTH
+  local px = left_col_x + pad
+  local pw = col_w - pad * 2
+  local cy = panel_y
+  local warp_on = state.warp_mode
+  local DIM = 0x555555FF  -- greyed out text/color
+  local grid = settings.current.grid
+  local quant = settings.current.quantize
+
+  -- "Quantize" title
+  local title_color = warp_on and config.COLOR_INFO_BAR_TEXT or DIM
+  reaper.ImGui_DrawList_AddText(draw_list, px, cy, title_color, "Quantize")
+  cy = cy + 18
+
+  -- Big "Grid" button (full width)
+  local btn_h = 16
+  local is_grid_sel = quant.grid == "grid"
+  local btn_bg = is_grid_sel and (warp_on and config.COLOR_BTN_ON or DIM) or config.COLOR_BTN_OFF
+  local in_grid_btn = warp_on and mouse_x >= px and mouse_x <= px + pw
+                      and mouse_y >= cy and mouse_y <= cy + btn_h
+  if in_grid_btn then btn_bg = config.COLOR_BTN_HOVER end
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, px, cy, px + pw, cy + btn_h, btn_bg, 3)
+  local gbl = "Grid"
+  local gbw = reaper.ImGui_CalcTextSize(ctx, gbl)
+  local gbtc = is_grid_sel and (warp_on and config.COLOR_BTN_TEXT or 0x999999FF) or (warp_on and config.COLOR_INFO_BAR_TEXT or DIM)
+  reaper.ImGui_DrawList_AddText(draw_list, px + (pw - gbw) / 2, cy + 1, gbtc, gbl)
+  if in_grid_btn and reaper.ImGui_IsMouseClicked(ctx, 0) then
+    settings.current.quantize.grid = "grid"
+    settings.save_quantize("grid")
+  end
+  cy = cy + btn_h + 3
+
+  -- 2x2 grid of division buttons
+  local triplet = grid.triplet
+  local btn_labels
+  if triplet then
+    btn_labels = {"1/8T", "1/8+1/8T", "1/16T", "1/16+1/16T"}
+  else
+    btn_labels = {"1/4", "1/8", "1/16", "1/32"}
+  end
+  local half_w = math.floor((pw - 2) / 2)
+  for i = 1, 4 do
+    local row = (i <= 2) and 0 or 1
+    local col = ((i - 1) % 2)
+    local bx = px + col * (half_w + 2)
+    local by = cy + row * (btn_h + 2)
+    local label = btn_labels[i]
+    local is_sel = quant.grid == label
+    local bbg = is_sel and (warp_on and config.COLOR_BTN_ON or DIM) or config.COLOR_BTN_OFF
+    local in_btn = warp_on and mouse_x >= bx and mouse_x <= bx + half_w
+                   and mouse_y >= by and mouse_y <= by + btn_h
+    if in_btn then bbg = config.COLOR_BTN_HOVER end
+    reaper.ImGui_DrawList_AddRectFilled(draw_list, bx, by, bx + half_w, by + btn_h, bbg, 3)
+    local lbl_w = reaper.ImGui_CalcTextSize(ctx, label)
+    local ltc = is_sel and (warp_on and config.COLOR_BTN_TEXT or 0x999999FF) or (warp_on and config.COLOR_INFO_BAR_TEXT or DIM)
+    reaper.ImGui_DrawList_AddText(draw_list, bx + (half_w - lbl_w) / 2, by + 1, ltc, label)
+    if in_btn and reaper.ImGui_IsMouseClicked(ctx, 0) then
+      settings.current.quantize.grid = label
+      settings.save_quantize("grid")
+    end
+  end
+  cy = cy + (btn_h + 2) * 2 + 4
+
+  -- Triplets checkbox (greyed out when "Grid" is selected — info bar grid has its own triplet toggle)
+  local cb_size = 12
+  local trip_relevant = quant.grid ~= "grid"
+  local in_cb = warp_on and mouse_x >= px and mouse_x <= px + cb_size + 60
+                and mouse_y >= cy and mouse_y <= cy + cb_size + 2
+  local cb_border = (warp_on and trip_relevant and (in_cb and config.COLOR_RULER_TEXT or config.COLOR_BTN_OFF) or DIM)
+  reaper.ImGui_DrawList_AddRect(draw_list, px, cy, px + cb_size, cy + cb_size, cb_border)
+  if grid.triplet then
+    reaper.ImGui_DrawList_AddRectFilled(draw_list, px + 2, cy + 2, px + cb_size - 2, cy + cb_size - 2,
+        warp_on and trip_relevant and config.COLOR_MARKER or DIM)
+  end
+  local trip_tc = warp_on and trip_relevant and config.COLOR_INFO_BAR_TEXT or DIM
+  reaper.ImGui_DrawList_AddText(draw_list, px + cb_size + 4, cy - 1, trip_tc, "Triplets")
+  if in_cb and reaper.ImGui_IsMouseClicked(ctx, 0) then
+    settings.current.grid.triplet = not settings.current.grid.triplet
+    settings.save_grid("triplet")
+  end
+  cy = cy + cb_size + 10
+
+  -- Separator above Amount section
+  reaper.ImGui_DrawList_AddLine(draw_list, px, cy, px + pw, cy, 0x44444488, 1)
+  cy = cy + 8
+
+  -- Amount label
+  local amt_tc = warp_on and config.COLOR_INFO_BAR_TEXT or DIM
+  local amt_label = "Amount"
+  local amt_lw = reaper.ImGui_CalcTextSize(ctx, amt_label)
+  reaper.ImGui_DrawList_AddText(draw_list, px + (pw - amt_lw) / 2, cy, amt_tc, amt_label)
+  cy = cy + 16
+
+  -- Amount knob (same angle mapping as pan knob: 0%=full left, 100%=full right)
+  local knob_r = config.QUANTIZE_KNOB_RADIUS
+  local knob_cx = px + pw / 2
+  local knob_cy = cy + knob_r + 4
+  local amount = quant.amount or 100
+  -- Map 0-100 to -1..+1 (same as pan), then use pan_to_angle
+  local amt_pan = (amount / 50) - 1  -- 0%=-1, 50%=0, 100%=+1
+  local amt_angle = utils.pan_to_angle(amt_pan)
+  local knob_dx = mouse_x - knob_cx
+  local knob_dy = mouse_y - knob_cy
+  local knob_dist = math.sqrt(knob_dx * knob_dx + knob_dy * knob_dy)
+  local in_knob = warp_on and knob_dist <= knob_r + 8
+
+  drawing.draw_knob(draw_list, knob_cx, knob_cy, knob_r, amt_angle,
+      in_knob, state.is_dragging("quantize_amount"), nil, nil, config)
+
+  -- Amount percentage text below knob
+  local pct_text = tostring(amount) .. " %"
+  local pct_w = reaper.ImGui_CalcTextSize(ctx, pct_text)
+  reaper.ImGui_DrawList_AddText(draw_list, knob_cx - pct_w / 2, knob_cy + knob_r + 6, amt_tc, pct_text)
+
+  -- Knob interaction (vertical drag)
+  if in_knob and reaper.ImGui_IsMouseDoubleClicked(ctx, 0) then
+    settings.current.quantize.amount = 100
+    settings.save_quantize("amount")
+    state.end_drag("quantize_amount")
+  elseif in_knob and reaper.ImGui_IsMouseClicked(ctx, 0) and not reaper.ImGui_IsMouseDoubleClicked(ctx, 0) then
+    local fine = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
+    state.start_drag("quantize_amount", mouse_y, amount, fine)
+  end
+
+  if state.is_dragging("quantize_amount") then
+    if reaper.ImGui_IsMouseDown(ctx, 0) then
+      local delta = state.get_drag_delta(ctx, "quantize_amount", mouse_y, amount, 0.2)
+      local origin = state.drag_controls.quantize_amount.start_value
+      local new_amt = math.floor(math.max(0, math.min(100, origin + delta / 2)) + 0.5)
+      settings.current.quantize.amount = new_amt
+      settings.save_quantize("amount")
+      reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
+    else
+      state.end_drag("quantize_amount")
+    end
+  end
+
+  if in_knob and not state.is_dragging("quantize_amount") then
+    drawing.tooltip(ctx, "quantize_amount", "Quantize amount\nDouble-click to reset to 100%\nCtrl+drag for fine control")
+  end
+
+  cy = knob_cy + knob_r + 22
+
+  -- Separator below Amount section
+  reaper.ImGui_DrawList_AddLine(draw_list, px, cy, px + pw, cy, 0x44444488, 1)
+  cy = cy + 8
+
+  -- Apply button (bottom right)
+  local apply_w = 60
+  local apply_h = 18
+  local apply_x = px + pw - apply_w
+  local apply_bg = config.COLOR_BTN_OFF
+  local in_apply = warp_on and mouse_x >= apply_x and mouse_x <= apply_x + apply_w
+                   and mouse_y >= cy and mouse_y <= cy + apply_h
+  if in_apply then apply_bg = config.COLOR_BTN_HOVER end
+  if not warp_on then apply_bg = 0x222222FF end
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, apply_x, cy, apply_x + apply_w, cy + apply_h, apply_bg, 3)
+  local apply_lbl = "Apply"
+  local apply_lw = reaper.ImGui_CalcTextSize(ctx, apply_lbl)
+  local apply_tc = warp_on and (in_apply and config.COLOR_BTN_TEXT or config.COLOR_INFO_BAR_TEXT) or DIM
+  reaper.ImGui_DrawList_AddText(draw_list, apply_x + (apply_w - apply_lw) / 2, cy + 2, apply_tc, apply_lbl)
+
+  -- Store apply click for main loop to handle (needs take/item context)
+  state.quantize_apply_clicked = in_apply and reaper.ImGui_IsMouseClicked(ctx, 0)
+
+  return cy + apply_h
 end
 
 -- Draw gain slider with tick marks
