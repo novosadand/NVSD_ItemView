@@ -833,8 +833,10 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
     local fmt_sc = settings.format_shortcut_by_name
 
     -- Snap to Grid toggle (same state as bottom bar snap button)
+    local CHECK = "\xE2\x9C\x93 "
+    local NOCHECK = "   "
     local snap_on = state.env_snap_enabled
-    local snap_label = (snap_on and "\xE2\x9C\x93 " or "   ") .. "Snap to Grid"
+    local snap_label = (snap_on and CHECK or NOCHECK) .. "Snap to Grid"
     local snap_sc = fmt_sc("toggle_snap")
     if snap_on then reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), TEXT_COL)
     else reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), DIM_COL) end
@@ -847,7 +849,7 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
 
     -- Adaptive Grid: label + grid of buttons on same lines
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), DIM_COL)
-    reaper.ImGui_Text(ctx, "Adaptive Grid:")
+    reaper.ImGui_Text(ctx, NOCHECK .. "Adaptive Grid:")
     reaper.ImGui_PopStyleColor(ctx)
     -- Row 1: Widest, Wide, Medium
     -- Row 2: Narrow, Narrowest
@@ -861,7 +863,7 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
         local is_sel = grid_settings.mode == "adaptive" and grid_settings.adaptive == lvl.id
         local tc = is_sel and SEL_COL or TEXT_COL
         reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), tc)
-        if reaper.ImGui_Selectable(ctx, lvl.label .. "##a_" .. lvl.id, false,
+        if reaper.ImGui_Selectable(ctx, NOCHECK .. lvl.label .. "##a_" .. lvl.id, false,
             reaper.ImGui_SelectableFlags_None(), 70, 0) then
           settings.current.grid.mode = "adaptive"
           settings.current.grid.adaptive = lvl.id
@@ -875,7 +877,7 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
 
     -- Fixed Grid: label + grid of buttons
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), DIM_COL)
-    reaper.ImGui_Text(ctx, "Fixed Grid:")
+    reaper.ImGui_Text(ctx, NOCHECK .. "Fixed Grid:")
     reaper.ImGui_PopStyleColor(ctx)
     -- Row 1: 8 Bars, 4 Bars, 2 Bars, 1 Bar, 1/2
     -- Row 2: 1/4, 1/8, 1/16, 1/32
@@ -890,7 +892,7 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
         local is_sel = grid_settings.mode == "fixed" and grid_settings.fixed == opt.id
         local lbl = opt.label
         if grid_settings.triplet then lbl = lbl .. "T" end
-        local prefix = is_sel and "\xE2\x9C\x93 " or "  "
+        local prefix = is_sel and CHECK or NOCHECK
         local tc = is_sel and SEL_COL or TEXT_COL
         reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), tc)
         if reaper.ImGui_Selectable(ctx, prefix .. lbl .. "##f_" .. opt.id, false,
@@ -907,10 +909,10 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
 
     -- Narrow Grid / Widen Grid
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), TEXT_COL)
-    if reaper.ImGui_MenuItem(ctx, "Narrow Grid", fmt_sc("narrow_grid")) then
+    if reaper.ImGui_MenuItem(ctx, NOCHECK .. "Narrow Grid", fmt_sc("narrow_grid")) then
       utils.step_grid(settings, config, -1)
     end
-    if reaper.ImGui_MenuItem(ctx, "Widen Grid", fmt_sc("widen_grid")) then
+    if reaper.ImGui_MenuItem(ctx, NOCHECK .. "Widen Grid", fmt_sc("widen_grid")) then
       utils.step_grid(settings, config, 1)
     end
     reaper.ImGui_PopStyleColor(ctx)
@@ -919,7 +921,7 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
 
     -- Triplet Grid toggle
     local trip_sel = grid_settings.triplet
-    local trip_label = (trip_sel and "\xE2\x9C\x93 " or "   ") .. "Triplet Grid"
+    local trip_label = (trip_sel and CHECK or NOCHECK) .. "Triplet Grid"
     local trip_tc = trip_sel and SEL_COL or TEXT_COL
     reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), trip_tc)
     if reaper.ImGui_MenuItem(ctx, trip_label, fmt_sc("triplet_grid")) then
@@ -2156,15 +2158,20 @@ end
 -- Draw quantize grid overlay on the waveform area based on grid settings.
 -- item_pos: project time of item start. view_start/view_length: in item-local time.
 function drawing.draw_quantize_grid(draw_list, x, y, width, height, item_pos,
-                                     view_start, view_length, config, utils, settings, state)
+                                     view_start, view_length, start_offset, playrate,
+                                     config, utils, settings, state)
   local grid = settings and settings.current and settings.current.grid
   if not grid or not utils or grid.enabled == false then return end
 
+  -- Map view bounds to project time (same mapping as ruler)
+  local p2s = utils.project_to_source_time
+  local s2p = utils.source_to_project_time
+  local project_start = s2p(view_start, item_pos, start_offset, playrate)
+  local project_end = s2p(view_start + view_length, item_pos, start_offset, playrate)
+
   -- Calculate view in QN
-  local view_start_time = item_pos + view_start
-  local view_end_time = item_pos + view_start + view_length
-  local view_start_qn = reaper.TimeMap2_timeToQN(0, view_start_time)
-  local view_end_qn = reaper.TimeMap2_timeToQN(0, view_end_time)
+  local view_start_qn = reaper.TimeMap2_timeToQN(0, project_start)
+  local view_end_qn = reaper.TimeMap2_timeToQN(0, project_end)
   local view_length_qn = view_end_qn - view_start_qn
   if view_length_qn <= 0 then return end
 
@@ -2175,20 +2182,29 @@ function drawing.draw_quantize_grid(draw_list, x, y, width, height, item_pos,
   local div = triplet and (division_qn * 2 / 3) or division_qn
   if div <= 0 then return end
 
+  -- Approximate px spacing for early-out
   local px_per_qn = width / view_length_qn
-  -- Skip drawing if lines would be sub-pixel (invisible and wastes CPU)
   local spacing_px = div * px_per_qn
   if spacing_px < 1 then return end
+
+  -- Source-time to pixel (same coordinate system as ruler)
+  local function time_to_px(t)
+    return x + ((t - view_start) / view_length) * width
+  end
 
   -- Start from the first grid line inside (or just before) the visible area
   local first_qn = math.ceil(view_start_qn / div) * div
   if first_qn - div >= view_start_qn then first_qn = first_qn - div end
   local color = config.COLOR_GRID_LINE
+  local DL_AddLine = reaper.ImGui_DrawList_AddLine
 
   for qn = first_qn, view_end_qn, div do
-    local px = x + (qn - view_start_qn) * px_per_qn
+    -- QN → project time → source time → pixel (matches ruler exactly)
+    local proj_t = reaper.TimeMap2_QNToTime(0, qn)
+    local src_t = p2s(proj_t, item_pos, start_offset, playrate)
+    local px = time_to_px(src_t)
     if px >= x and px <= x + width then
-      reaper.ImGui_DrawList_AddLine(draw_list, px, y, px, y + height, color, 1)
+      DL_AddLine(draw_list, px, y, px, y + height, color, 1)
     end
   end
 end

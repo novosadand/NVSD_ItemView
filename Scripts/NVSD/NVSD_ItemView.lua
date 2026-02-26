@@ -1833,7 +1833,8 @@ local function loop()
           -- Waveform background, then grid lines, then waveform on top
           reaper.ImGui_DrawList_AddRectFilled(draw_list, wave_x, wave_y, wave_x + waveform_width, wave_y + waveform_height, config.COLOR_WAVEFORM_BG)
           drawing.draw_quantize_grid(draw_list, wave_x, wave_y, waveform_width, waveform_height,
-            item_position, view_start, view_length, config, utils, settings, state)
+            item_position, grid_view_start, view_length, grid_offset, grid_playrate,
+            config, utils, settings, state)
 
           -- In warped view: pass ext_end as source_length so draw_waveform doesn't
           -- flag active pixels as looped, and is_reversed=false since warping handles everything

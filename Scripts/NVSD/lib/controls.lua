@@ -1775,22 +1775,17 @@ function controls.draw_quantize_panel(ctx, draw_list, mouse_x, mouse_y,
   end
   cy = cy + btn_h + 3
 
-  -- 2x2 grid of division buttons
+  -- 2x2 grid of division buttons (IDs stay fixed; "T" suffix shown when triplet is on)
   local triplet = grid.triplet
-  local btn_labels
-  if triplet then
-    btn_labels = {"1/8T", "1/8+1/8T", "1/16T", "1/16+1/16T"}
-  else
-    btn_labels = {"1/4", "1/8", "1/16", "1/32"}
-  end
+  local btn_ids = {"1/4", "1/8", "1/16", "1/32"}
   local half_w = math.floor((pw - 2) / 2)
   for i = 1, 4 do
     local row = (i <= 2) and 0 or 1
     local col = ((i - 1) % 2)
     local bx = px + col * (half_w + 2)
     local by = cy + row * (btn_h + 2)
-    local label = btn_labels[i]
-    local is_sel = quant.grid == label
+    local label = triplet and (btn_ids[i] .. "T") or btn_ids[i]
+    local is_sel = quant.grid == btn_ids[i]
     local bbg = is_sel and (warp_on and config.COLOR_BTN_ON or DIM) or config.COLOR_BTN_OFF
     local in_btn = warp_on and mouse_x >= bx and mouse_x <= bx + half_w
                    and mouse_y >= by and mouse_y <= by + btn_h
@@ -1800,7 +1795,7 @@ function controls.draw_quantize_panel(ctx, draw_list, mouse_x, mouse_y,
     local ltc = is_sel and (warp_on and config.COLOR_BTN_TEXT or 0x999999FF) or (warp_on and config.COLOR_INFO_BAR_TEXT or DIM)
     reaper.ImGui_DrawList_AddText(draw_list, bx + (half_w - lbl_w) / 2, by + 1, ltc, label)
     if in_btn and reaper.ImGui_IsMouseClicked(ctx, 0) then
-      settings.current.quantize.grid = label
+      settings.current.quantize.grid = btn_ids[i]
       settings.save_quantize("grid")
     end
   end
