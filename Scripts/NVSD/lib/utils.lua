@@ -560,6 +560,40 @@ function utils.warp_src_to_pos(warp_map, srcpos, playrate)
   return srcpos / (playrate or 1)
 end
 
+-- Compute the neutral pos for a srcpos — i.e., the item-time position where
+-- this source point currently plays, given existing stretch markers.
+-- Adding a marker with this pos/srcpos pair won't shift anything.
+function utils.srcpos_to_neutral_pos(take, srcpos)
+  local item = reaper.GetMediaItemTake_Item(take)
+  local item_len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+  local start_offs = reaper.GetMediaItemTakeInfo_Value(take, "D_STARTOFFS")
+  local sm_count = reaper.GetTakeNumStretchMarkers(take)
+
+  -- Build sorted list of (pos, srcpos) including implicit boundaries
+  local pts = {}
+  pts[1] = {pos = 0, srcpos = start_offs}
+  for i = 0, sm_count - 1 do
+    local _, p, sp = reaper.GetTakeStretchMarker(take, i)
+    pts[#pts + 1] = {pos = p, srcpos = sp}
+  end
+  -- Implicit end: figure out end srcpos from playrate and item length
+  local playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
+  local end_srcpos = start_offs + item_len * playrate
+  pts[#pts + 1] = {pos = item_len, srcpos = end_srcpos}
+  table.sort(pts, function(a, b) return a.srcpos < b.srcpos end)
+
+  -- Find the segment containing srcpos and interpolate
+  for i = 1, #pts - 1 do
+    if srcpos <= pts[i + 1].srcpos or i == #pts - 1 then
+      local ds = pts[i + 1].srcpos - pts[i].srcpos
+      if math.abs(ds) < 0.000001 then return pts[i].pos end
+      local t = (srcpos - pts[i].srcpos) / ds
+      return pts[i].pos + t * (pts[i + 1].pos - pts[i].pos)
+    end
+  end
+  return srcpos / (reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE") or 1)
+end
+
 -- Load peaks with warp mapping applied (pos-space view into source-space peaks)
 function utils.get_peaks_for_range_warped(source, pos_start, pos_length, num_samples, warp_map, playrate, loop_src_len, actual_src_len)
   if not source or pos_length <= 0 or num_samples < 1 then return nil end
@@ -873,8 +907,8 @@ function utils.add_markers_at_transients(take, transients, range_start, range_en
         if math.abs(e - srcpos) < 0.005 then has = true; break end
       end
       if not has then
-        local pos = warp_map and utils.warp_src_to_pos(warp_map, srcpos, playrate or 1) or srcpos
-        reaper.SetTakeStretchMarker(take, -1, pos, srcpos)
+        local pos = utils.srcpos_to_neutral_pos(take, srcpos)
+        reaper.SetTakeStretchMarker(take, -1, pos)
         count = count + 1
       end
     end
@@ -890,28 +924,15 @@ function utils.quantize_warp_markers(take)
   local item_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
   local sm_count = reaper.GetTakeNumStretchMarkers(take)
   if sm_count == 0 then return 0 end
-  -- Collect all markers first
-  local markers = {}
+  local moved = 0
   for i = 0, sm_count - 1 do
     local _, pos, srcpos = reaper.GetTakeStretchMarker(take, i)
-    markers[#markers + 1] = {pos = pos, srcpos = srcpos}
-  end
-  -- Compute snapped positions
-  local moved = 0
-  for _, m in ipairs(markers) do
-    local project_time = item_pos + m.pos
+    local project_time = item_pos + pos
     local snapped_time = snap_to_grid(project_time)
     local snapped_pos = snapped_time - item_pos
-    if math.abs(snapped_pos - m.pos) > 0.0001 then
-      m.pos = snapped_pos
+    if math.abs(snapped_pos - pos) > 0.0001 then
+      reaper.SetTakeStretchMarker(take, i, snapped_pos, srcpos)
       moved = moved + 1
-    end
-  end
-  if moved > 0 then
-    -- Delete all and re-add with snapped positions
-    reaper.DeleteTakeStretchMarkers(take, 0, sm_count)
-    for _, m in ipairs(markers) do
-      reaper.SetTakeStretchMarker(take, -1, m.pos, m.srcpos)
     end
   end
   return moved
@@ -1043,33 +1064,26 @@ end
 -- Quantize all existing stretch markers using a custom snap function and amount.
 -- snap_fn(project_time) -> snapped_time
 -- amount: 0-100 (0 = no change, 100 = full snap)
-function utils.quantize_warp_markers_ex(take, snap_fn, amount)
+function utils.quantize_warp_markers_ex(take, snap_fn, amount, range_start, range_end)
   local item = reaper.GetMediaItemTake_Item(take)
   local item_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
   local sm_count = reaper.GetTakeNumStretchMarkers(take)
   if sm_count == 0 then return 0 end
-  local markers = {}
-  for i = 0, sm_count - 1 do
-    local _, pos, srcpos = reaper.GetTakeStretchMarker(take, i)
-    markers[#markers + 1] = {pos = pos, srcpos = srcpos}
-  end
   local frac = (amount or 100) / 100
   local moved = 0
-  for _, m in ipairs(markers) do
-    local project_time = item_pos + m.pos
-    local snapped_time = snap_fn(project_time)
-    local snapped_pos = snapped_time - item_pos
-    -- Apply amount: lerp between original and snapped
-    local new_pos = m.pos + (snapped_pos - m.pos) * frac
-    if math.abs(new_pos - m.pos) > 0.0001 then
-      m.pos = new_pos
-      moved = moved + 1
-    end
-  end
-  if moved > 0 then
-    reaper.DeleteTakeStretchMarkers(take, 0, sm_count)
-    for _, m in ipairs(markers) do
-      reaper.SetTakeStretchMarker(take, -1, m.pos, m.srcpos)
+  for i = 0, sm_count - 1 do
+    local _, pos, srcpos = reaper.GetTakeStretchMarker(take, i)
+    -- Skip markers outside the optional range (srcpos is in source time)
+    if (not range_start or srcpos >= range_start - 0.001)
+        and (not range_end or srcpos <= range_end + 0.001) then
+      local project_time = item_pos + pos
+      local snapped_time = snap_fn(project_time)
+      local snapped_pos = snapped_time - item_pos
+      local new_pos = pos + (snapped_pos - pos) * frac
+      if math.abs(new_pos - pos) > 0.0001 then
+        reaper.SetTakeStretchMarker(take, i, new_pos, srcpos)
+        moved = moved + 1
+      end
     end
   end
   return moved
@@ -1078,22 +1092,25 @@ end
 -- Insert a single warp marker at a view-time position.
 -- Returns true if a marker was created, false if out of bounds or duplicate.
 function utils.insert_warp_marker_at(take, time, is_warped, warp_map, playrate, source_length)
-  local pos, srcpos
+  local pos
   if is_warped then
     pos = time
-    srcpos = utils.warp_pos_to_src(warp_map, pos, playrate)
   else
-    srcpos = time
-    pos = srcpos
+    -- In source-time view, convert source time to item-time pos
+    pos = utils.srcpos_to_neutral_pos(take, time)
   end
-  if srcpos < 0 or srcpos > source_length then return false end
-  -- Check for existing marker at same position
+  -- Bounds check via srcpos
+  local srcpos_check = is_warped
+      and utils.warp_pos_to_src(warp_map, pos, playrate) or time
+  if srcpos_check < -0.001 or srcpos_check > source_length + 0.001 then return false end
+  -- Check for existing marker near this pos
   local sm_count = reaper.GetTakeNumStretchMarkers(take)
   for i = 0, sm_count - 1 do
-    local _, _, sp = reaper.GetTakeStretchMarker(take, i)
-    if math.abs(sp - srcpos) < 0.005 then return false end
+    local _, ep, _ = reaper.GetTakeStretchMarker(take, i)
+    if math.abs(ep - pos) < 0.001 then return false end
   end
-  reaper.SetTakeStretchMarker(take, -1, pos, srcpos)
+  -- Let REAPER auto-compute srcpos from pos (neutral: no stretching)
+  reaper.SetTakeStretchMarker(take, -1, pos)
   return true
 end
 

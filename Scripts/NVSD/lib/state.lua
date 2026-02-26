@@ -126,8 +126,11 @@ state.unwrapped_start_offset = nil -- Accumulated unwrapped start_offset
 state.is_looped_view = false       -- Whether the view is currently in looped/extended mode
 state.post_drag_ext_start = nil    -- Saved ext_start from drag (persists after release)
 state.post_drag_ext_end = nil      -- Saved ext_end from drag (persists after release)
-state.prev_ext_start = nil         -- Previous frame's ext_start (for external change detection)
-state.prev_ext_end = nil           -- Previous frame's ext_end (for external change detection)
+state._prev_ext_start = nil        -- Previous frame's ext_start (for view stabilization)
+state._prev_ext_end = nil          -- Previous frame's ext_end (for view stabilization)
+state._stab_prev_warped = nil      -- Previous frame's is_warped_view (for coordinate transition)
+state._view_src_start = nil        -- View start in source-space (invariant across coordinate systems)
+state._view_src_end = nil          -- View end in source-space (invariant across coordinate systems)
 
 -- Mouse tracking
 state.was_mouse_down = false
@@ -174,8 +177,6 @@ state.warp_map = nil             -- computed warp map from build_warp_map()
 state.warp_hash = nil            -- hash for cache invalidation of warp view peaks
 state.was_warped_view = false    -- previous frame's warped view state (for transition detection)
 state._freeze_warp = false       -- freeze warp markers/map during marker drag
-state._warp_view_anchor = nil    -- center anchor for preserving view during warp transition
-state._warp_keep_view = nil      -- frames countdown to preserve zoom/pan on warp transition
 state.warp_saved_markers_map = nil   -- saved markers for restore after leaving warp mode
 state.warp_restore_popup_open = false -- restore confirmation popup visible
 state.warp_restore_take = nil        -- take for marker restore

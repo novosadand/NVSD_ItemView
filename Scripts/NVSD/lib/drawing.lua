@@ -3880,7 +3880,8 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
   state.env_node_hovered_idx = -1
   state.env_node_hovered_is_selected = false
 
-  if mouse_in_waveform and not state.dragging_env_node and not drag_active then
+  if mouse_in_waveform and not state.dragging_env_node and not drag_active
+      and not state.any_drag_active() then
     -- Check if mouse is near an existing node first
     local closest_node_dist = config.ENV_NODE_HIT_RADIUS + 1
     local best_pts_i = -1
@@ -3910,7 +3911,7 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
     -- If not hovering a node, find segment by time containment + neighbor check at boundaries
     if state.env_node_hovered_idx < 0 then
       local mouse_t = view_start + ((mouse_x - wave_x) / waveform_width) * view_length
-      local threshold = no_user_nodes and 24 or 22
+      local threshold = no_user_nodes and 12 or 10
 
       -- Helper: distance from mouse to rendered curve (respects shape/tension)
       -- Samples the actual curve at the mouse X position for accurate hit detection
@@ -4036,6 +4037,7 @@ function drawing.draw_envelope_overlay(draw_list, ctx, env_points, num_points,
       local node_py = value_to_y(pts[i].value)
       if node_px >= wave_x - config.ENV_NODE_RADIUS and node_px <= wave_x + waveform_width + config.ENV_NODE_RADIUS then
         local is_hovered = (pts[i].idx == state.env_node_hovered_idx)
+            or (state.dragging_env_node and pts[i].idx == state.env_drag_node_idx)
         -- Check if this node is in the selection (O(1) via hash set)
         local key = math.floor(pts[i].time * 10000 + 0.5) .. ":" .. math.floor(pts[i].value * 10000 + 0.5)
         local is_selected = sel_set[key] or false

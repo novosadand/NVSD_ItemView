@@ -1252,27 +1252,8 @@ local function loop()
 
           state.is_looped_view = is_looped_item
 
-          -- Expire keep-view flag (set by Ctrl+U to prevent reset on warp transition)
-          if state._warp_keep_view then
-            state._warp_keep_view = state._warp_keep_view - 1
-            if state._warp_keep_view <= 0 then state._warp_keep_view = nil end
-          end
-          -- On warp mode transition: map view bounds to new coordinate system
-          -- so item markers stay at the same visual position.
+          -- On warp mode transition: invalidate caches (view stabilization handles the rest)
           if is_warped_view ~= (state.was_warped_view or false) then
-            if state._warp_keep_view then
-              state._warp_keep_view = nil
-            elseif not state._warp_transition_view then
-              -- Save current view bounds + mapping context for deferred conversion
-              -- (ext isn't computed yet; conversion happens after ext is ready)
-              state._warp_transition_view = {
-                view_start = state._last_view_start or 0,
-                view_end = (state._last_view_start or 0) + (state._last_view_length or source_item_length),
-                entering_warp = is_warped_view,
-                warp_map = state.warp_map,
-                playrate = playrate,
-              }
-            end
             state.was_warped_view = is_warped_view
             state.invalidate_view_peaks()
             drawing.invalidate_wf_cache()
@@ -1370,42 +1351,7 @@ local function loop()
             ext_length = ext_end - ext_start
           end
 
-          -- Deferred warp transition: map old view bounds to new coordinate system
-          -- so item markers stay at the same visual position when toggling warp.
-          if state._warp_transition_view then
-            local tv = state._warp_transition_view
-            state._warp_transition_view = nil
-            -- Convert old view bounds using the warp map/playrate captured at transition time
-            local new_start, new_end
-            if tv.entering_warp then
-              -- Source-space → pos-space
-              new_start = utils.warp_src_to_pos(tv.warp_map, tv.view_start, tv.playrate)
-              new_end = utils.warp_src_to_pos(tv.warp_map, tv.view_end, tv.playrate)
-            else
-              -- Pos-space → source-space
-              new_start = utils.warp_pos_to_src(tv.warp_map, tv.view_start, tv.playrate)
-              new_end = utils.warp_pos_to_src(tv.warp_map, tv.view_end, tv.playrate)
-            end
-            local new_length = new_end - new_start
-            local new_center = (new_start + new_end) / 2
-            local range_ctr = (ext_start + ext_end) / 2
-            if ext_length > 0 and new_length > 0 then
-              state.zoom_level = math.max(1, ext_length / new_length)
-              state.pan_offset = new_center - range_ctr
-            end
-          end
-
-          -- One-shot view anchor: when markers are added/quantized/cleared,
-          -- the handler saves the current ext center. On the next frame,
-          -- compensate pan_offset so the view stays visually stable.
-          if state._warp_view_anchor then
-            local current_center = (ext_start + ext_end) / 2
-            local delta = state._warp_view_anchor - current_center
-            if math.abs(delta) > 0.0001 then
-              state.pan_offset = state.pan_offset + delta
-            end
-            state._warp_view_anchor = nil
-          end
+          -- (view stabilization now handled by source-space approach at line ~1672)
 
           -- Check if take is reversed
           local is_reversed = false
@@ -1442,8 +1388,11 @@ local function loop()
             -- Reset wrap tracking for new item
             state.unwrapped_start_offset = nil
             state.prev_raw_start_offset = nil
-            state.prev_ext_start = nil
-            state.prev_ext_end = nil
+            state._prev_ext_start = nil
+            state._prev_ext_end = nil
+            state._view_src_start = nil
+            state._view_src_end = nil
+            state._stab_prev_warped = nil
             -- Reset pitch scroll
             state.pitch_view_offset = 0
             state.zoom_toggle_active = false
@@ -1457,16 +1406,6 @@ local function loop()
             state.transients_computed = false
             state.transient_hovered_idx = -1
           end
-
-          -- Detect external ext changes (undo, REAPER edits) and reset pan_offset
-          -- Skip in warped mode: ext changes with warp markers, that's normal
-          if not is_warped_view and not (state.dragging_start or state.dragging_end) and state.prev_ext_start ~= nil then
-            if math.abs(ext_start - state.prev_ext_start) > 0.001 or math.abs(ext_end - state.prev_ext_end) > 0.001 then
-              state.pan_offset = 0
-            end
-          end
-          state.prev_ext_start = ext_start
-          state.prev_ext_end = ext_end
 
           -- Autozoom: fit view to markers when item changes (if enabled)
           if state.item_just_changed and state.auto_fit_markers and source_item_length > 0 then
@@ -1618,12 +1557,13 @@ local function loop()
           -- Shared quantize helper (used by Ctrl+U, Apply button, context menu)
           local function do_quantize_action()
             if not take then return end
-            state._warp_view_anchor = (ext_start + ext_end) / 2
-            state._warp_keep_view = 3
+            -- Selection range in source time (nil = entire item)
+            local sel_start = state.region_selected and math.min(state.selection_start_time, state.selection_end_time) or nil
+            local sel_end = state.region_selected and math.max(state.selection_start_time, state.selection_end_time) or nil
             reaper.Undo_BeginBlock()
             local n = 0
             if state.transients and #state.transients > 0 then
-              n = utils.add_markers_at_transients(take, state.transients, nil, nil,
+              n = utils.add_markers_at_transients(take, state.transients, sel_start, sel_end,
                   is_warped_view and state.warp_map or nil, playrate)
             end
             -- Build snap function from current grid + quantize settings
@@ -1634,7 +1574,7 @@ local function loop()
             local snap_fn = utils.get_quantize_snap_fn(
               settings.current.quantize, settings.current.grid, config,
               vl_qn_end - vl_qn_start, waveform_width)
-            local q = utils.quantize_warp_markers_ex(take, snap_fn, settings.current.quantize.amount)
+            local q = utils.quantize_warp_markers_ex(take, snap_fn, settings.current.quantize.amount, sel_start, sel_end)
             reaper.UpdateItemInProject(item)
             reaper.UpdateArrange()
             reaper.Undo_EndBlock("NVSD_ItemView: Quantize warp markers (+" .. n .. " new, " .. q .. " snapped)", -1)
@@ -1671,9 +1611,6 @@ local function loop()
           -- Insert warp marker(s) at cursor or selection edges (Ctrl+I)
           if reaper_is_active and settings.check_shortcut(ctx, "insert_warp_marker") then
             if take and state.warp_mode then
-              if is_warped_view then
-                state._warp_view_anchor = (ext_start + ext_end) / 2
-              end
               local inserted = 0
               reaper.Undo_BeginBlock()
               if state.region_selected then
@@ -1728,6 +1665,32 @@ local function loop()
           -- During active marker drag, pin to frozen coordinates so the view
           -- doesn't jump as ext grows/shifts with the drag.
           local range_center = (ext_start + ext_end) / 2
+          -- View stabilization: when ext changes or the coordinate system toggles
+          -- (warped ↔ non-warped), recompute zoom/pan so the same audio stays visible.
+          -- Uses source-space view bounds (invariant) saved at the end of each frame.
+          if (is_warped_view ~= (state._stab_prev_warped or false)
+              or (state._prev_ext_start
+                and (math.abs(ext_start - state._prev_ext_start) > 0.0001
+                  or math.abs(ext_end - state._prev_ext_end) > 0.0001)))
+              and state._view_src_start and not state.any_drag_active() then
+            -- Convert saved source-space view to current coordinate system
+            local target_start, target_end
+            if is_warped_view and state.warp_map then
+              target_start = utils.warp_src_to_pos(state.warp_map, state._view_src_start, playrate)
+              target_end = utils.warp_src_to_pos(state.warp_map, state._view_src_end, playrate)
+            else
+              target_start = state._view_src_start
+              target_end = state._view_src_end
+            end
+            local target_len = target_end - target_start
+            if target_len > 0 then
+              state.zoom_level = ext_length / target_len
+              state.pan_offset = (target_start + target_end) / 2 - range_center
+            end
+          end
+          state._stab_prev_warped = is_warped_view
+          state._prev_ext_start = ext_start
+          state._prev_ext_end = ext_end
           local view_length, view_start, view_end
           if (state.dragging_start or state.dragging_end) and state.marker_drag_activated
               and state.drag_start_view_length then
@@ -1754,8 +1717,15 @@ local function loop()
             view_length = view_end - view_start
           end
           if view_length <= 0 then view_length = 0.001 end
-          state._last_view_start = view_start
-          state._last_view_length = view_length
+          -- Save view bounds in source-space (invariant across coordinate systems)
+          -- Used by stabilization on the next frame to restore the correct view window.
+          if is_warped_view and state.warp_map then
+            state._view_src_start = utils.warp_pos_to_src(state.warp_map, view_start, playrate)
+            state._view_src_end = utils.warp_pos_to_src(state.warp_map, view_start + view_length, playrate)
+          else
+            state._view_src_start = view_start
+            state._view_src_end = view_start + view_length
+          end
 
           -- Per-view peak loading: load exactly screen-width peaks for the visible range.
           -- PCM_Source_GetPeaks uses pre-indexed .reapeaks files → <1ms regardless of file size.
@@ -2432,12 +2402,6 @@ local function loop()
               snap_to_grid_if_enabled, env_colors, env_anchor_start,
               pitch_view_min, pitch_view_max)
 
-            -- Suppress envelope segment hover when fade body or marker takes priority (alt+hover)
-            if alt_held and (mouse_in_fade_in_body or mouse_in_fade_out_body
-                or (mouse_in_marker_area and (near_start or near_end))) then
-              state.envelope_hovered_segment = -1
-            end
-
           end
 
           -- Draw original source boundary markers in ruler
@@ -2714,14 +2678,16 @@ local function loop()
           local fade_grab_w = 22  -- horizontal extent for no-fade creation zone
           local fade_grab_sm = 4  -- small extent on opposite side
           local fade_grab_h_create = 20  -- top-only zone for creating new fades
-          local fade_curve_tolerance = 20  -- px above/below curve for grab zone
+          local fade_curve_tolerance = 10  -- px above/below curve for grab zone
           local fade_top_y = wave_y + 2  -- same as used for rendering
-          -- Fade-in grab zone (suppress during envelope freehand draw mode)
+          -- Fade grab zones: suppress during any non-fade drag or freehand draw
           local env_freehand_mode = state.env_freehand_drawing or (state.envelopes_visible and ctrl_held)
+          state._non_fade_drag = not (state.dragging_fade_in or state.dragging_fade_out
+              or state.dragging_fade_curve_in or state.dragging_fade_curve_out)
+              and state.any_drag_active()
           local near_fade_in = false
           if fade_in_len > 0 and reaper_is_active and not env_freehand_mode
-              and not state.dragging_start and not state.dragging_end
-              and not state.is_ruler_dragging and not state.is_panning then
+              and not state._non_fade_drag then
             -- Fade exists: grab anywhere along the curve
             local fi_width = fade_in_end_x - start_marker_x
             if fi_width > 0 and mouse_x >= start_marker_x - fade_grab_sm and mouse_x <= fade_in_end_x + fade_grab_sm then
@@ -2730,8 +2696,7 @@ local function loop()
               near_fade_in = math.abs(mouse_y - fi_curve_y) <= fade_curve_tolerance
             end
           elseif reaper_is_active and not env_freehand_mode
-              and not state.dragging_start and not state.dragging_end
-              and not state.is_ruler_dragging and not state.is_panning then
+              and not state._non_fade_drag then
             -- No fade: narrow top strip near marker for creation
             near_fade_in = mouse_y >= wave_y and mouse_y <= wave_y + fade_grab_h_create
                 and mouse_x >= fade_in_end_x - fade_grab_sm
@@ -2740,8 +2705,7 @@ local function loop()
           -- Fade-out grab zone
           local near_fade_out = false
           if fade_out_len > 0 and reaper_is_active and not env_freehand_mode
-              and not state.dragging_start and not state.dragging_end
-              and not state.is_ruler_dragging and not state.is_panning then
+              and not state._non_fade_drag then
             local fo_width = end_marker_x - fade_out_start_x
             if fo_width > 0 and mouse_x >= fade_out_start_x - fade_grab_sm and mouse_x <= end_marker_x + fade_grab_sm then
               local fo_t = math.max(0, math.min(1, (mouse_x - fade_out_start_x) / fo_width))
@@ -2749,8 +2713,7 @@ local function loop()
               near_fade_out = math.abs(mouse_y - fo_curve_y) <= fade_curve_tolerance
             end
           elseif reaper_is_active and not env_freehand_mode
-              and not state.dragging_start and not state.dragging_end
-              and not state.is_ruler_dragging and not state.is_panning then
+              and not state._non_fade_drag then
             near_fade_out = mouse_y >= wave_y and mouse_y <= wave_y + fade_grab_h_create
                 and mouse_x >= fade_out_start_x - fade_grab_w
                 and mouse_x <= fade_out_start_x + fade_grab_sm
@@ -2783,6 +2746,11 @@ local function loop()
                 near_fade_in = false
               end
             end
+          end
+          -- Envelope nodes/segments take priority over fades when overlapping
+          if state.envelope_hovered_segment >= 0 or state.env_node_hovered_idx >= 0 then
+            near_fade_in = false
+            near_fade_out = false
           end
           -- Only update hover state when REAPER is active (preserves visual state on alt-tab)
           if reaper_is_active then
@@ -2817,6 +2785,11 @@ local function loop()
               local fo_curve_y = drawing.get_fade_curve_y(fo_t, fade_out_shape, false, fade_out_dir, fade_top_y, wave_y, waveform_height)
               mouse_in_fade_out_body = math.abs(mouse_y - fo_curve_y) <= fade_curve_tolerance
             end
+          end
+          -- Also suppress fade body hover when envelope has priority
+          if state.envelope_hovered_segment >= 0 or state.env_node_hovered_idx >= 0 then
+            mouse_in_fade_in_body = false
+            mouse_in_fade_out_body = false
           end
 
           -- Slope handle hover detection (triangles at both ends of each slope curve)
@@ -2928,6 +2901,8 @@ local function loop()
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
           elseif state.is_panning then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())
+          elseif state.dragging_env_node then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
           elseif state.env_segment_dragging then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
           elseif state.envelopes_visible and reaper_is_active
@@ -2938,6 +2913,9 @@ local function loop()
           elseif state.envelopes_visible and alt_held and reaper_is_active
               and state.env_node_hovered_idx >= 0 then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_NotAllowed())
+          elseif state.envelopes_visible and reaper_is_active
+              and state.env_node_hovered_idx >= 0 then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
           elseif state.envelopes_visible and alt_held and reaper_is_active
               and state.envelope_hovered_segment >= 0 and state.env_node_hovered_idx < 0 then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
@@ -3125,9 +3103,6 @@ local function loop()
               if rc_marker_idx <= 0 then
                 if reaper.ImGui_MenuItem(ctx, "Insert warp marker(s)",
                     settings.format_shortcut_by_name("insert_warp_marker")) then
-                  if is_warped_view then
-                    state._warp_view_anchor = (ext_start + ext_end) / 2
-                  end
                   reaper.Undo_BeginBlock()
                   local inserted = 0
                   if state.region_selected then
@@ -3148,9 +3123,6 @@ local function loop()
               -- Add markers at transients within selected region
               if state.region_selected and state.transients_computed and #state.transients > 0 then
                 if reaper.ImGui_MenuItem(ctx, "Add warp markers at transients") then
-                  if is_warped_view then
-                    state._warp_view_anchor = (ext_start + ext_end) / 2
-                  end
                   reaper.Undo_BeginBlock()
                   local rs, re = state.region_sel_start, state.region_sel_end
                   if is_warped_view then
@@ -3171,28 +3143,12 @@ local function loop()
               -- Quantize warp markers
               if reaper.ImGui_MenuItem(ctx, "Quantize warp markers",
                   settings.format_shortcut_by_name("quantize_transients")) then
-                state._warp_view_anchor = (ext_start + ext_end) / 2
-                state._warp_keep_view = 3
-                reaper.Undo_BeginBlock()
-                local n = 0
-                if state.transients_computed and #state.transients > 0 then
-                  n = utils.add_markers_at_transients(take, state.transients, nil, nil,
-                      is_warped_view and state.warp_map or nil, playrate)
-                end
-                local q = utils.quantize_warp_markers(take)
-                if n > 0 or q > 0 then
-                  reaper.UpdateItemInProject(item)
-                  reaper.UpdateArrange()
-                end
-                reaper.Undo_EndBlock("NVSD_ItemView: Quantize warp markers (+" .. n .. " new, " .. q .. " snapped)", -1)
-                state.warp_markers = utils.get_stretch_markers(take)
+                do_quantize_action()
               end
 
               -- Clear all warp markers
               if #state.warp_markers > 0 then
                 if reaper.ImGui_MenuItem(ctx, "Clear all warp markers") then
-                  state._warp_view_anchor = (ext_start + ext_end) / 2
-                  state._warp_keep_view = 3
                   reaper.Undo_BeginBlock()
                   reaper.DeleteTakeStretchMarkers(take, 0, reaper.GetTakeNumStretchMarkers(take))
                   reaper.UpdateArrange()
@@ -3412,8 +3368,8 @@ local function loop()
                     if math.abs(e - sp) < 0.005 then has = true; break end
                   end
                   if not has then
-                    local p = is_warped_view and utils.warp_src_to_pos(state.warp_map, sp, playrate) or sp
-                    reaper.SetTakeStretchMarker(take, -1, p, sp)
+                    local p = utils.srcpos_to_neutral_pos(take, sp)
+                    reaper.SetTakeStretchMarker(take, -1, p)
                     existing_sm[#existing_sm + 1] = sp
                   end
                 end
@@ -3433,26 +3389,28 @@ local function loop()
             else
               -- Double-click empty area (no transient): CREATE at mouse position
               local click_time = px_to_time(mouse_x)
-              local pos, srcpos
+              local pos
               if is_warped_view then
                 pos = click_time
-                srcpos = utils.warp_pos_to_src(state.warp_map, pos, playrate)
               else
-                srcpos = click_time
-                pos = srcpos
+                pos = utils.srcpos_to_neutral_pos(take, click_time)
               end
-              if srcpos >= 0 and srcpos <= source_length then
+              if pos >= -0.001 then
                 reaper.Undo_BeginBlock()
-                reaper.SetTakeStretchMarker(take, -1, pos, srcpos)
+                -- Let REAPER auto-compute srcpos (neutral marker, no stretching)
+                local new_idx = reaper.SetTakeStretchMarker(take, -1, pos)
                 reaper.UpdateArrange()
                 reaper.UpdateItemInProject(item)
                 reaper.Undo_EndBlock("NVSD_ItemView: Add stretch marker", -1)
                 state.warp_markers = utils.get_stretch_markers(take)
                 -- Select the new marker
-                for _, sm in ipairs(state.warp_markers) do
-                  if math.abs(sm.srcpos - srcpos) < 0.001 then
-                    state.warp_marker_selected_idx = sm.idx
-                    break
+                if new_idx and new_idx >= 0 then
+                  -- Re-read after sort; find by pos proximity
+                  for _, sm in ipairs(state.warp_markers) do
+                    if math.abs(sm.pos - pos) < 0.01 then
+                      state.warp_marker_selected_idx = sm.idx
+                      break
+                    end
                   end
                 end
               end
@@ -3520,8 +3478,8 @@ local function loop()
             if math.abs(mouse_x - state.transient_click_mouse_x) >= (config.WARP_DRAG_THRESHOLD or 3) then
               local srcpos = state.transient_click_srcpos
               if srcpos then
-                local pos = is_warped_view and utils.warp_src_to_pos(state.warp_map, srcpos, playrate) or srcpos
-                reaper.SetTakeStretchMarker(take, -1, pos, srcpos)
+                local pos = utils.srcpos_to_neutral_pos(take, srcpos)
+                reaper.SetTakeStretchMarker(take, -1, pos)
                 reaper.UpdateArrange()
                 reaper.UpdateItemInProject(item)
                 state.warp_markers = utils.get_stretch_markers(take)
