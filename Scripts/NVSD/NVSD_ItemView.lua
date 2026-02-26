@@ -748,6 +748,7 @@ local function loop()
         -- Toggle WARP (preserve pitch) - keyboard shortcut mirrors button behavior
         if settings.check_shortcut(ctx, "toggle_warp") then
           if not state.warp_saved_markers_map then state.warp_saved_markers_map = {} end
+          state._warp_auto_enabled = nil  -- user-initiated toggle overrides auto
           if not state.warp_mode then
             -- Turning ON
             local take_guid = reaper.BR_GetMediaItemTakeGUID(take)
@@ -997,16 +998,10 @@ local function loop()
                 or (state.slope_dragging and state.slope_drag_activated)
             if not state._freeze_warp then
               -- Always refresh markers (cheap read) so external changes are picked up
+              -- No auto-created start marker needed: warp functions handle
+              -- empty/single-marker maps with linear playrate-based mapping.
               state.warp_markers = utils.get_stretch_markers(take)
               state.warp_markers_take = take
-
-              -- Auto-add start marker at position 0 if no markers exist
-              -- srcpos must match start_offset so the audio mapping is preserved
-              if #state.warp_markers == 0 then
-                reaper.SetTakeStretchMarker(take, -1, 0, start_offset)
-                reaper.UpdateArrange()
-                state.warp_markers = utils.get_stretch_markers(take)
-              end
             end
 
             -- Cache transient detection (runs once per item, reset on item change)
@@ -1183,8 +1178,10 @@ local function loop()
               or start_offset + source_item_length > source_length + 0.01
           )
 
-          -- Warped view: when WARP mode is active, switch to item-time (pos) coordinates
-          local is_warped_view = state.warp_mode and state.warp_map ~= nil
+          -- Warped view: only switch to pos-space when there are 2+ stretch markers
+          -- (actual non-linear warping). With 0-1 markers the mapping is linear,
+          -- so source-space coordinates work identically and avoid a visual jump.
+          local is_warped_view = state.warp_mode and state.warp_map ~= nil and #state.warp_map >= 2
 
           -- Reset unwrap tracking when item changes
           if state.unwrap_tracked_item ~= item then
@@ -1260,14 +1257,21 @@ local function loop()
             state._warp_keep_view = state._warp_keep_view - 1
             if state._warp_keep_view <= 0 then state._warp_keep_view = nil end
           end
-          -- Reset zoom/pan on mode transition to avoid jarring jumps
+          -- On warp mode transition: map view bounds to new coordinate system
+          -- so item markers stay at the same visual position.
           if is_warped_view ~= (state.was_warped_view or false) then
             if state._warp_keep_view then
-              -- Ctrl+U triggered this transition; preserve current zoom/pan
               state._warp_keep_view = nil
-            else
-              state.zoom_level = 1
-              state.pan_offset = 0
+            elseif not state._warp_transition_view then
+              -- Save current view bounds + mapping context for deferred conversion
+              -- (ext isn't computed yet; conversion happens after ext is ready)
+              state._warp_transition_view = {
+                view_start = state._last_view_start or 0,
+                view_end = (state._last_view_start or 0) + (state._last_view_length or source_item_length),
+                entering_warp = is_warped_view,
+                warp_map = state.warp_map,
+                playrate = playrate,
+              }
             end
             state.was_warped_view = is_warped_view
             state.invalidate_view_peaks()
@@ -1364,6 +1368,31 @@ local function loop()
             ext_start = math.min(so, 0)
             ext_end = math.max(so + source_item_length, source_length)
             ext_length = ext_end - ext_start
+          end
+
+          -- Deferred warp transition: map old view bounds to new coordinate system
+          -- so item markers stay at the same visual position when toggling warp.
+          if state._warp_transition_view then
+            local tv = state._warp_transition_view
+            state._warp_transition_view = nil
+            -- Convert old view bounds using the warp map/playrate captured at transition time
+            local new_start, new_end
+            if tv.entering_warp then
+              -- Source-space → pos-space
+              new_start = utils.warp_src_to_pos(tv.warp_map, tv.view_start, tv.playrate)
+              new_end = utils.warp_src_to_pos(tv.warp_map, tv.view_end, tv.playrate)
+            else
+              -- Pos-space → source-space
+              new_start = utils.warp_pos_to_src(tv.warp_map, tv.view_start, tv.playrate)
+              new_end = utils.warp_pos_to_src(tv.warp_map, tv.view_end, tv.playrate)
+            end
+            local new_length = new_end - new_start
+            local new_center = (new_start + new_end) / 2
+            local range_ctr = (ext_start + ext_end) / 2
+            if ext_length > 0 and new_length > 0 then
+              state.zoom_level = math.max(1, ext_length / new_length)
+              state.pan_offset = new_center - range_ctr
+            end
           end
 
           -- One-shot view anchor: when markers are added/quantized/cleared,
@@ -1725,6 +1754,8 @@ local function loop()
             view_length = view_end - view_start
           end
           if view_length <= 0 then view_length = 0.001 end
+          state._last_view_start = view_start
+          state._last_view_length = view_length
 
           -- Per-view peak loading: load exactly screen-width peaks for the visible range.
           -- PCM_Source_GetPeaks uses pre-indexed .reapeaks files → <1ms regardless of file size.
@@ -1758,10 +1789,15 @@ local function loop()
 
           if need_reload and view_length > 0 then
             local peaks_result, num_ch
-            if is_warped_view then
+            if is_warped_view and state.warp_map and #state.warp_map >= 2 then
+              -- True warp (2+ markers): per-pixel source mapping required
               peaks_result, num_ch = utils.get_peaks_for_range_warped(
                   source, view_start, view_length, num_view_samples, state.warp_map, playrate,
                   state.is_loop_src and source_length or nil, source_length)
+            elseif is_warped_view then
+              -- Linear warp (0-1 markers): direct peak loading for full quality
+              local peak_start = utils.warp_pos_to_src(state.warp_map, view_start, playrate)
+              peaks_result, num_ch = utils.get_peaks_for_range(source, math.max(0, peak_start), view_length * playrate, num_view_samples)
             elseif is_extended_view and not is_reversed and state.is_loop_src then
               peaks_result, num_ch = utils.get_peaks_for_range_looped(source, view_start, view_length, num_view_samples, source_length)
             elseif is_extended_view and not is_reversed then

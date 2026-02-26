@@ -361,12 +361,22 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     current_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
     current_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH")
     local preserve_pitch = reaper.GetMediaItemTakeInfo_Value(take, "B_PPITCH")
-    -- Auto-enable warp mode when item has stretch markers
+    -- Auto-enable warp mode when item has stretch markers or non-zero pitch
     local sm_count = reaper.GetTakeNumStretchMarkers(take)
-    if sm_count > 0 and preserve_pitch == 0 then
+    if preserve_pitch == 0 and (sm_count > 0 or math.abs(current_pitch) > 0.001) then
       reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 1)
       preserve_pitch = 1
-      reaper.UpdateArrange()
+      state._warp_auto_enabled = true
+      reaper.UpdateItemInProject(reaper.GetMediaItemTake_Item(take))
+    end
+    -- Auto-disable warp when pitch returned to 0 and warp was auto-enabled
+    if state._warp_auto_enabled and preserve_pitch == 1
+        and sm_count == 0 and math.abs(current_pitch) < 0.001 then
+      reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", 0)
+      reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 0)
+      preserve_pitch = 0
+      state._warp_auto_enabled = nil
+      reaper.UpdateItemInProject(reaper.GetMediaItemTake_Item(take))
     end
     state.warp_mode = preserve_pitch == 1
     -- Per-item saved warp markers (keyed by take GUID)
@@ -411,6 +421,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_warp then
     state.warp_dropdown_open = false
+    state._warp_auto_enabled = nil  -- user-initiated toggle overrides auto
     if take then
       if not state.warp_mode then
         -- Turning WARP ON
@@ -2078,11 +2089,25 @@ function controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel
     new_pan = math.max(-1, math.min(1, new_pan))
     if take then
       reaper.SetMediaItemTakeInfo_Value(take, "D_PAN", new_pan)
-      reaper.UpdateArrange()
+      reaper.UpdateItemInProject(reaper.GetMediaItemTake_Item(take))
     end
   end
 
   return take_pan
+end
+
+-- Auto-disable warp if pitch returned to 0 and warp was auto-enabled (no stretch markers)
+local function maybe_unwarp_on_zero(take, state)
+  if not take or not state.warp_mode then return end
+  if state._pitch_drag_was_warp then return end  -- warp was already on before drag
+  local final_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH")
+  if math.abs(final_pitch) >= 0.01 then return end  -- pitch is non-zero, keep warp
+  local sm_count = reaper.GetTakeNumStretchMarkers(take)
+  if sm_count > 0 then return end  -- has stretch markers, keep warp
+  reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", 0)
+  reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 0)
+  state.warp_mode = false
+  reaper.UpdateItemInProject(reaper.GetMediaItemTake_Item(take))
 end
 
 -- Set pitch on take based on warp mode
@@ -2151,16 +2176,28 @@ function controls.draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, pan
   if pitch_double_clicked then
     if take then
       reaper.Undo_BeginBlock()
-      set_take_pitch(take, 0, state, utils)
+      -- If no stretch markers, fully disable warp when resetting pitch to 0
+      local sm_count = reaper.GetTakeNumStretchMarkers(take)
+      if state.warp_mode and sm_count == 0 then
+        reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", 0)
+        reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 0)
+        state.warp_mode = false
+      else
+        set_take_pitch(take, 0, state, utils)
+      end
       reaper.UpdateArrange()
       reaper.Undo_EndBlock("NVSD_ItemView: Reset pitch to 0", -1)
     end
+    state._pitch_drag_was_warp = nil
     state.end_drag("pitch")
   elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_knob then
     state.start_drag("pitch", mouse_y, take_pitch, true)
+    state._pitch_drag_was_warp = state.warp_mode
   end
 
   if reaper.ImGui_IsMouseReleased(ctx, 0) and state.is_dragging("pitch") then
+    maybe_unwarp_on_zero(take, state)
+    state._pitch_drag_was_warp = nil
     state.end_drag("pitch")
   end
 
@@ -2235,10 +2272,13 @@ function controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, p
     state.end_drag("semitones")
   elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_semitones_box then
     state.start_drag("semitones", mouse_y, display_semitones, false)
-    state.drag_controls.semitones.start_cents = display_cents  -- Capture cents at drag start
+    state.drag_controls.semitones.start_cents = display_cents
+    state._pitch_drag_was_warp = state.warp_mode
   end
 
   if reaper.ImGui_IsMouseReleased(ctx, 0) and state.is_dragging("semitones") then
+    maybe_unwarp_on_zero(take, state)
+    state._pitch_drag_was_warp = nil
     state.end_drag("semitones")
   end
 
@@ -2266,9 +2306,12 @@ function controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, p
   elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_cents_box then
     state.start_drag("cents", mouse_y, display_cents, false)
     state.drag_controls.cents.start_semitones = display_semitones
+    state._pitch_drag_was_warp = state.warp_mode
   end
 
   if reaper.ImGui_IsMouseReleased(ctx, 0) and state.is_dragging("cents") then
+    maybe_unwarp_on_zero(take, state)
+    state._pitch_drag_was_warp = nil
     state.end_drag("cents")
   end
 
