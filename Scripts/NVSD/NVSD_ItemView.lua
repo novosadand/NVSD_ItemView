@@ -1125,8 +1125,9 @@ local function loop()
             end
           end
 
-          local waveform_height = math.max(50, avail_h - config.WAVEFORM_MARGIN_V - state.info_bar_height - config.RULER_HEIGHT - warp_bar_height - config.TIME_RULER_HEIGHT - envelope_bar_height - state.strip_h)
-          local panel_height = state.strip_h + state.info_bar_height + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height
+          state.scrollbar_h = layout.show_scrollbar and config.SCROLLBAR_HEIGHT or 0
+          local waveform_height = math.max(50, avail_h - config.WAVEFORM_MARGIN_V - state.info_bar_height - config.RULER_HEIGHT - warp_bar_height - config.TIME_RULER_HEIGHT - envelope_bar_height - state.scrollbar_h - state.strip_h)
+          local panel_height = state.strip_h + state.info_bar_height + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height + state.scrollbar_h
 
           local two_col_panel = panel_height < 270
           local effective_panel_width = two_col_panel
@@ -1161,9 +1162,10 @@ local function loop()
           local wave_y = warp_bar_y + warp_bar_height
           local time_ruler_y = wave_y + waveform_height
           local envelope_bar_y = time_ruler_y + config.TIME_RULER_HEIGHT
+          state.scrollbar_y = envelope_bar_y + envelope_bar_height
 
           -- Reserve the full area
-          local total_height = state.strip_h + config.WAVEFORM_MARGIN_V + state.info_bar_height + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height
+          local total_height = state.strip_h + config.WAVEFORM_MARGIN_V + state.info_bar_height + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height + state.scrollbar_h
           reaper.ImGui_InvisibleButton(ctx, "waveform_area", avail_w, math.max(avail_h, total_height))
 
           local mouse_x, mouse_y = reaper.ImGui_GetMousePos(ctx)
@@ -2207,6 +2209,14 @@ local function loop()
             waveform_width, config.ENVELOPE_BAR_HEIGHT,
             mouse_x, mouse_y, config, state, settings)
 
+          -- Draw horizontal scrollbar (if enabled)
+          if layout.show_scrollbar and state.scrollbar_h > 0 then
+            drawing.draw_scrollbar(draw_list, ctx, wave_x, state.scrollbar_y,
+              waveform_width, state.scrollbar_h,
+              mouse_x, mouse_y, view_start, view_length,
+              ext_start, ext_length, state, config)
+          end
+
           -- Helper: find nearest source boundary if within threshold
           -- Always active: full threshold when snap on, weaker (40%) when snap off
           local function snap_to_source_boundary(t, src_len, threshold_time)
@@ -2579,7 +2589,7 @@ local function loop()
           local mouse_in_time_ruler = reaper_is_active
               and mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
               and mouse_y >= time_ruler_y and mouse_y <= time_ruler_y + config.TIME_RULER_HEIGHT
-          local view_bottom = time_ruler_y + config.TIME_RULER_HEIGHT + envelope_bar_height
+          local view_bottom = time_ruler_y + config.TIME_RULER_HEIGHT + envelope_bar_height + state.scrollbar_h
           local mouse_in_view = reaper_is_active
               and mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
               and mouse_y >= ruler_y and mouse_y <= view_bottom

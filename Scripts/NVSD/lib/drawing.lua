@@ -2945,6 +2945,227 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
 
 end
 
+-- Draw horizontal scrollbar (MIDI-editor style: arrows, thumb, zoom buttons, zoom handle)
+function drawing.draw_scrollbar(draw_list, ctx, x, y, width, height,
+                                 mouse_x, mouse_y, view_start, view_length,
+                                 ext_start, ext_length, state, config)
+  if ext_length <= 0 then return end
+
+  local bg_color = 0x1A1A1AFF
+  local track_color = 0x2A2A2AFF
+  local thumb_color = 0x555555FF
+  local thumb_hover_color = 0x777777FF
+  local thumb_drag_color = 0x888888FF
+  local arrow_color = 0x888888FF
+  local arrow_hover_color = 0xCCCCCCFF
+  local btn_color = 0x333333FF
+  local btn_hover_color = 0x444444FF
+  local handle_color = 0x888888FF
+  local handle_hover_color = 0xBBBBBBFF
+  local handle_drag_color = 0xDDDDDDFF
+
+  -- Background
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, bg_color)
+
+  -- Layout:  [◄] [====thumb====] [►]  [−] [|] [+]
+  local aw = config.SCROLLBAR_ARROW_WIDTH
+  local zw = config.SCROLLBAR_ZOOM_BTN_WIDTH
+  local zh = config.SCROLLBAR_ZOOM_HANDLE_WIDTH
+  local track_x = x + aw
+  local right_controls_w = zw + zh + zw  -- [-] [|] [+]
+  local track_w = width - aw * 2 - right_controls_w
+  if track_w < 20 then return end  -- too small
+
+  local mouse_down = reaper.ImGui_IsMouseDown(ctx, 0)
+  local mouse_clicked = reaper.ImGui_IsMouseClicked(ctx, 0)
+  -- Suppress hover on all elements while dragging thumb or zoom handle
+  local any_sb_drag = state.sb_thumb_dragging or state.sb_zoom_handle_dragging
+  local mouse_in_bar = not any_sb_drag
+      and mouse_x >= x and mouse_x <= x + width
+      and mouse_y >= y and mouse_y <= y + height
+
+  -- Thumb dimensions
+  local thumb_ratio = math.min(1, view_length / ext_length)
+  local thumb_w = math.max(12, track_w * thumb_ratio)
+  local scroll_range = track_w - thumb_w
+  local scroll_frac = ext_length > view_length
+      and (view_start - ext_start) / (ext_length - view_length) or 0
+  scroll_frac = math.max(0, math.min(1, scroll_frac))
+  local thumb_x = track_x + scroll_frac * scroll_range
+
+  -- == LEFT ARROW ==
+  local la_x = x
+  local mouse_in_la = mouse_in_bar and mouse_x >= la_x and mouse_x < la_x + aw
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, la_x, y, la_x + aw, y + height,
+      mouse_in_la and btn_hover_color or btn_color)
+  -- Draw ◄ triangle
+  local ac = mouse_in_la and arrow_hover_color or arrow_color
+  local ay = y + height / 2
+  reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
+      la_x + aw * 0.65, ay - 4, la_x + aw * 0.65, ay + 4, la_x + aw * 0.3, ay, ac)
+  if mouse_in_la and mouse_down then
+    local scroll_step = view_length * config.SCROLLBAR_SCROLL_SPEED
+    state.pan_offset = state.pan_offset - scroll_step
+  end
+
+  -- == RIGHT ARROW ==
+  local ra_x = track_x + track_w
+  local mouse_in_ra = mouse_in_bar and mouse_x >= ra_x and mouse_x < ra_x + aw
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, ra_x, y, ra_x + aw, y + height,
+      mouse_in_ra and btn_hover_color or btn_color)
+  -- Draw ► triangle
+  ac = mouse_in_ra and arrow_hover_color or arrow_color
+  ay = y + height / 2
+  reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
+      ra_x + aw * 0.35, ay - 4, ra_x + aw * 0.35, ay + 4, ra_x + aw * 0.7, ay, ac)
+  if mouse_in_ra and mouse_down then
+    local scroll_step = view_length * config.SCROLLBAR_SCROLL_SPEED
+    state.pan_offset = state.pan_offset + scroll_step
+  end
+
+  -- == TRACK (clickable area behind thumb) ==
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, track_x, y + 2, track_x + track_w, y + height - 2, track_color, 2)
+
+  -- Click on track (not on thumb) = page scroll
+  local mouse_in_track = mouse_in_bar and mouse_x >= track_x and mouse_x < track_x + track_w
+  if mouse_in_track and mouse_clicked and not state.sb_thumb_dragging then
+    if mouse_x < thumb_x then
+      -- Page left
+      state.pan_offset = state.pan_offset - view_length * 0.8
+    elseif mouse_x > thumb_x + thumb_w then
+      -- Page right
+      state.pan_offset = state.pan_offset + view_length * 0.8
+    end
+  end
+
+  -- == THUMB ==
+  local mouse_in_thumb = mouse_in_bar
+      and mouse_x >= thumb_x and mouse_x <= thumb_x + thumb_w
+      and mouse_y >= y and mouse_y <= y + height
+  local tc = thumb_color
+  if state.sb_thumb_dragging then
+    tc = thumb_drag_color
+  elseif mouse_in_thumb then
+    tc = thumb_hover_color
+  end
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, thumb_x, y + 2, thumb_x + thumb_w, y + height - 2, tc, 3)
+
+  -- Thumb drag start
+  if mouse_in_thumb and mouse_clicked then
+    state.sb_thumb_dragging = true
+    state.sb_thumb_drag_start_mx = mouse_x
+    state.sb_thumb_drag_start_pan = state.pan_offset
+  end
+
+  -- Thumb dragging
+  if state.sb_thumb_dragging then
+    if mouse_down then
+      local delta_px = mouse_x - state.sb_thumb_drag_start_mx
+      if scroll_range > 0 then
+        local delta_frac = delta_px / scroll_range
+        local delta_time = delta_frac * (ext_length - view_length)
+        state.pan_offset = state.sb_thumb_drag_start_pan + delta_time
+      end
+      reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
+    else
+      state.sb_thumb_dragging = false
+    end
+  end
+
+  -- Cursor on thumb hover
+  if mouse_in_thumb and not state.sb_thumb_dragging then
+    reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
+  end
+
+  -- == ZOOM MINUS BUTTON ==
+  local zm_x = ra_x + aw
+  local mouse_in_zm = mouse_in_bar and mouse_x >= zm_x and mouse_x < zm_x + zw
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, zm_x, y, zm_x + zw, y + height,
+      mouse_in_zm and btn_hover_color or btn_color)
+  -- Draw − sign
+  local zmc = mouse_in_zm and arrow_hover_color or arrow_color
+  local zmy = y + height / 2
+  reaper.ImGui_DrawList_AddLine(draw_list, zm_x + 4, zmy, zm_x + zw - 4, zmy, zmc, 1.5)
+  if mouse_in_zm and mouse_clicked then
+    state.zoom_level = math.max(1.0, state.zoom_level / 1.3)
+    state.zoom_toggle_active = false
+  end
+
+  -- == ZOOM HANDLE ==
+  local zhx = zm_x + zw
+  local mouse_in_zh = mouse_in_bar and mouse_x >= zhx and mouse_x < zhx + zh
+  local zhc = handle_color
+  if state.sb_zoom_handle_dragging then
+    zhc = handle_drag_color
+  elseif mouse_in_zh then
+    zhc = handle_hover_color
+  end
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, zhx, y, zhx + zh, y + height,
+      mouse_in_zh and btn_hover_color or btn_color)
+  -- Draw | bar
+  local zhcx = zhx + zh / 2
+  reaper.ImGui_DrawList_AddLine(draw_list, zhcx, y + 3, zhcx, y + height - 3, zhc, 2)
+
+  -- Zoom handle drag start
+  if mouse_in_zh and mouse_clicked then
+    state.sb_zoom_handle_dragging = true
+    state.sb_zoom_handle_start_zoom = state.zoom_level
+    state.sb_zoom_handle_cumulative = 0
+    -- Store screen coords for cursor lock (same pattern as ruler drag)
+    local sx, sy = reaper.GetMousePosition()
+    state.sb_zoom_handle_screen_x = sx
+    state.sb_zoom_handle_screen_y = sy
+  end
+
+  -- Zoom handle dragging (accumulate delta, with cursor lock for infinite range)
+  if state.sb_zoom_handle_dragging then
+    if mouse_down then
+      -- Use screen-space delta (works with JS cursor lock)
+      local cur_sx, _ = reaper.GetMousePosition()
+      local delta_px = cur_sx - state.sb_zoom_handle_screen_x
+      state.sb_zoom_handle_cumulative = state.sb_zoom_handle_cumulative + delta_px
+      -- Sensitivity: ~200px of drag = ~3x zoom change
+      -- Left = zoom in, right = zoom out (negative sign)
+      local zoom_sensitivity = -0.005
+      local zoom_mult = math.exp(state.sb_zoom_handle_cumulative * zoom_sensitivity)
+      state.zoom_level = math.max(1.0, math.min(500.0,
+          state.sb_zoom_handle_start_zoom * zoom_mult))
+      state.zoom_toggle_active = false
+      -- Lock cursor in place for infinite drag range
+      if state.has_js_extension then
+        reaper.JS_Mouse_SetPosition(
+            state.sb_zoom_handle_screen_x, state.sb_zoom_handle_screen_y)
+        reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_None())
+      else
+        reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
+      end
+    else
+      state.sb_zoom_handle_dragging = false
+    end
+  end
+
+  -- Cursor on zoom handle hover
+  if mouse_in_zh and not state.sb_zoom_handle_dragging then
+    reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
+  end
+
+  -- == ZOOM PLUS BUTTON ==
+  local zp_x = zhx + zh
+  local mouse_in_zp = mouse_in_bar and mouse_x >= zp_x and mouse_x < zp_x + zw
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, zp_x, y, zp_x + zw, y + height,
+      mouse_in_zp and btn_hover_color or btn_color)
+  -- Draw + sign
+  local zpc = mouse_in_zp and arrow_hover_color or arrow_color
+  local zpy = y + height / 2
+  local zpx_c = zp_x + zw / 2
+  reaper.ImGui_DrawList_AddLine(draw_list, zpx_c - 4, zpy, zpx_c + 4, zpy, zpc, 1.5)
+  reaper.ImGui_DrawList_AddLine(draw_list, zpx_c, zpy - 4, zpx_c, zpy + 4, zpc, 1.5)
+  if mouse_in_zp and mouse_clicked then
+    state.zoom_level = math.min(500.0, state.zoom_level * 1.3)
+    state.zoom_toggle_active = false
+  end
+end
+
 -- Draw envelope dropdown menu (called AFTER overlay so it renders on top)
 function drawing.draw_envelope_dropdown(draw_list, ctx, x, y, height,
                                          mouse_x, mouse_y, config, state)

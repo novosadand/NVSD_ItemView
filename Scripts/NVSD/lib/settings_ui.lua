@@ -1893,6 +1893,12 @@ local HELP_SECTIONS = {
       "- All toggle buttons remember their state across REAPER restarts",
       {key = "Shaped waveform", desc = "Waveform shape follows fades, volume and pan envelopes"},
       "",
+      "## Scrollbar (enable in Preferences > Layout)",
+      "- Horizontal scrollbar below waveform for panning and zooming",
+      "- Drag the thumb to pan, click the track to page-scroll",
+      "- Left/right arrows for incremental scroll",
+      "- +/- buttons for zoom in/out, drag the | handle for continuous zoom",
+      "",
       "## FX (appears when take has FX)",
       {key = "Left FX button", desc = "Toggle bypass / Add FX"},
       {key = "Right FX button", desc = "Open chain, Alt+click to remove all"},
@@ -2041,6 +2047,7 @@ local LAYOUT_ITEMS = {
   {key = "show_buttons",  label = "Utility buttons",  tip = "x2, /2, Reverse, Edit, Loop buttons"},
   {key = "show_fx",       label = "FX section",      tip = "FX chain toolbar and bypass list"},
   {key = "show_controls", label = "Controls panel",  tip = "Gain slider, pan knob, pitch knob"},
+  {key = "show_scrollbar", label = "Scrollbar",      tip = "Horizontal scrollbar below waveform for panning and zooming"},
 }
 
 -- Draw Preferences tab content (formerly Defaults)

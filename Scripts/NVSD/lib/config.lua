@@ -47,6 +47,13 @@ config.COLOR_WARP_BAR_BORDER = 0x333333FF
 -- Loop boundary marker color (vertical line at source_length intervals)
 config.COLOR_LOOP_REGION = 0xFFAA3360
 
+-- Horizontal scrollbar
+config.SCROLLBAR_HEIGHT = 16
+config.SCROLLBAR_ARROW_WIDTH = 16
+config.SCROLLBAR_ZOOM_BTN_WIDTH = 16
+config.SCROLLBAR_ZOOM_HANDLE_WIDTH = 8
+config.SCROLLBAR_SCROLL_SPEED = 0.05  -- fraction of view_length per click
+
 -- Envelope editor
 config.ENVELOPE_BAR_HEIGHT = 18
 config.COLOR_ENV_LINE = 0x66CCCCFF

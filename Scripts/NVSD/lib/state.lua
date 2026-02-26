@@ -99,6 +99,20 @@ state.ruler_drag_cursor_x = 0  -- Tracks visible cursor X during drag
 state.ruler_drag_window_x = 0  -- Window-space X for zoom centering
 state.last_zoomed_item = nil
 
+-- Scrollbar layout (computed per frame, avoids local variable pressure)
+state.scrollbar_h = 0
+state.scrollbar_y = 0
+
+-- Scrollbar interaction state
+state.sb_thumb_dragging = false
+state.sb_thumb_drag_start_pan = 0
+state.sb_thumb_drag_start_mx = 0
+state.sb_zoom_handle_dragging = false
+state.sb_zoom_handle_start_zoom = 0
+state.sb_zoom_handle_cumulative = 0
+state.sb_zoom_handle_screen_x = 0  -- Screen X for cursor lock
+state.sb_zoom_handle_screen_y = 0  -- Screen Y for cursor lock
+
 -- Looped item wrap tracking
 state.prev_raw_start_offset = nil  -- Previous frame's raw start_offset (for wrap detection)
 state.unwrapped_start_offset = nil -- Accumulated unwrapped start_offset
@@ -566,6 +580,8 @@ function state.reset_all_drags()
   state.slope_hovered_segment = -1
   state.slope_hovered_endpoint = 0
   state.wf_zoom_dragging = false
+  state.sb_thumb_dragging = false
+  state.sb_zoom_handle_dragging = false
 end
 
 -- Stop any active audio preview (CF_Preview or REAPER transport)
@@ -595,6 +611,7 @@ function state.any_drag_active()
       or state.dragging_warp_marker
       or state.slope_dragging
       or state.wf_zoom_dragging
+      or state.sb_thumb_dragging or state.sb_zoom_handle_dragging
       or state.is_any_control_dragging()
 end
 

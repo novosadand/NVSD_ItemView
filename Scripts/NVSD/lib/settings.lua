@@ -688,6 +688,7 @@ settings.DEFAULT_LAYOUT = {
   show_warp = true,       -- WARP button + dropdowns + Clear
   show_buttons = true,    -- x2, /2, reverse, edit, loop
   shaped_waveform = false, -- waveform follows fades, volume/pan envelopes
+  show_scrollbar = false,  -- horizontal scrollbar below waveform
 }
 
 -- Dirty flag: when true, config.refresh_colors() will run next frame
