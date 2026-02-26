@@ -1093,6 +1093,114 @@ function TestNVSDItemView:test_check_scroll_modifiers()
     settings.current.shortcuts.scroll_vzoom = orig_vzoom
 end
 
+-- Test toggle_default persists state and syncs settings.current.defaults
+function TestNVSDItemView:test_toggle_default_persistence()
+    -- Mock ExtState storage
+    local store = {}
+    reaper.SetExtState = function(sec, key, val, persist)
+        store[sec .. "::" .. key] = val
+    end
+    reaper.GetExtState = function(sec, key)
+        return store[sec .. "::" .. key] or ""
+    end
+
+    -- Simulate a state table
+    local fake_state = { envelope_lock = false }
+    settings.current.defaults.envelope_lock = false
+
+    -- Toggle on
+    settings.toggle_default(fake_state, "envelope_lock")
+    lu.assertTrue(fake_state.envelope_lock)
+    lu.assertTrue(settings.current.defaults.envelope_lock)
+    lu.assertEquals(store["NVSD_ItemView::default_envelope_lock"], "true")
+
+    -- Toggle off
+    settings.toggle_default(fake_state, "envelope_lock")
+    lu.assertFalse(fake_state.envelope_lock)
+    lu.assertFalse(settings.current.defaults.envelope_lock)
+    lu.assertEquals(store["NVSD_ItemView::default_envelope_lock"], "false")
+end
+
+-- Test toolbar file-based persistence roundtrip
+function TestNVSDItemView:test_toolbar_file_persistence()
+    -- Use a temp directory for the toolbar file
+    local tmp_dir = os.tmpname():match("(.+)[/\\]") or "."
+    settings.set_script_dir(tmp_dir)
+    local fpath = tmp_dir .. "/toolbar_data.txt"
+
+    -- Mock ExtState (empty, so file takes priority)
+    local store = {}
+    reaper.SetExtState = function(sec, key, val, persist)
+        store[sec .. "::" .. key] = val
+    end
+    reaper.GetExtState = function(sec, key)
+        return store[sec .. "::" .. key] or ""
+    end
+    reaper.DeleteExtState = function() end
+
+    -- Set up toolbar and save
+    settings.current.toolbar_buttons = {
+        {label = "Test Btn", cmd = "12345", icon = "icon.png"},
+        {type = "separator"},
+        {label = "Another", cmd = "67890"},
+    }
+    settings.save_toolbar()
+
+    -- Verify file was written
+    local f = io.open(fpath, "r")
+    lu.assertNotNil(f, "toolbar_data.txt should be created")
+    local content = f:read("*a")
+    f:close()
+    lu.assertStrContains(content, "Test Btn")
+    lu.assertStrContains(content, "12345")
+    lu.assertStrContains(content, "S")
+
+    -- Clear ExtState to prove load reads from file
+    store = {}
+
+    -- Load and verify
+    settings.load_toolbar()
+    lu.assertEquals(#settings.current.toolbar_buttons, 3)
+    lu.assertEquals(settings.current.toolbar_buttons[1].label, "Test Btn")
+    lu.assertEquals(settings.current.toolbar_buttons[1].cmd, "12345")
+    lu.assertEquals(settings.current.toolbar_buttons[1].icon, "icon.png")
+    lu.assertEquals(settings.current.toolbar_buttons[2].type, "separator")
+    lu.assertEquals(settings.current.toolbar_buttons[3].label, "Another")
+    lu.assertNil(settings.current.toolbar_buttons[3].icon)
+
+    -- Clean up
+    os.remove(fpath)
+    settings.set_script_dir(nil)
+end
+
+-- Test empty toolbar persists correctly (not reset to default)
+function TestNVSDItemView:test_toolbar_empty_persists()
+    local tmp_dir = os.tmpname():match("(.+)[/\\]") or "."
+    settings.set_script_dir(tmp_dir)
+    local fpath = tmp_dir .. "/toolbar_data.txt"
+
+    local store = {}
+    reaper.SetExtState = function(sec, key, val, persist)
+        store[sec .. "::" .. key] = val
+    end
+    reaper.GetExtState = function(sec, key)
+        return store[sec .. "::" .. key] or ""
+    end
+    reaper.DeleteExtState = function() end
+
+    -- Save empty toolbar
+    settings.current.toolbar_buttons = {}
+    settings.save_toolbar()
+
+    -- Load should give empty toolbar, NOT the default "Item properties" button
+    settings.load_toolbar()
+    lu.assertEquals(#settings.current.toolbar_buttons, 0)
+
+    -- Clean up
+    os.remove(fpath)
+    settings.set_script_dir(nil)
+end
+
 -- Test format_shortcut with Scroll key
 function TestNVSDItemView:test_format_shortcut_scroll()
     lu.assertEquals(settings.format_shortcut({ctrl = true, shift = false, alt = false, key = "Scroll"}), "Ctrl+Scroll")

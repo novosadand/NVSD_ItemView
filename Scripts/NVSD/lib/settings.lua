@@ -6,6 +6,13 @@ local settings = {}
 -- When true, check_shortcut() returns false (key capture mode)
 settings.listening = false
 
+-- Script directory for file-based persistence (set by main script)
+settings.script_dir = nil
+
+function settings.set_script_dir(dir)
+  settings.script_dir = dir
+end
+
 -- ExtState section name
 local EXT_SECTION = "NVSD_ItemView"
 
@@ -939,6 +946,14 @@ function settings.save_default(name)
   reaper.SetExtState(EXT_SECTION, "default_" .. name, tostring(settings.current.defaults[name]), true)
 end
 
+-- Toggle a default-backed state boolean, sync to settings.current.defaults, and persist.
+-- Use this from button clicks and shortcut handlers so changes survive restart.
+function settings.toggle_default(state_tbl, key)
+  state_tbl[key] = not state_tbl[key]
+  settings.current.defaults[key] = state_tbl[key]
+  settings.save_default(key)
+end
+
 -- Save a single layout toggle to ExtState (avoids full save overhead)
 function settings.save_layout(name)
   reaper.SetExtState(EXT_SECTION, "layout_" .. name, tostring(settings.current.layout[name]), true)
@@ -1100,28 +1115,58 @@ function settings.scan_toolbar_icons()
   return icons
 end
 
--- Load toolbar buttons from ExtState
-function settings.load_toolbar()
-  settings.current.toolbar_buttons = {}
-  -- New format: single serialized key
-  local data = reaper.GetExtState(EXT_SECTION, "toolbar_data")
-  if data ~= "" then
-    for line in data:gmatch("[^\n]+") do
-      if line == "S" then
-        settings.current.toolbar_buttons[#settings.current.toolbar_buttons + 1] = {type = "separator"}
-      elseif line:sub(1, 2) == "B\t" then
-        local fields = {}
-        for f in (line:sub(3) .. "\t"):gmatch("(.-)\t") do fields[#fields + 1] = f end
-        local label = fields[1] or ""
-        local cmd = fields[2] or ""
-        local icon = fields[3]
-        if label ~= "" and cmd ~= "" then
-          settings.current.toolbar_buttons[#settings.current.toolbar_buttons + 1] = {
-            label = label, cmd = cmd, icon = (icon and icon ~= "") and icon or nil
-          }
-        end
+-- Get toolbar file path for file-based persistence
+local function toolbar_file_path()
+  if not settings.script_dir then return nil end
+  return settings.script_dir .. "/toolbar_data.txt"
+end
+
+-- Parse toolbar data string into buttons table
+local function parse_toolbar_data(data, btns)
+  for line in data:gmatch("[^\n]+") do
+    if line == "S" then
+      btns[#btns + 1] = {type = "separator"}
+    elseif line:sub(1, 2) == "B\t" then
+      local fields = {}
+      for f in (line:sub(3) .. "\t"):gmatch("(.-)\t") do fields[#fields + 1] = f end
+      local label = fields[1] or ""
+      local cmd = fields[2] or ""
+      local icon = fields[3]
+      if label ~= "" and cmd ~= "" then
+        btns[#btns + 1] = {
+          label = label, cmd = cmd, icon = (icon and icon ~= "") and icon or nil
+        }
       end
     end
+  end
+end
+
+-- Load toolbar buttons (file first, then ExtState fallback)
+function settings.load_toolbar()
+  settings.current.toolbar_buttons = {}
+  local data = nil
+  local found_saved = false
+  -- Try file-based persistence first (survives crashes)
+  local fpath = toolbar_file_path()
+  if fpath then
+    local f = io.open(fpath, "r")
+    if f then
+      data = f:read("*a") or ""
+      f:close()
+      found_saved = true
+    end
+  end
+  -- Fall back to ExtState
+  if not found_saved then
+    data = reaper.GetExtState(EXT_SECTION, "toolbar_data")
+    if data ~= "" then found_saved = true end
+  end
+  -- Parse saved data (file or ExtState)
+  if found_saved then
+    if data and data ~= "" then
+      parse_toolbar_data(data, settings.current.toolbar_buttons)
+    end
+    -- If found_saved but data is empty, toolbar was intentionally cleared
     return
   end
   -- Legacy format: per-item keys (migrate on first save)
@@ -1159,9 +1204,8 @@ function settings.load_toolbar()
   }
 end
 
--- Save toolbar to a single ExtState key (tab-delimited, one item per line)
-function settings.save_toolbar()
-  local btns = settings.current.toolbar_buttons or {}
+-- Serialize toolbar buttons to string
+local function serialize_toolbar(btns)
   local lines = {}
   for i, btn in ipairs(btns) do
     if btn.type == "separator" then
@@ -1170,7 +1214,23 @@ function settings.save_toolbar()
       lines[i] = "B\t" .. (btn.label or "") .. "\t" .. (btn.cmd or "") .. "\t" .. (btn.icon or "")
     end
   end
-  reaper.SetExtState(EXT_SECTION, "toolbar_data", table.concat(lines, "\n"), true)
+  return table.concat(lines, "\n")
+end
+
+-- Save toolbar to file (immediate flush) and ExtState (backup)
+function settings.save_toolbar()
+  local data = serialize_toolbar(settings.current.toolbar_buttons or {})
+  -- File-based persistence (immediate, survives crashes)
+  local fpath = toolbar_file_path()
+  if fpath then
+    local f = io.open(fpath, "w")
+    if f then
+      f:write(data)
+      f:close()
+    end
+  end
+  -- ExtState as backup
+  reaper.SetExtState(EXT_SECTION, "toolbar_data", data, true)
 end
 
 -- Toolbar undo/redo stack
@@ -1210,6 +1270,7 @@ end
 
 function settings.toolbar_can_undo() return #tb_undo_stack > 0 end
 function settings.toolbar_can_redo() return #tb_redo_stack > 0 end
+function settings.toolbar_push_undo() tb_push_undo() end
 
 -- Add a toolbar button (after_idx: insert after this index, nil = append)
 function settings.add_toolbar_button(label, cmd, icon, after_idx)
@@ -1241,6 +1302,17 @@ end
 function settings.remove_toolbar_button(index)
   tb_push_undo()
   table.remove(settings.current.toolbar_buttons, index)
+  settings.save_toolbar()
+end
+
+-- Edit an existing toolbar button (label, cmd, icon) with undo support
+function settings.edit_toolbar_button(index, label, cmd, icon)
+  local btns = settings.current.toolbar_buttons
+  if not btns or index < 1 or index > #btns then return end
+  tb_push_undo()
+  btns[index].label = label
+  btns[index].cmd = cmd
+  btns[index].icon = icon
   settings.save_toolbar()
 end
 

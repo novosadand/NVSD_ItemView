@@ -1009,6 +1009,7 @@ end
 
 -- Open edit form for an existing button
 local function open_tb_edit(idx, btn)
+  settings.toolbar_push_undo()
   ui_state.tb_edit_idx = idx
   ui_state.tb_edit_label = btn.label
   ui_state.tb_edit_cmd = btn.cmd
@@ -1888,7 +1889,8 @@ local HELP_SECTIONS = {
       "- Track/item color strip above the bar",
       "",
       "## Envelope Bar",
-      "- Lock, Snap, Ghost markers, Shaped waveform toggles",
+      "- Lock, Snap, Ghost markers, Shaped waveform, Autozoom toggles",
+      "- All toggle buttons remember their state across REAPER restarts",
       {key = "Shaped waveform", desc = "Waveform shape follows fades, volume and pan envelopes"},
       "",
       "## FX (appears when take has FX)",
@@ -2028,14 +2030,9 @@ local function draw_help_line(ctx, line, content_w)
   end
 end
 
--- Toggle defaults: display labels for each setting
+-- Toggle defaults: settings without a dedicated toolbar button
 local DEFAULTS_ITEMS = {
-  {key = "show_cue_markers",    label = "Show CUE markers",      tip = "Show embedded WAV cue markers when an item has them"},
-  {key = "show_ghost_markers",  label = "Show ghost markers",    tip = "Show regions of other selected items sharing the same source file"},
   {key = "auto_show_envelopes", label = "Auto-show envelopes",   tip = "Show envelope overlay when an item has volume, pitch, or pan envelopes"},
-  {key = "envelope_lock",       label = "Lock envelopes",        tip = "Prevent envelope points from moving when dragging item markers"},
-  {key = "env_snap_enabled",    label = "Snap envelope to grid", tip = "Snap pitch envelope points to semitone values"},
-  {key = "auto_fit_markers",    label = "Autozoom",               tip = "Zoom to fit between start/end markers when selecting an item"},
 }
 
 -- Layout items: which UI panels can be hidden

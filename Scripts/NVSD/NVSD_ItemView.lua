@@ -33,6 +33,7 @@ settings_ui.set_drawing(drawing)
 
 -- Initialize settings
 config.settings = settings
+settings.set_script_dir(script_dir)
 settings.load()
 state.apply_defaults(settings)
 config.refresh_colors()
@@ -454,12 +455,12 @@ local function loop()
 
     -- Toggle envelope snap (configurable shortcut, default Ctrl+4)
     if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "toggle_snap") then
-      state.env_snap_enabled = not state.env_snap_enabled
+      settings.toggle_default(state, "env_snap_enabled")
     end
 
     -- Envelope lock (configurable shortcut, default L)
     if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "envelope_lock") then
-      state.envelope_lock = not state.envelope_lock
+      settings.toggle_default(state, "envelope_lock")
     end
 
     -- Show/hide envelope shortcuts
@@ -478,17 +479,17 @@ local function loop()
 
     -- Toggle WAV cue markers (configurable shortcut, default T)
     if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "toggle_cue_markers") then
-      state.show_cue_markers = not state.show_cue_markers
+      settings.toggle_default(state, "show_cue_markers")
     end
 
     -- Toggle ghost markers (configurable shortcut, default G)
     if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "toggle_ghost_markers") then
-      state.show_ghost_markers = not state.show_ghost_markers
+      settings.toggle_default(state, "show_ghost_markers")
     end
 
     -- Toggle Autozoom (configurable shortcut, default A)
     if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "toggle_auto_fit") then
-      state.auto_fit_markers = not state.auto_fit_markers
+      settings.toggle_default(state, "auto_fit_markers")
     end
 
     -- Open settings (configurable shortcut, default S)
@@ -567,8 +568,6 @@ local function loop()
       -- Zone drags handle undo after envelope shift in the release block below
       if not state.dragging_zone then
         local undo_messages = {
-          marker_start = "NVSD_ItemView: Adjust item start",
-          marker_end = "NVSD_ItemView: Adjust item end",
           pitch = "NVSD_ItemView: Adjust pitch",
           pan = "NVSD_ItemView: Adjust pan",
           gain = "NVSD_ItemView: Adjust item volume",
@@ -576,6 +575,8 @@ local function loop()
           cents = "NVSD_ItemView: Adjust cents",
           fade_in = "NVSD_ItemView: Adjust fade in",
           fade_out = "NVSD_ItemView: Adjust fade out",
+          fade_curve_in = "NVSD_ItemView: Adjust fade-in curve",
+          fade_curve_out = "NVSD_ItemView: Adjust fade-out curve",
           env_node = "NVSD_ItemView: Move envelope point",
           env_freehand = "NVSD_ItemView: Draw envelope freehand",
           env_tension = "NVSD_ItemView: Adjust envelope curve",

@@ -22,6 +22,7 @@ end
 local ctx = reaper.ImGui_CreateContext("NVSD_ItemView_Settings")
 
 -- Initialize settings
+settings.set_script_dir(script_dir)
 settings.load()
 
 -- Open settings UI

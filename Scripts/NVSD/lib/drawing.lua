@@ -692,7 +692,7 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
     end
 
     if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_cue then
-      state.show_cue_markers = not state.show_cue_markers
+      settings.toggle_default(state, "show_cue_markers")
     end
   end
 
@@ -1879,10 +1879,7 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
       if can_save then
         local btns2 = settings.current.toolbar_buttons
         if state.tb_edit_idx and state.tb_edit_idx >= 1 and state.tb_edit_idx <= #btns2 then
-          btns2[state.tb_edit_idx].label = state.tb_edit_label
-          btns2[state.tb_edit_idx].cmd = state.tb_edit_cmd
-          btns2[state.tb_edit_idx].icon = state.tb_edit_icon
-          settings.save_toolbar()
+          settings.edit_toolbar_button(state.tb_edit_idx, state.tb_edit_label, state.tb_edit_cmd, state.tb_edit_icon)
         else
           settings.add_toolbar_button(state.tb_edit_label, state.tb_edit_cmd, state.tb_edit_icon, state.tb_edit_insert_after)
         end
@@ -1969,15 +1966,15 @@ function drawing.draw_toolbar_popups(ctx, state, settings, config)
     elseif picked == "" then
       local btns2 = settings.current.toolbar_buttons
       if state.tb_icon_idx and btns2[state.tb_icon_idx] then
-        btns2[state.tb_icon_idx].icon = nil
-        settings.save_toolbar()
+        local btn = btns2[state.tb_icon_idx]
+        settings.edit_toolbar_button(state.tb_icon_idx, btn.label, btn.cmd, nil)
       end
       reaper.ImGui_CloseCurrentPopup(ctx)
     elseif picked then
       local btns2 = settings.current.toolbar_buttons
       if state.tb_icon_idx and btns2[state.tb_icon_idx] then
-        btns2[state.tb_icon_idx].icon = picked
-        settings.save_toolbar()
+        local btn = btns2[state.tb_icon_idx]
+        settings.edit_toolbar_button(state.tb_icon_idx, btn.label, btn.cmd, picked)
       end
       reaper.ImGui_CloseCurrentPopup(ctx)
     end
@@ -2773,7 +2770,7 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
   end
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_lock then
-    state.envelope_lock = not state.envelope_lock
+    settings.toggle_default(state, "envelope_lock")
   end
   if mouse_in_lock then
     local lock_tip = "Lock envelopes in place"
@@ -2814,7 +2811,7 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
   reaper.ImGui_DrawList_AddLine(draw_list, mcx - 1, mcy + 5, mcx + 1, mcy + 5, mag_color, 2)
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_snap then
-    state.env_snap_enabled = not state.env_snap_enabled
+    settings.toggle_default(state, "env_snap_enabled")
   end
   if mouse_in_snap then
     local snap_tip = "Snap to grid"
@@ -2855,7 +2852,7 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
   reaper.ImGui_DrawList_AddRect(draw_list, gcx - 6, gcy - 5, gcx + 1, gcy + 2, icon_color, 1, 0, 1.5)
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_ghost then
-    state.show_ghost_markers = not state.show_ghost_markers
+    settings.toggle_default(state, "show_ghost_markers")
   end
   if mouse_in_ghost then
     local ghost_tip = "Show other items' regions"
@@ -2898,7 +2895,7 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_shape then
     if settings then
       settings.current.layout.shaped_waveform = not settings.current.layout.shaped_waveform
-      settings.save()
+      settings.save_layout("shaped_waveform")
     end
   end
   if mouse_in_shape then
@@ -2933,7 +2930,7 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
     fcx + 6, fcy - 4, fcx + 6, fcy + 4, fcx + 2, fcy, fit_color)
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_fit then
-    state.auto_fit_markers = not state.auto_fit_markers
+    settings.toggle_default(state, "auto_fit_markers")
   end
   if mouse_in_fit then
     local fit_tip = "Autozoom: fit view to markers on item selection"
