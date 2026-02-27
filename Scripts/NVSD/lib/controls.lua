@@ -360,25 +360,31 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   if take then
     current_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
     current_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH")
-    local preserve_pitch = reaper.GetMediaItemTakeInfo_Value(take, "B_PPITCH")
-    -- Auto-enable warp mode when item has stretch markers or non-zero pitch
-    local sm_count = reaper.GetTakeNumStretchMarkers(take)
-    if preserve_pitch == 0 and (sm_count > 0 or math.abs(current_pitch) > 0.001) then
-      reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 1)
-      preserve_pitch = 1
-      state._warp_auto_enabled = true
-      reaper.UpdateItemInProject(reaper.GetMediaItemTake_Item(take))
+    -- Skip B_PPITCH read and auto-enable/disable when REAPER is unfocused:
+    -- API can return stale/default values (e.g. B_PPITCH=0) which would flip
+    -- warp_mode off, nil the warp_map, and cause the view to jump.
+    -- state.warp_mode is already correctly guarded in the main loop.
+    if state.reaper_is_active then
+      local preserve_pitch = reaper.GetMediaItemTakeInfo_Value(take, "B_PPITCH")
+      -- Auto-enable warp mode when item has stretch markers or non-zero pitch
+      local sm_count = reaper.GetTakeNumStretchMarkers(take)
+      if preserve_pitch == 0 and (sm_count > 0 or math.abs(current_pitch) > 0.001) then
+        reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 1)
+        preserve_pitch = 1
+        state._warp_auto_enabled = true
+        reaper.UpdateItemInProject(reaper.GetMediaItemTake_Item(take))
+      end
+      -- Auto-disable warp when pitch returned to 0 and warp was auto-enabled
+      if state._warp_auto_enabled and preserve_pitch == 1
+          and sm_count == 0 and math.abs(current_pitch) < 0.001 then
+        reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", 0)
+        reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 0)
+        preserve_pitch = 0
+        state._warp_auto_enabled = nil
+        reaper.UpdateItemInProject(reaper.GetMediaItemTake_Item(take))
+      end
+      state.warp_mode = preserve_pitch == 1
     end
-    -- Auto-disable warp when pitch returned to 0 and warp was auto-enabled
-    if state._warp_auto_enabled and preserve_pitch == 1
-        and sm_count == 0 and math.abs(current_pitch) < 0.001 then
-      reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", 0)
-      reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 0)
-      preserve_pitch = 0
-      state._warp_auto_enabled = nil
-      reaper.UpdateItemInProject(reaper.GetMediaItemTake_Item(take))
-    end
-    state.warp_mode = preserve_pitch == 1
     -- Per-item saved warp markers (keyed by take GUID)
     if not state.warp_saved_markers_map then
       state.warp_saved_markers_map = {}

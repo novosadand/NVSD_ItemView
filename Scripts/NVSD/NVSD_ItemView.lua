@@ -304,6 +304,13 @@ local function loop()
       reaper_is_active = false
     end
   end
+  -- focus_settled: alias for reaper_is_active.  Guards REAPER API reads/writes
+  -- that could return stale values when the window is unfocused (property caching,
+  -- stabilization, warp markers, REAPER writes).  Input handling (keyboard, mouse)
+  -- uses reaper_is_active directly.
+  local focus_settled = reaper_is_active
+  state.reaper_is_active = reaper_is_active
+
   if reaper_is_active and reaper.JS_Mouse_GetState then
     local mouse_state = reaper.JS_Mouse_GetState(1)
     mouse_is_down = (mouse_state & 1) ~= 0
@@ -593,8 +600,8 @@ local function loop()
     local selected_item = reaper.GetSelectedMediaItem(0, 0)
 
     -- Clear sticky when selection changes to a DIFFERENT item (not when deselecting to nil).
-    -- Skip when REAPER is unfocused to prevent spurious resets.
-    if reaper_is_active and selected_item ~= state.last_selected_item then
+    -- Skip when unfocused/settling to prevent spurious resets from stale API values.
+    if focus_settled and selected_item ~= state.last_selected_item then
       if selected_item then
         -- Save current item's waveform zoom, load new item's zoom
         if state.last_selected_item then
@@ -635,7 +642,7 @@ local function loop()
       -- When deselecting (selected_item == nil), do NOT clear sticky/state.
       -- The remembered_item will keep the script showing the last item.
     end
-    if reaper_is_active then
+    if focus_settled then
       state.last_selected_item = selected_item
     end
 
@@ -718,8 +725,8 @@ local function loop()
     end
 
     -- Clear zoom/pan state when no item is shown (so next item shows full view)
-    -- Guard with reaper_is_active to prevent spurious clearing on alt-tab
-    if reaper_is_active and not item then
+    -- Guard with focus_settled to prevent spurious clearing on alt-tab / settle
+    if focus_settled and not item then
       state.last_panned_item = nil
       state.last_zoomed_item = nil
       state.warp_markers_take = nil
@@ -727,8 +734,8 @@ local function loop()
     end
 
     -- Validate item pointer (may go stale during autosave, project load, or undo)
-    -- Skip when REAPER is unfocused to prevent spurious invalidation
-    if reaper_is_active and item and not reaper.ValidatePtr(item, "MediaItem*") then
+    -- Skip during unfocused/settle to prevent spurious invalidation
+    if focus_settled and item and not reaper.ValidatePtr(item, "MediaItem*") then
       item = nil
       state.sticky_item = nil
       state.sticky_item_valid = false
@@ -871,28 +878,51 @@ local function loop()
           -- (typically matching the looped item length).  Cache the value per source
           -- and only accept increases that look like genuine source changes (not
           -- the inflated looped-item-length glitch).
-          local take_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
-          if take_playrate == 0 then take_playrate = 1 end
-          if source ~= state._src_len_source then
-            state._src_len_cache = nil
-            state._src_len_source = source
-          end
-          if state._src_len_cache then
-            if source_length < state._src_len_cache - 0.001 then
-              -- API returned a smaller value: always accept (could be correcting
-              -- an inflated initial read, or source genuinely changed).
-              state._src_len_cache = source_length
-            elseif source_length > state._src_len_cache + 0.001 then
-              -- API returned a larger value: accept unless it suspiciously matches
-              -- the looped item length (the known REAPER API glitch).
-              local looped_length = item_length * take_playrate
-              if math.abs(source_length - looped_length) > 0.01 then
-                state._src_len_cache = source_length
-              end
+          -- Gate with focus_settled: stale values when unfocused/settling can corrupt _src_len_cache.
+          if focus_settled then
+            local take_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
+            if take_playrate == 0 then take_playrate = 1 end
+            if source ~= state._src_len_source then
+              state._src_len_cache = nil
+              state._src_len_source = source
             end
+            if state._src_len_cache then
+              if source_length < state._src_len_cache - 0.001 then
+                -- Reject decreases that match source-space item length: on focus
+                -- transitions GetMediaSourceLength can return item_length instead
+                -- of the real source length (deflated glitch, inverse of the
+                -- inflated looped-length glitch on increases).
+                local item_src_len = item_length * take_playrate
+                if math.abs(source_length - item_src_len) > 0.01 then
+                  state._src_len_cache = source_length
+                end
+              elseif source_length > state._src_len_cache + 0.001 then
+                local looped_length = item_length * take_playrate
+                if math.abs(source_length - looped_length) > 0.01 then
+                  state._src_len_cache = source_length
+                end
+              end
+              source_length = state._src_len_cache
+            else
+              state._src_len_cache = source_length
+            end
+          elseif state._src_len_cache then
             source_length = state._src_len_cache
-          else
-            state._src_len_cache = source_length
+          end
+
+          -- Freeze item properties when REAPER is unfocused or settling: API calls
+          -- can return stale/default values during focus transitions, which corrupt
+          -- ext computation, rendering coordinates, and the source_length cache.
+          if focus_settled then
+            state._cached_item_length = item_length
+            state._cached_item_position = item_position
+            state._cached_start_offset = start_offset
+            state._cached_source_length = source_length
+          elseif state._cached_item_length then
+            item_length = state._cached_item_length
+            item_position = state._cached_item_position
+            start_offset = state._cached_start_offset
+            source_length = state._cached_source_length
           end
 
           -- Cache WAV cue markers (re-enumerate when source changes)
@@ -984,10 +1014,10 @@ local function loop()
           -- Early warp_mode sync: read B_PPITCH before marker caching so stale state
           -- from a previously selected item doesn't trigger auto-add on the wrong item.
           -- controls.draw_button_panel also sets this (with auto-enable logic), but runs later.
-          -- Skip when REAPER is unfocused: API calls can return stale/default values
-          -- (e.g. B_PPITCH=0), which would flip warp_mode off and nil the warp_map,
+          -- Skip when REAPER is unfocused or settling: API calls can return stale/default
+          -- values (e.g. B_PPITCH=0), which would flip warp_mode off and nil the warp_map,
           -- causing ext to recompute via the non-warp path and the view to jump.
-          if reaper_is_active then
+          if focus_settled then
             local current_ppitch = reaper.GetMediaItemTakeInfo_Value(take, "B_PPITCH")
             state.warp_mode = current_ppitch == 1
           end
@@ -1001,7 +1031,7 @@ local function loop()
                 and state.marker_drag_activated
                 and state.drag_start_warp_markers)
                 or (state.slope_dragging and state.slope_drag_activated)
-            if not state._freeze_warp and reaper_is_active then
+            if not state._freeze_warp and focus_settled then
               -- Always refresh markers (cheap read) so external changes are picked up
               -- No auto-created start marker needed: warp functions handle
               -- empty/single-marker maps with linear playrate-based mapping.
@@ -1018,7 +1048,7 @@ local function loop()
               state.transients_computed = true
             end
 
-            if not state._freeze_warp and reaper_is_active then
+            if not state._freeze_warp and focus_settled then
               -- Build warp map (sorted by pos) and compute hash for cache invalidation
               state.warp_map = utils.build_warp_map(state.warp_markers)
               local warp_hash = 0
@@ -1033,6 +1063,11 @@ local function loop()
 
           local playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
           if playrate == 0 then playrate = 1 end  -- Guard against division by zero
+          if focus_settled then
+            state._cached_playrate = playrate
+          elseif state._cached_playrate then
+            playrate = state._cached_playrate
+          end
 
           local item_vol = reaper.GetMediaItemInfo_Value(item, "D_VOL")
 
@@ -1070,8 +1105,11 @@ local function loop()
           end
 
           -- Detect external item resize (e.g. dragging item edge in arrange view)
-          -- and clamp fades so the near-edge fade shrinks first
-          if not state.dragging_start and not state.dragging_end
+          -- and clamp fades so the near-edge fade shrinks first.
+          -- Gate with focus_settled: stale API values when unfocused/settling
+          -- could trigger false resize detection and write wrong fade values.
+          if focus_settled
+              and not state.dragging_start and not state.dragging_end
               and not state.dragging_fade_in and not state.dragging_fade_out then
             local cur_len = item_length
             local cur_pos = item_position
@@ -1206,8 +1244,8 @@ local function loop()
 
           -- Selection stabilization: when warp map changes (undo, marker edit),
           -- remap selection from saved source-space to current coordinate system.
-          -- Skip when unfocused to prevent transient warp_hash changes from corrupting state.
-          if reaper_is_active then
+          -- Skip when unfocused/settling to prevent transient warp_hash changes from corrupting state.
+          if focus_settled then
             if state.region_selected and state._sel_src_start
                 and state._sel_prev_warp_hash and state.warp_hash ~= state._sel_prev_warp_hash
                 and not state.any_drag_active() then
@@ -1402,10 +1440,9 @@ local function loop()
             ext_length = ext_end - ext_start
           end
 
-          -- Freeze ext when REAPER is unfocused: any upstream property change
-          -- (item_length, source_length, playrate, warp_map, section_offset, …)
-          -- feeds into ext. Rather than caching every input, cache ext directly.
-          if reaper_is_active then
+          -- Freeze ext when REAPER is unfocused or settling: any upstream property
+          -- change feeds into ext. Cache ext directly as defense in depth.
+          if focus_settled then
             state._cached_ext_start = ext_start
             state._cached_ext_end = ext_end
             state._cached_ext_length = ext_length
@@ -1439,9 +1476,9 @@ local function loop()
           local file_path = reaper.GetMediaSourceFileName(source, "")
 
           -- Reset zoom and pan when item changes - show full source
-          -- Skip when REAPER is unfocused to prevent view jumping on alt-tab
+          -- Skip when unfocused/settling to prevent view jumping on alt-tab
           state.item_just_changed = false
-          if reaper_is_active and (item ~= state.last_zoomed_item or item ~= state.last_panned_item) then
+          if focus_settled and (item ~= state.last_zoomed_item or item ~= state.last_panned_item) then
             state.item_just_changed = true
             state.zoom_level = 1.0
             state.pan_offset = 0
@@ -1811,9 +1848,9 @@ local function loop()
           -- View stabilization: when ext changes or the coordinate system toggles
           -- (warped ↔ non-warped), recompute zoom/pan so the same audio stays visible.
           -- Uses source-space view bounds (invariant) saved at the end of each frame.
-          -- Skip when REAPER is unfocused: ext can fluctuate transiently on focus loss,
-          -- and updating tracking state would corrupt the saved view for the return frame.
-          if reaper_is_active then
+          -- Skip when unfocused/settling: ext can fluctuate transiently on focus
+          -- transitions, and updating tracking state would corrupt the saved view.
+          if focus_settled then
             if (is_warped_view ~= (state._stab_prev_warped or false)
                 or (state._prev_ext_start
                   and (math.abs(ext_start - state._prev_ext_start) > 0.0001
@@ -1864,10 +1901,11 @@ local function loop()
             view_length = view_end - view_start
           end
           if view_length <= 0 then view_length = 0.001 end
+
           -- Save view bounds in source-space (invariant across coordinate systems)
           -- Used by stabilization on the next frame to restore the correct view window.
-          -- Skip when unfocused so transient ext fluctuations don't corrupt the saved view.
-          if reaper_is_active then
+          -- Skip when unfocused/settling so transient values don't corrupt the saved view.
+          if focus_settled then
             if is_warped_view and state.warp_map then
               state._view_src_start = utils.warp_pos_to_src(state.warp_map, view_start, playrate)
               state._view_src_end = utils.warp_pos_to_src(state.warp_map, view_start + view_length, playrate)
@@ -1877,8 +1915,8 @@ local function loop()
             end
           end
           -- Save selection and cursor in source-space for stabilization on warp map changes
-          -- Skip when unfocused (same rationale as view stabilization guard above)
-          if reaper_is_active then
+          -- Skip when unfocused/settling (same rationale as view stabilization guard above)
+          if focus_settled then
             if state.region_selected then
               if is_warped_view and state.warp_map then
                 state._sel_src_start = utils.warp_pos_to_src(state.warp_map, state.region_sel_start, playrate)
