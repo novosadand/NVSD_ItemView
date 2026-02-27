@@ -1996,6 +1996,12 @@ local HELP_SECTIONS = {
       "- JS_ReaScriptAPI improves knob/slider drag range",
       "- Hover any element for a tooltip",
       "- Use the Preferences tab to control initial toggle states and hide UI panels",
+      "",
+      "## Double-click to open",
+      "Open ItemView by double-clicking audio items (MIDI items still open the MIDI editor):",
+      "1. Actions > Show Action List > Load ReaScript > select NVSD_ItemView_DoubleClick.lua",
+      "2. Preferences > Mouse Modifiers > Context: Media item left click",
+      "3. Set Double click to Action, then pick NVSD_ItemView_DoubleClick",
     },
   },
 }
