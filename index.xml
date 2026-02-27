@@ -1516,6 +1516,26 @@ Fixes:
         <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/fa78640/Scripts/NVSD/lib/settings.lua</source>
         <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/fa78640/Scripts/NVSD/lib/settings_ui.lua</source>
       </version>
+      <version name="1.2.2" author="NVSD" time="2026-02-27T20:00:00Z">
+        <changelog><![CDATA[Playhead restyle, MIDI item polish, tab hover fix, DoubleClick auto-registers.
+
+- Playhead: muted teal 1px line matching REAPER edit cursor, distinct from markers
+- MIDI items: disabled controls no longer highlight on hover (mute/toolbar/settings still work)
+- Tab hover: subtle brightness instead of accent color so icons stay visible
+- Dock tip: corrected to "drag title bar into docker"
+- DoubleClick action now auto-registers in Action List via ReaPack]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/cb778b1/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/cb778b1/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/cb778b1/Scripts/NVSD/NVSD_ItemView_DoubleClick.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/cb778b1/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/cb778b1/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/cb778b1/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/cb778b1/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/cb778b1/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/cb778b1/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/cb778b1/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/cb778b1/Scripts/NVSD/lib/settings_ui.lua</source>
+      </version>
     </reapack>
   </category>
 </index>
