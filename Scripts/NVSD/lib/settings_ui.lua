@@ -919,6 +919,7 @@ local function draw_shortcuts_tab(ctx, settings)
 
     reaper.ImGui_EndTable(ctx)
   end
+
 end
 
 -- Draw Toolbar tab content
@@ -2199,6 +2200,11 @@ function settings_ui.draw(ctx, settings)
   local style_var_count = 6
 
   local flags = reaper.ImGui_WindowFlags_NoCollapse()
+  -- Disable scroll-with-mouse while listening for shortcut input (prevents
+  -- mouse wheel from scrolling the settings page during shortcut capture)
+  if ui_state.listening_for then
+    flags = flags + reaper.ImGui_WindowFlags_NoScrollWithMouse()
+  end
   local visible, open = reaper.ImGui_Begin(ctx, "NVSD ItemView Settings", true, flags)
 
   if not open then
