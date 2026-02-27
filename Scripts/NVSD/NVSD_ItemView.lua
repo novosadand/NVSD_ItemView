@@ -984,8 +984,13 @@ local function loop()
           -- Early warp_mode sync: read B_PPITCH before marker caching so stale state
           -- from a previously selected item doesn't trigger auto-add on the wrong item.
           -- controls.draw_button_panel also sets this (with auto-enable logic), but runs later.
-          local current_ppitch = reaper.GetMediaItemTakeInfo_Value(take, "B_PPITCH")
-          state.warp_mode = current_ppitch == 1
+          -- Skip when REAPER is unfocused: API calls can return stale/default values
+          -- (e.g. B_PPITCH=0), which would flip warp_mode off and nil the warp_map,
+          -- causing ext to recompute via the non-warp path and the view to jump.
+          if reaper_is_active then
+            local current_ppitch = reaper.GetMediaItemTakeInfo_Value(take, "B_PPITCH")
+            state.warp_mode = current_ppitch == 1
+          end
 
           -- Cache stretch markers and transients (only when WARP mode is active)
           if state.warp_mode then
@@ -996,7 +1001,7 @@ local function loop()
                 and state.marker_drag_activated
                 and state.drag_start_warp_markers)
                 or (state.slope_dragging and state.slope_drag_activated)
-            if not state._freeze_warp then
+            if not state._freeze_warp and reaper_is_active then
               -- Always refresh markers (cheap read) so external changes are picked up
               -- No auto-created start marker needed: warp functions handle
               -- empty/single-marker maps with linear playrate-based mapping.
@@ -1013,7 +1018,7 @@ local function loop()
               state.transients_computed = true
             end
 
-            if not state._freeze_warp then
+            if not state._freeze_warp and reaper_is_active then
               -- Build warp map (sorted by pos) and compute hash for cache invalidation
               state.warp_map = utils.build_warp_map(state.warp_markers)
               local warp_hash = 0
