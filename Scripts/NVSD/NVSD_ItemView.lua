@@ -324,6 +324,14 @@ local function loop()
   -- state from corrupting positions (ImGui_IsMouseDown/GetMousePos can return
   -- stale values on the transition frame)
   if not reaper_is_active then
+    -- Create undo point if a marker/fade drag was in progress (changes already
+    -- applied to REAPER during the drag, need an undo point to revert)
+    if state.marker_drag_activated then
+      local msg = state.dragging_start and "NVSD_ItemView: Adjust item start"
+                  or state.dragging_end and "NVSD_ItemView: Adjust item end"
+                  or state.dragging_zone and "NVSD_ItemView: Slide item"
+      if msg then reaper.Undo_OnStateChangeEx(msg, -1, -1) end
+    end
     state.reset_all_drags()
   end
 
@@ -362,11 +370,18 @@ local function loop()
 
   if visible then
     -- Cache modifier key state once per frame (avoids repeated Lua→C bridge calls)
-    -- Clear stale modifier state on the frame focus returns (Alt+Tab leaves Alt
-    -- "stuck" because the key-up event fires while REAPER is unfocused)
-    local ctrl_held = not focus_just_returned and reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
-    local shift_held = not focus_just_returned and reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
-    local alt_held = not focus_just_returned and reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
+    -- Suppress stale modifier state after focus returns. Alt+Tab leaves Alt
+    -- "stuck" because the key-up fires while REAPER is unfocused; ImGui can
+    -- report it as held for several frames after refocus. Suppress modifiers
+    -- for a brief window after focus returns to let ImGui flush stale state.
+    if focus_just_returned then
+      state._focus_suppress_frames = 8
+    elseif (state._focus_suppress_frames or 0) > 0 then
+      state._focus_suppress_frames = state._focus_suppress_frames - 1
+    end
+    local ctrl_held = state._focus_suppress_frames == 0 and reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
+    local shift_held = state._focus_suppress_frames == 0 and reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
+    local alt_held = state._focus_suppress_frames == 0 and reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
 
     -- Raw VKey rising-edge detection for Ctrl/Cmd+C (macOS: REAPER may consume
     -- Cmd+C before ImGui sees it, so ImGui_IsKeyPressed(Key_C) never fires).
@@ -6568,11 +6583,8 @@ local function loop()
                 state.preview_start_realtime = reaper.time_precise()
               else
                 -- Non-warp: use CF_Preview for isolated source playback
-                -- If warp markers exist (warp_mode on but <2 markers),
-                -- convert cursor pos through warp map to source-time
-                if state.warp_map then
-                  pos = utils.warp_pos_to_src(state.warp_map, pos, playrate)
-                end
+                -- pos is already in source-time (view coords are source-time
+                -- when is_warped_view is false), so no conversion needed
                 -- Wrap to source coordinates for looped/extended items
                 local source_pos = pos
                 if source_length > 0 then

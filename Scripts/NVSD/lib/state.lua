@@ -153,6 +153,7 @@ state.cursor_lock_works = nil  -- nil = untested, true/false after first verify
 state.cursor_lock_zero_frames = 0  -- count consecutive drag frames with zero cumulative delta
 state._copy_combo_prev = false       -- rising-edge detection for VKey Ctrl+C fallback
 state._prev_active = nil             -- previous frame's reaper_is_active (nil on first frame)
+state._focus_suppress_frames = 0     -- frames remaining to suppress stale modifier keys after refocus
 
 -- Edge auto-scroll state (for Mac/no-cursor-lock fallback)
 state.drag_imgui_last_y = nil        -- previous frame ImGui mouse_y
