@@ -16,6 +16,7 @@ function drawing.set_frame_time(t)
 end
 
 function drawing.tooltip(ctx, id, text)
+  if drawing.tooltips_disabled then return end
   local now = frame_time > 0 and frame_time or reaper.time_precise()
   -- Reset if different element or gap since last frame (>50ms = missed a frame)
   if tooltip_hover_id ~= id or (now - tooltip_last_frame) > 0.05 then

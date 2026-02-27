@@ -1081,6 +1081,36 @@ function utils.quantize_warp_markers_ex(take, snap_fn, amount, range_start, rang
   return moved
 end
 
+-- Remap take envelope points through a warp map change so they stay attached
+-- to the same source audio. For each point: old pos → source (via old_map) →
+-- new pos (via new_map).
+function utils.remap_envelopes_for_warp_change(take, old_map, new_map, playrate)
+  if not take or not old_map or not new_map then return end
+  local env_names = {"Volume", "Pitch", "Pan"}
+  for _, env_name in ipairs(env_names) do
+    local env = reaper.GetTakeEnvelopeByName(take, env_name)
+    if env then
+      local count = reaper.CountEnvelopePoints(env)
+      if count > 0 then
+        local points = {}
+        for i = 0, count - 1 do
+          local ret, time, value, shape, tension, selected = reaper.GetEnvelopePoint(env, i)
+          if ret then
+            local src = utils.warp_pos_to_src(old_map, time, playrate)
+            local new_time = utils.warp_src_to_pos(new_map, src, playrate)
+            points[#points + 1] = {time = new_time, value = value, shape = shape, tension = tension, selected = selected}
+          end
+        end
+        reaper.DeleteEnvelopePointRange(env, -1, math.huge)
+        for _, pt in ipairs(points) do
+          reaper.InsertEnvelopePoint(env, pt.time, pt.value, pt.shape, pt.tension, pt.selected, true)
+        end
+        reaper.Envelope_SortPoints(env)
+      end
+    end
+  end
+end
+
 -- Insert a single warp marker at a view-time position.
 -- Returns true if a marker was created, false if out of bounds or duplicate.
 function utils.insert_warp_marker_at(take, time, is_warped, warp_map, playrate, source_length)

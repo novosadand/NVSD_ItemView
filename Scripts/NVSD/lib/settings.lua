@@ -684,6 +684,7 @@ settings.DEFAULT_DEFAULTS = {
   envelope_lock = false,
   env_snap_enabled = true,
   auto_fit_markers = false,
+  show_tooltips = true,
 }
 
 -- Default layout visibility (which UI panels are shown)

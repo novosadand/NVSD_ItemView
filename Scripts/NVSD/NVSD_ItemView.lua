@@ -1164,6 +1164,7 @@ local function loop()
 
           local mouse_x, mouse_y = reaper.ImGui_GetMousePos(ctx)
           drawing.set_frame_time(reaper.time_precise())
+          drawing.tooltips_disabled = not settings.current.defaults.show_tooltips
 
           -- Warp bar hit test (needed early for drawing-phase hover detection)
           local mouse_in_warp_bar = reaper_is_active
@@ -1197,6 +1198,23 @@ local function loop()
             state._pending_sel_src_start = nil
             state._pending_sel_src_end = nil
           end
+
+          -- Selection stabilization: when warp map changes (undo, marker edit),
+          -- remap selection from saved source-space to current coordinate system.
+          if state.region_selected and state._sel_src_start
+              and state._sel_prev_warp_hash and state.warp_hash ~= state._sel_prev_warp_hash
+              and not state.any_drag_active() then
+            if is_warped_view and state.warp_map then
+              state.region_sel_start = utils.warp_src_to_pos(state.warp_map, state._sel_src_start, playrate)
+              state.region_sel_end = utils.warp_src_to_pos(state.warp_map, state._sel_src_end, playrate)
+            else
+              state.region_sel_start = state._sel_src_start
+              state.region_sel_end = state._sel_src_end
+            end
+            state.selection_start_time = state.region_sel_start
+            state.selection_end_time = state.region_sel_end
+          end
+          state._sel_prev_warp_hash = state.warp_hash
 
           -- Reset unwrap tracking when item changes
           if state.unwrap_tracked_item ~= item then
@@ -1750,6 +1768,16 @@ local function loop()
           else
             state._view_src_start = view_start
             state._view_src_end = view_start + view_length
+          end
+          -- Save selection in source-space for stabilization on warp map changes
+          if state.region_selected then
+            if is_warped_view and state.warp_map then
+              state._sel_src_start = utils.warp_pos_to_src(state.warp_map, state.region_sel_start, playrate)
+              state._sel_src_end = utils.warp_pos_to_src(state.warp_map, state.region_sel_end, playrate)
+            else
+              state._sel_src_start = state.region_sel_start
+              state._sel_src_end = state.region_sel_end
+            end
           end
 
           -- Per-view peak loading: load exactly screen-width peaks for the visible range.
@@ -2497,7 +2525,7 @@ local function loop()
             local tab_area_h = 0
             if layout.show_warp or layout.show_buttons then
               controls.draw_panel_tabs(ctx, draw_list, mouse_x, mouse_y,
-                left_col_x, left_col_y + 6, config, state)
+                left_col_x, left_col_y + 6, config, state, drawing)
               tab_area_h = config.TAB_HEIGHT + 6
             end
 
@@ -5018,7 +5046,22 @@ local function loop()
 
             -- Rectangle selection finalization
             if reaper.ImGui_IsMouseReleased(ctx, 1) and state.env_rect_selecting then
-              if state.env_rect_sel_activated then
+              if not state.env_rect_sel_activated then
+                -- No drag: open context menu instead
+                local rc_t = px_to_time(state.env_rect_sel_start_x)
+                if is_warped_view then
+                  rc_t = snap_to_grid_if_enabled(rc_t, 0, nil)
+                else
+                  rc_t = snap_to_grid_if_enabled(rc_t)
+                end
+                state.warp_right_click_time = rc_t
+                state.warp_right_click_marker_idx = state.warp_marker_hovered_idx
+                state.preview_cursor_pos = rc_t
+                state.stop_preview()
+                reaper.ImGui_OpenPopup(ctx, "context_menu")
+                state.env_rect_selecting = false
+                state.env_rect_sel_activated = false
+              elseif state.env_rect_sel_activated then
                 local rect_x1 = math.min(state.env_rect_sel_start_x, mouse_x)
                 local rect_x2 = math.max(state.env_rect_sel_start_x, mouse_x)
                 local rect_y1 = math.min(state.env_rect_sel_start_y, mouse_y)

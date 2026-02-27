@@ -1698,7 +1698,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 end
 
 -- Draw two tabs spanning the full column width, split in half
-function controls.draw_panel_tabs(ctx, draw_list, mouse_x, mouse_y, left_col_x, tab_y, config, state)
+function controls.draw_panel_tabs(ctx, draw_list, mouse_x, mouse_y, left_col_x, tab_y, config, state, drawing)
   local col_w = config.LEFT_COLUMN_WIDTH - 2  -- match column bg width
   local tab_h = config.TAB_HEIGHT
   local half_w = math.floor(col_w / 2)
@@ -1742,6 +1742,10 @@ function controls.draw_panel_tabs(ctx, draw_list, mouse_x, mouse_y, left_col_x, 
 
   -- Subtle divider between tabs
   reaper.ImGui_DrawList_AddLine(draw_list, t2x, tab_y + 2, t2x, tab_y + tab_h - 2, 0x44444488, 1)
+
+  -- Tooltips
+  if in_t1 then drawing.tooltip(ctx, "tab_warp", "Warp controls") end
+  if in_t2 then drawing.tooltip(ctx, "tab_quantize", "Quantize settings") end
 
   -- Handle clicks
   if reaper.ImGui_IsMouseClicked(ctx, 0) then
