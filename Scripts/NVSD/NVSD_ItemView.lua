@@ -2919,10 +2919,13 @@ local function loop()
               end
             end
           end
-          -- Envelope nodes/segments take priority over fades when overlapping
-          if state.envelope_hovered_segment >= 0 or state.env_node_hovered_idx >= 0 then
+          -- Envelope nodes/segments take priority over fades and markers when overlapping
+          if state.envelopes_visible
+              and (state.envelope_hovered_segment >= 0 or state.env_node_hovered_idx >= 0) then
             near_fade_in = false
             near_fade_out = false
+            near_start = false
+            near_end = false
           end
           -- Only update hover state when REAPER is active (preserves visual state on alt-tab)
           if reaper_is_active then
