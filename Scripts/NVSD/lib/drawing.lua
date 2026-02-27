@@ -25,7 +25,9 @@ function drawing.tooltip(ctx, id, text)
   end
   tooltip_last_frame = now
   if now - tooltip_hover_time >= TOOLTIP_DELAY then
+    reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_WindowPadding(), 6, 4)
     reaper.ImGui_SetTooltip(ctx, text)
+    reaper.ImGui_PopStyleVar(ctx)
   end
 end
 
@@ -711,9 +713,12 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   local zoom_btn_x = zoom_anchor_x - zoom_btn_w
   local zoom_btn_y = y + math.floor((height - zoom_btn_h) / 2)
 
-  local mouse_in_zoom = state and mouse_x >= zoom_btn_x and mouse_x <= zoom_btn_x + zoom_btn_w
+  local midi_mode = state and state.midi_item_mode
+  local mouse_in_zoom = not midi_mode and state
+                        and mouse_x >= zoom_btn_x and mouse_x <= zoom_btn_x + zoom_btn_w
                         and mouse_y >= zoom_btn_y and mouse_y <= zoom_btn_y + zoom_btn_h
 
+  if not midi_mode then
   -- Background
   local zoom_bg = (mouse_in_zoom and not (state and state.wf_zoom_dragging)) and config.COLOR_BTN_HOVER or config.COLOR_GRID_BAR
   reaper.ImGui_DrawList_AddRectFilled(draw_list, zoom_btn_x, zoom_btn_y,
@@ -754,9 +759,10 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
     end
     drawing.tooltip(ctx, "wf_zoom", tip)
   end
+  end -- not midi_mode
 
   -- Interaction: double-click resets, right-click undoes, click starts vertical drag
-  if state and mouse_in_zoom then
+  if state and mouse_in_zoom and not state.midi_item_mode then
     if reaper.ImGui_IsMouseDoubleClicked(ctx, 0) then
       table.insert(state.wf_zoom_history, state.waveform_zoom)
       state.waveform_zoom = 1.0
@@ -799,9 +805,11 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   local grid_btn_w = grid_text_w + (has_toolbar and 16 or 10)
   local grid_btn_x = zoom_btn_x - grid_btn_w - 4
   local grid_btn_y = y + math.floor((height - grid_btn_h) / 2)
-  local mouse_in_grid_btn = mouse_x >= grid_btn_x and mouse_x <= grid_btn_x + grid_btn_w
+  local mouse_in_grid_btn = not midi_mode
+                            and mouse_x >= grid_btn_x and mouse_x <= grid_btn_x + grid_btn_w
                             and mouse_y >= grid_btn_y and mouse_y <= grid_btn_y + grid_btn_h
 
+  if not midi_mode then
   local grid_popup_open = reaper.ImGui_IsPopupOpen(ctx, "grid_dropdown_menu")
   local grid_text_tw, grid_text_th = reaper.ImGui_CalcTextSize(ctx, grid_label)
   local grid_tx = grid_btn_x + (grid_btn_w - grid_text_tw) / 2
@@ -813,9 +821,10 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   if mouse_in_grid_btn then
     drawing.tooltip(ctx, "grid_btn", "Grid settings")
   end
+  end -- not midi_mode
 
   -- Open grid dropdown popup on click, positioned just below the button
-  if state and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_grid_btn then
+  if state and not state.midi_item_mode and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_grid_btn then
     reaper.ImGui_OpenPopup(ctx, "grid_dropdown_menu")
     state._grid_popup_x = grid_btn_x
     state._grid_popup_y = grid_btn_y + grid_btn_h + 2
@@ -939,7 +948,7 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   -- Clicked index stored on state.toolbar_clicked to avoid local limit in caller
   if state then state.toolbar_clicked = nil end
   local toolbar_left_edge = x  -- will be updated if buttons are drawn
-  local toolbar_right_edge = grid_btn_x - 6
+  local toolbar_right_edge = midi_mode and (gear_btn_x - 6) or (grid_btn_x - 6)
 
   if toolbar_buttons and #toolbar_buttons > 0 then
     local tb_btn_h = 30
@@ -1222,7 +1231,7 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
     end
   end
 
-  -- Waveform icon (fixed size, vertically centered)
+  -- Waveform icon (fixed size, vertically centered) — skip for MIDI items
   local icon_x = mute_x + mute_size + 6
   local icon_center_y = y + height / 2
   local icon_max_h = 10
@@ -1232,12 +1241,14 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
   local bar_gap = 1
   local current_x = icon_x
 
-  for i = 1, #bar_heights do
-    local bar_h = icon_max_h * bar_heights[i]
-    local bar_y1 = icon_center_y - bar_h / 2
-    local bar_y2 = icon_center_y + bar_h / 2
-    reaper.ImGui_DrawList_AddRectFilled(draw_list, current_x, bar_y1, current_x + bar_widths[i], bar_y2, config.COLOR_INFO_BAR_ICON)
-    current_x = current_x + bar_widths[i] + bar_gap
+  if not (state and state.midi_item_mode) then
+    for i = 1, #bar_heights do
+      local bar_h = icon_max_h * bar_heights[i]
+      local bar_y1 = icon_center_y - bar_h / 2
+      local bar_y2 = icon_center_y + bar_h / 2
+      reaper.ImGui_DrawList_AddRectFilled(draw_list, current_x, bar_y1, current_x + bar_widths[i], bar_y2, config.COLOR_INFO_BAR_ICON)
+      current_x = current_x + bar_widths[i] + bar_gap
+    end
   end
 
   local text_x = current_x + 4

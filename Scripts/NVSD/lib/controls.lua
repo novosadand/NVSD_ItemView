@@ -26,6 +26,58 @@ local function has_external_editor()
 end
 controls.has_external_editor = has_external_editor
 
+-- Editable label: normal mode draws text with hover highlight + tooltip;
+-- double-click enters inline InputText. Returns (confirmed, input_text).
+function controls.editable_label(ctx, draw_list, x, y, text, text_w, text_h,
+    color_normal, color_hover, mouse_x, mouse_y, state, drawing,
+    tooltip_id, tooltip_text, label_key, input_default, input_width)
+  if state.editing_label ~= label_key then
+    -- Normal mode: draw text with optional hover highlight
+    local hovered = not state.is_any_control_dragging()
+      and mouse_x >= x and mouse_x <= x + text_w
+      and mouse_y >= y and mouse_y <= y + text_h
+    if hovered then
+      reaper.ImGui_DrawList_AddText(draw_list, x, y, color_hover, text)
+      drawing.tooltip(ctx, tooltip_id, tooltip_text)
+      if reaper.ImGui_IsMouseDoubleClicked(ctx, 0) then
+        state.editing_label = label_key
+        state.editing_label_text = input_default
+        state.editing_label_focus = true
+      end
+    else
+      reaper.ImGui_DrawList_AddText(draw_list, x, y, color_normal, text)
+    end
+    return false, ""
+  else
+    -- Editing mode: inline InputText at label position
+    reaper.ImGui_SetCursorScreenPos(ctx, x, y)
+    reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_FramePadding(), 0, 0)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_FrameBg(), 0x222222FF)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), color_normal)
+    reaper.ImGui_SetNextItemWidth(ctx, input_width)
+    if state.editing_label_focus then
+      reaper.ImGui_SetKeyboardFocusHere(ctx)
+      state.editing_label_focus = false
+    end
+    local flags = reaper.ImGui_InputTextFlags_AutoSelectAll()
+    local _, new_text = reaper.ImGui_InputText(ctx, "##edit_" .. label_key, state.editing_label_text, flags)
+    state.editing_label_text = new_text
+    local deactivated = reaper.ImGui_IsItemDeactivated(ctx)
+    local enter = reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Enter())
+        or reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_KeypadEnter())
+    reaper.ImGui_PopStyleColor(ctx, 2)
+    reaper.ImGui_PopStyleVar(ctx)
+    if deactivated and enter then
+      state.editing_label = nil
+      return true, new_text
+    elseif deactivated then
+      state.editing_label = nil
+      return false, ""
+    end
+    return false, ""
+  end
+end
+
 -- Format a tooltip string with optional shortcut key
 local function tip_with_key(text, settings, shortcut_name)
   if not settings then return text end
@@ -364,7 +416,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     -- API can return stale/default values (e.g. B_PPITCH=0) which would flip
     -- warp_mode off, nil the warp_map, and cause the view to jump.
     -- state.warp_mode is already correctly guarded in the main loop.
-    if state.reaper_is_active then
+    if state.reaper_is_active and not state.midi_item_mode then
       local preserve_pitch = reaper.GetMediaItemTakeInfo_Value(take, "B_PPITCH")
       -- Auto-enable warp mode when item has stretch markers or non-zero pitch
       local sm_count = reaper.GetTakeNumStretchMarkers(take)
@@ -425,7 +477,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     drawing.tooltip(ctx, "warp_btn", tip_with_key("Preserve pitch when stretching", settings, "toggle_warp"))
   end
 
-  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_warp then
+  if not state.midi_item_mode and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_warp then
     state.warp_dropdown_open = false
     state._warp_auto_enabled = nil  -- user-initiated toggle overrides auto
     if take then
@@ -665,7 +717,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     drawing.tooltip(ctx, "pitch_mode", "Pitch shift algorithm (scroll to cycle)")
   end
 
-  if dropdown_enabled and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_dropdown
+  if not state.midi_item_mode and dropdown_enabled and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_dropdown
      and (not any_dropdown_menu_open or state.warp_dropdown_open) then
     state.warp_dropdown_open = not state.warp_dropdown_open
     if state.warp_dropdown_open then
@@ -675,7 +727,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   end
 
   -- Mouse wheel on dropdown: cycle through algorithms
-  if dropdown_enabled and mouse_in_dropdown and take then
+  if not state.midi_item_mode and dropdown_enabled and mouse_in_dropdown and take then
     local wheel = reaper.ImGui_GetMouseWheel(ctx)
     if wheel ~= 0 then
       local current_idx = 1
@@ -1509,7 +1561,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     drawing.tooltip(ctx, "clear_btn", tip_with_key("Reset pitch and playrate", settings, "clear"))
   end
 
-  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_clear then
+  if not state.midi_item_mode and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_clear then
     if take and item then
       reaper.Undo_BeginBlock()
       local current_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
@@ -1561,7 +1613,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   end
 
   -- x2 click: double speed
-  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_x2 and not any_dropdown_menu_open then
+  if not state.midi_item_mode and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_x2 and not any_dropdown_menu_open then
     if take and item then
       reaper.Undo_BeginBlock()
       local cur_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
@@ -1584,7 +1636,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   end
 
   -- /2 click: half speed
-  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_half and not any_dropdown_menu_open then
+  if not state.midi_item_mode and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_half and not any_dropdown_menu_open then
     if take and item then
       reaper.Undo_BeginBlock()
       local cur_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
@@ -1630,7 +1682,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     drawing.tooltip(ctx, "reverse_btn", tip_with_key("Reverse audio", settings, "reverse"))
   end
 
-  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_rev and not any_dropdown_menu_open then
+  if not state.midi_item_mode and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_rev and not any_dropdown_menu_open then
     if item then
       utils.reverse_item(item, state)
     end
@@ -1653,7 +1705,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     drawing.tooltip(ctx, "edit_btn", tip_with_key("Open in editor", settings, "open_editor"))
   end
 
-  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_edit and not any_dropdown_menu_open then
+  if not state.midi_item_mode and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_edit and not any_dropdown_menu_open then
     if item then
       utils.open_editor(item, has_external_editor)
     end
@@ -1686,7 +1738,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     drawing.tooltip(ctx, "loop_btn", "Toggle loop source")
   end
 
-  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_loop and not any_dropdown_menu_open then
+  if not state.midi_item_mode and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_loop and not any_dropdown_menu_open then
     if item then
       reaper.Undo_BeginBlock()
       local new_val = is_looped and 0 or 1
@@ -1754,7 +1806,7 @@ function controls.draw_panel_tabs(ctx, draw_list, mouse_x, mouse_y, left_col_x, 
   if in_t2 then drawing.tooltip(ctx, "tab_quantize", "Quantize settings") end
 
   -- Handle clicks
-  if reaper.ImGui_IsMouseClicked(ctx, 0) then
+  if not state.midi_item_mode and reaper.ImGui_IsMouseClicked(ctx, 0) then
     if in_t1 then state.left_panel_tab = "warp" end
     if in_t2 then state.left_panel_tab = "quantize" end
   end
@@ -1790,7 +1842,7 @@ function controls.draw_quantize_panel(ctx, draw_list, mouse_x, mouse_y,
   local gbw = reaper.ImGui_CalcTextSize(ctx, gbl)
   local gbtc = is_grid_sel and (warp_on and config.COLOR_BTN_TEXT or 0x999999FF) or (warp_on and config.COLOR_INFO_BAR_TEXT or DIM)
   reaper.ImGui_DrawList_AddText(draw_list, px + (pw - gbw) / 2, cy + 1, gbtc, gbl)
-  if in_grid_btn and reaper.ImGui_IsMouseClicked(ctx, 0) then
+  if not state.midi_item_mode and in_grid_btn and reaper.ImGui_IsMouseClicked(ctx, 0) then
     settings.current.quantize.grid = "grid"
     settings.save_quantize("grid")
   end
@@ -1815,7 +1867,7 @@ function controls.draw_quantize_panel(ctx, draw_list, mouse_x, mouse_y,
     local lbl_w = reaper.ImGui_CalcTextSize(ctx, label)
     local ltc = is_sel and (warp_on and config.COLOR_BTN_TEXT or 0x999999FF) or (warp_on and config.COLOR_INFO_BAR_TEXT or DIM)
     reaper.ImGui_DrawList_AddText(draw_list, bx + (half_w - lbl_w) / 2, by + 1, ltc, label)
-    if in_btn and reaper.ImGui_IsMouseClicked(ctx, 0) then
+    if not state.midi_item_mode and in_btn and reaper.ImGui_IsMouseClicked(ctx, 0) then
       settings.current.quantize.grid = btn_ids[i]
       settings.save_quantize("grid")
     end
@@ -1835,7 +1887,7 @@ function controls.draw_quantize_panel(ctx, draw_list, mouse_x, mouse_y,
   end
   local trip_tc = warp_on and trip_relevant and config.COLOR_INFO_BAR_TEXT or DIM
   reaper.ImGui_DrawList_AddText(draw_list, px + cb_size + 4, cy - 1, trip_tc, "Triplets")
-  if in_cb and reaper.ImGui_IsMouseClicked(ctx, 0) then
+  if not state.midi_item_mode and in_cb and reaper.ImGui_IsMouseClicked(ctx, 0) then
     settings.current.grid.triplet = not settings.current.grid.triplet
     settings.save_grid("triplet")
   end
@@ -1874,20 +1926,33 @@ function controls.draw_quantize_panel(ctx, draw_list, mouse_x, mouse_y,
   reaper.ImGui_DrawList_AddText(draw_list, knob_cx - pct_w / 2, knob_cy + knob_r + 6, amt_tc, pct_text)
 
   -- Knob interaction (vertical drag)
-  if in_knob and reaper.ImGui_IsMouseDoubleClicked(ctx, 0) then
+  if not state.midi_item_mode and in_knob and reaper.ImGui_IsMouseDoubleClicked(ctx, 0) then
     settings.current.quantize.amount = 100
     settings.save_quantize("amount")
     state.end_drag("quantize_amount")
-  elseif in_knob and reaper.ImGui_IsMouseClicked(ctx, 0) and not reaper.ImGui_IsMouseDoubleClicked(ctx, 0) then
+  elseif not state.midi_item_mode and in_knob and reaper.ImGui_IsMouseClicked(ctx, 0) and not reaper.ImGui_IsMouseDoubleClicked(ctx, 0) then
     local fine = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
     state.start_drag("quantize_amount", mouse_y, amount, fine)
   end
 
-  if state.is_dragging("quantize_amount") then
+  if not state.midi_item_mode and state.is_dragging("quantize_amount") then
     if reaper.ImGui_IsMouseDown(ctx, 0) then
       local delta = state.get_drag_delta(ctx, "quantize_amount", mouse_y, amount, 0.2)
       local origin = state.drag_controls.quantize_amount.start_value
-      local new_amt = math.floor(math.max(0, math.min(100, origin + delta / 2)) + 0.5)
+      local raw = origin + delta / 2
+      local new_amt = math.floor(math.max(0, math.min(100, raw)) + 0.5)
+      -- Clamp and rebase at bounds to prevent dead zones
+      if raw > 100 then
+        state.drag_controls.quantize_amount.start_value = 100
+        state.drag_cumulative_delta_y = 0
+      state.cursor_lock_zero_frames = 0
+        state.drag_controls.quantize_amount.start_y = mouse_y
+      elseif raw < 0 then
+        state.drag_controls.quantize_amount.start_value = 0
+        state.drag_cumulative_delta_y = 0
+      state.cursor_lock_zero_frames = 0
+        state.drag_controls.quantize_amount.start_y = mouse_y
+      end
       settings.current.quantize.amount = new_amt
       settings.save_quantize("amount")
       reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
@@ -1922,7 +1987,7 @@ function controls.draw_quantize_panel(ctx, draw_list, mouse_x, mouse_y,
   reaper.ImGui_DrawList_AddText(draw_list, apply_x + (apply_w - apply_lw) / 2, cy + 2, apply_tc, apply_lbl)
 
   -- Store apply click for main loop to handle (needs take/item context)
-  state.quantize_apply_clicked = in_apply and reaper.ImGui_IsMouseClicked(ctx, 0)
+  state.quantize_apply_clicked = not state.midi_item_mode and in_apply and reaper.ImGui_IsMouseClicked(ctx, 0)
 
   return cy + apply_h
 end
@@ -1996,6 +2061,8 @@ function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, pa
     drawing.tooltip(ctx, "gain_slider", "Item volume\nCtrl+drag for fine control\nDouble-click to reset")
   end
 
+  if state.midi_item_mode then return end
+
   local double_clicked = reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_slider
   if double_clicked then
     reaper.Undo_BeginBlock()
@@ -2022,11 +2089,13 @@ function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, pa
       new_pos = 1
       state.drag_controls.gain.start_value = 1
       state.drag_cumulative_delta_y = 0
+      state.cursor_lock_zero_frames = 0
       state.drag_controls.gain.start_y = mouse_y  -- rebase for ImGui fallback path
     elseif new_pos < 0 then
       new_pos = 0
       state.drag_controls.gain.start_value = 0
       state.drag_cumulative_delta_y = 0
+      state.cursor_lock_zero_frames = 0
       state.drag_controls.gain.start_y = mouse_y
     end
 
@@ -2041,7 +2110,24 @@ function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, pa
   local db_text = utils.format_db(item_db)
   local db_text_w = reaper.ImGui_CalcTextSize(ctx, db_text)
   local db_gap = math.max(4, math.min(8, pad - 1))
-  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - db_text_w / 2, slider_bottom + db_gap, config.COLOR_INFO_BAR_TEXT, db_text)
+  local db_label_x = slider_center_x - db_text_w / 2
+  local db_label_y = slider_bottom + db_gap
+  local confirmed, input = controls.editable_label(ctx, draw_list,
+      db_label_x, db_label_y, db_text, db_text_w, 14,
+      config.COLOR_INFO_BAR_TEXT, config.COLOR_BTN_HOVER,
+      mouse_x, mouse_y, state, drawing,
+      "gain_label", "Double-click to type dB value",
+      "gain", string.format("%.1f", item_db), db_text_w + 20)
+  if confirmed then
+    local val = tonumber(input)
+    if val then
+      val = math.max(-150, math.min(24, val))
+      reaper.Undo_BeginBlock()
+      reaper.SetMediaItemInfo_Value(item, "D_VOL", utils.db_to_gain(val))
+      reaper.UpdateArrange()
+      reaper.Undo_EndBlock("NVSD_ItemView: Set gain to " .. input .. " dB", -1)
+    end
+  end
 
 end
 
@@ -2072,9 +2158,27 @@ function controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel
 
   -- Pan value label below knob
   local pan_text = utils.format_pan(take_pan)
-  local pan_text_w = #pan_text * 6
-  reaper.ImGui_DrawList_AddText(draw_list, knob_cx - pan_text_w / 2,
-    knob_cy + config.PITCH_KNOB_RADIUS + 2, config.COLOR_RULER_TEXT, pan_text)
+  local pan_text_w = reaper.ImGui_CalcTextSize(ctx, pan_text)
+  local pan_label_x = knob_cx - pan_text_w / 2
+  local pan_label_y = knob_cy + config.PITCH_KNOB_RADIUS + 2
+  if state.midi_item_mode then return take_pan end
+
+  local pan_confirmed, pan_input = controls.editable_label(ctx, draw_list,
+      pan_label_x, pan_label_y, pan_text, pan_text_w, 14,
+      config.COLOR_RULER_TEXT, config.COLOR_BTN_HOVER,
+      mouse_x, mouse_y, state, drawing,
+      "pan_label", "Double-click to type pan (-100..100)",
+      "pan", tostring(math.floor(take_pan * 100 + 0.5)), 36)
+  if pan_confirmed and take then
+    local val = tonumber(pan_input)
+    if val then
+      val = math.max(-100, math.min(100, val)) / 100
+      reaper.Undo_BeginBlock()
+      reaper.SetMediaItemTakeInfo_Value(take, "D_PAN", val)
+      reaper.UpdateArrange()
+      reaper.Undo_EndBlock("NVSD_ItemView: Set pan to " .. pan_input, -1)
+    end
+  end
 
   -- Double-click reset to center
   if reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_knob then
@@ -2096,7 +2200,20 @@ function controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, panel
   if state.is_dragging("pan") and reaper.ImGui_IsMouseDown(ctx, 0) then
     local delta_y = state.get_drag_delta(ctx, "pan", mouse_y, take_pan, 0.2)
     local new_pan = state.drag_controls.pan.start_value + delta_y / 200
-    new_pan = math.max(-1, math.min(1, new_pan))
+    -- Clamp and rebase at bounds to prevent dead zones
+    if new_pan > 1 then
+      new_pan = 1
+      state.drag_controls.pan.start_value = 1
+      state.drag_cumulative_delta_y = 0
+      state.cursor_lock_zero_frames = 0
+      state.drag_controls.pan.start_y = mouse_y
+    elseif new_pan < -1 then
+      new_pan = -1
+      state.drag_controls.pan.start_value = -1
+      state.drag_cumulative_delta_y = 0
+      state.cursor_lock_zero_frames = 0
+      state.drag_controls.pan.start_y = mouse_y
+    end
     if take then
       reaper.SetMediaItemTakeInfo_Value(take, "D_PAN", new_pan)
       reaper.UpdateItemInProject(reaper.GetMediaItemTake_Item(take))
@@ -2176,7 +2293,31 @@ function controls.draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, pan
   local mouse_in_knob = knob_dist <= config.PITCH_KNOB_RADIUS + 8
                         and not (state.is_any_control_dragging() and not state.is_dragging("pitch"))
 
-  drawing.draw_knob(draw_list, knob_cx, knob_cy, config.PITCH_KNOB_RADIUS, knob_angle, mouse_in_knob, state.is_dragging("pitch"), "Pitch", "st", config)
+  drawing.draw_knob(draw_list, knob_cx, knob_cy, config.PITCH_KNOB_RADIUS, knob_angle, mouse_in_knob, state.is_dragging("pitch"), "Pitch", nil, config)
+
+  -- Pitch "st" label below knob (editable)
+  local st_text = "st"
+  local st_w = reaper.ImGui_CalcTextSize(ctx, st_text)
+  local st_x = knob_cx - st_w / 2
+  local st_y = knob_cy + config.PITCH_KNOB_RADIUS + 2
+  if state.midi_item_mode then return take_pitch, knob_cx, knob_cy end
+
+  local pitch_confirmed, pitch_input = controls.editable_label(ctx, draw_list,
+      st_x, st_y, st_text, st_w, 14,
+      config.COLOR_RULER_TEXT, config.COLOR_BTN_HOVER,
+      mouse_x, mouse_y, state, drawing,
+      "pitch_label", "Double-click to type pitch (semitones)",
+      "pitch", string.format("%.2f", take_pitch), 40)
+  if pitch_confirmed and take then
+    local val = tonumber(pitch_input)
+    if val then
+      val = math.max(config.PITCH_MIN, math.min(config.PITCH_MAX, val))
+      reaper.Undo_BeginBlock()
+      set_take_pitch(take, val, state, utils)
+      reaper.UpdateArrange()
+      reaper.Undo_EndBlock("NVSD_ItemView: Set pitch to " .. pitch_input .. " st", -1)
+    end
+  end
 
   if mouse_in_knob and not state.is_dragging("pitch") then
     drawing.tooltip(ctx, "pitch_knob", "Pitch\nDouble-click to reset\nCtrl+drag for fine control")
@@ -2207,7 +2348,20 @@ function controls.draw_pitch_knob(ctx, draw_list, mouse_x, mouse_y, panel_x, pan
     local delta_y = state.get_drag_delta(ctx, "pitch", mouse_y, take_pitch, 0.2)
     local delta_semitones = math.floor(delta_y / 10 + 0.5)
     local start_semitones = math.floor(state.drag_controls.pitch.start_value + 0.5)
-    local new_pitch = math.max(config.PITCH_MIN, math.min(config.PITCH_MAX, start_semitones + delta_semitones))
+    local raw = start_semitones + delta_semitones
+    local new_pitch = math.max(config.PITCH_MIN, math.min(config.PITCH_MAX, raw))
+    -- Clamp and rebase at bounds to prevent dead zones
+    if raw > config.PITCH_MAX then
+      state.drag_controls.pitch.start_value = config.PITCH_MAX
+      state.drag_cumulative_delta_y = 0
+      state.cursor_lock_zero_frames = 0
+      state.drag_controls.pitch.start_y = mouse_y
+    elseif raw < config.PITCH_MIN then
+      state.drag_controls.pitch.start_value = config.PITCH_MIN
+      state.drag_cumulative_delta_y = 0
+      state.cursor_lock_zero_frames = 0
+      state.drag_controls.pitch.start_y = mouse_y
+    end
     if take then
       set_take_pitch(take, new_pitch, state, utils)
       reaper.UpdateItemInProject(reaper.GetMediaItemTake_Item(take))
@@ -2262,6 +2416,8 @@ function controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, p
   local ct_tw, ct_th = reaper.ImGui_CalcTextSize(ctx, cents_text)
   reaper.ImGui_DrawList_AddText(draw_list, box_right_x + (box_width - ct_tw) / 2, box_y + (box_height - ct_th) / 2, COLOR_BOX_TEXT, cents_text)
 
+  if state.midi_item_mode then return end
+
   local semitones_double_clicked = reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_semitones_box
   if semitones_double_clicked then
     if take then
@@ -2288,7 +2444,20 @@ function controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, p
     local delta_y = state.get_drag_delta(ctx, "semitones", mouse_y, display_semitones, nil)
     local delta_semitones = math.floor(delta_y / 10 + 0.5)
     local frozen_cents = state.drag_controls.semitones.start_cents or display_cents
-    local new_pitch = math.max(config.PITCH_MIN, math.min(config.PITCH_MAX, utils.semitones_cents_to_pitch(state.drag_controls.semitones.start_value + delta_semitones, frozen_cents)))
+    local raw = utils.semitones_cents_to_pitch(state.drag_controls.semitones.start_value + delta_semitones, frozen_cents)
+    local new_pitch = math.max(config.PITCH_MIN, math.min(config.PITCH_MAX, raw))
+    -- Clamp and rebase at bounds to prevent dead zones
+    if raw > config.PITCH_MAX then
+      state.drag_controls.semitones.start_value = config.PITCH_MAX
+      state.drag_cumulative_delta_y = 0
+      state.cursor_lock_zero_frames = 0
+      state.drag_controls.semitones.start_y = mouse_y
+    elseif raw < config.PITCH_MIN then
+      state.drag_controls.semitones.start_value = config.PITCH_MIN
+      state.drag_cumulative_delta_y = 0
+      state.cursor_lock_zero_frames = 0
+      state.drag_controls.semitones.start_y = mouse_y
+    end
     if take then
       set_take_pitch(take, new_pitch, state, utils)
       reaper.UpdateItemInProject(reaper.GetMediaItemTake_Item(take))
@@ -2323,13 +2492,27 @@ function controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, p
     local total_cents = state.drag_controls.cents.start_value + delta_cents
     local frozen_semitones = state.drag_controls.cents.start_semitones or display_semitones
 
-    -- Rollover: when total_cents exceeds ±50, shift into semitones
-    local extra_semitones = math.floor((total_cents + 50) / 100)
+    -- Rollover: when total_cents exceeds ±99, shift into semitones
+    local extra_semitones = (total_cents >= 0) and math.floor(total_cents / 100) or math.ceil(total_cents / 100)
     local final_cents = total_cents - extra_semitones * 100
     local final_semitones = frozen_semitones + extra_semitones
 
-    local new_pitch = math.max(config.PITCH_MIN, math.min(config.PITCH_MAX,
-      utils.semitones_cents_to_pitch(final_semitones, final_cents)))
+    local raw = utils.semitones_cents_to_pitch(final_semitones, final_cents)
+    local new_pitch = math.max(config.PITCH_MIN, math.min(config.PITCH_MAX, raw))
+    -- Clamp and rebase at bounds to prevent dead zones
+    if raw > config.PITCH_MAX then
+      state.drag_controls.cents.start_value = 0
+      state.drag_controls.cents.start_semitones = config.PITCH_MAX
+      state.drag_cumulative_delta_y = 0
+      state.cursor_lock_zero_frames = 0
+      state.drag_controls.cents.start_y = mouse_y
+    elseif raw < config.PITCH_MIN then
+      state.drag_controls.cents.start_value = 0
+      state.drag_controls.cents.start_semitones = config.PITCH_MIN
+      state.drag_cumulative_delta_y = 0
+      state.cursor_lock_zero_frames = 0
+      state.drag_controls.cents.start_y = mouse_y
+    end
     if take then
       set_take_pitch(take, new_pitch, state, utils)
       reaper.UpdateItemInProject(reaper.GetMediaItemTake_Item(take))
@@ -2386,7 +2569,7 @@ function controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
   end
 
   -- Left button click
-  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_left and not state._dropdown_menu_open then
+  if not state.midi_item_mode and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_left and not state._dropdown_menu_open then
     if take then
       if not has_fx then
         -- No FX: open take FX chain (same as clicking item's FX button)
@@ -2441,7 +2624,7 @@ function controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
   end
 
   -- Right button click
-  if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_right and not state._dropdown_menu_open then
+  if not state.midi_item_mode and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_right and not state._dropdown_menu_open then
     if take then
       local alt_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
       if alt_held and has_fx then
@@ -2554,7 +2737,7 @@ function controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
   -- Mouse wheel scrolling (when mouse is inside the FX box)
   local mouse_in_box = mouse_x >= fx_x and mouse_x <= fx_x + fx_width
                        and mouse_y >= fx_y and mouse_y <= fx_y + fx_height
-  if mouse_in_box and needs_scroll then
+  if not state.midi_item_mode and mouse_in_box and needs_scroll then
     local wheel = reaper.ImGui_GetMouseWheel(ctx)
     if wheel ~= 0 then
       state.fx_scroll_offset = state.fx_scroll_offset - wheel * row_height
@@ -2656,7 +2839,7 @@ function controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
 
 
       -- Click/drag handling (only when not mid-drag, row must be visible)
-      if not state.fx_drag_activated and not state._dropdown_menu_open then
+      if not state.midi_item_mode and not state.fx_drag_activated and not state._dropdown_menu_open then
         if reaper.ImGui_IsMouseClicked(ctx, 0) then
           if mouse_in_bypass then
             reaper.Undo_BeginBlock()
@@ -2686,7 +2869,7 @@ function controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
       end
 
       -- Right-click: store FX index for context menu
-      if reaper.ImGui_IsMouseClicked(ctx, 1) and mouse_in_row then
+      if not state.midi_item_mode and reaper.ImGui_IsMouseClicked(ctx, 1) and mouse_in_row then
         state.fx_context_menu_idx = fx_idx
         state.fx_context_menu_take = take
         reaper.ImGui_OpenPopup(ctx, "fx_context_menu")

@@ -816,9 +816,10 @@ local function loop()
 
     if item then
       local take = reaper.GetActiveTake(item)
+      state.midi_item_mode = false  -- clear every frame (set true only in MIDI branch)
 
       -- Item-specific shortcuts (work on any item with an active take)
-      if take and not text_input_active then
+      if take and not text_input_active and not reaper.TakeIsMIDI(take) then
         -- Toggle WARP (preserve pitch) - keyboard shortcut mirrors button behavior
         if settings.check_shortcut(ctx, "toggle_warp") then
           if not state.warp_saved_markers_map then state.warp_saved_markers_map = {} end
@@ -6798,7 +6799,205 @@ local function loop()
           reaper.ImGui_Text(ctx, "No audio source found")
         end
       else
-        reaper.ImGui_Text(ctx, take and reaper.TakeIsMIDI(take) and "MIDI items not supported" or "No valid take")
+        if take and reaper.TakeIsMIDI(take) then
+          -- MIDI item: render full disabled UI shell (controls dimmed, no waveform)
+          state.midi_item_mode = true
+          local item_vol = reaper.GetMediaItemInfo_Value(item, "D_VOL")
+
+          -- Layout calculations (same formulas as audio path)
+          local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
+          local layout = settings.current.layout
+          state.toolbar_buttons = settings.current.toolbar_buttons or {}
+          state.info_bar_height = #state.toolbar_buttons > 0
+              and config.INFO_BAR_HEIGHT_TOOLBAR
+              or config.INFO_BAR_HEIGHT_BASE
+
+          -- Color strip
+          state.strip_color = nil
+          state.strip_h = 0
+          local displayed_color = reaper.GetDisplayedMediaItemColor(item)
+          if displayed_color ~= 0 then
+            state.strip_color = reaper_color_to_imgui(displayed_color)
+            state.strip_h = config.COLOR_STRIP_HEIGHT
+          end
+
+          state.scrollbar_h = layout.show_scrollbar and config.SCROLLBAR_HEIGHT or 0
+          local waveform_height = math.max(50, avail_h - config.WAVEFORM_MARGIN_V - state.info_bar_height - config.RULER_HEIGHT - config.TIME_RULER_HEIGHT - config.ENVELOPE_BAR_HEIGHT - state.scrollbar_h - state.strip_h)
+          local panel_height = state.strip_h + state.info_bar_height + config.RULER_HEIGHT + waveform_height + config.TIME_RULER_HEIGHT + config.ENVELOPE_BAR_HEIGHT + state.scrollbar_h
+
+          local two_col_panel = panel_height < 270
+          local effective_panel_width = two_col_panel
+              and (config.LEFT_PANEL_WIDTH * 2)
+              or config.LEFT_PANEL_WIDTH
+          if not layout.show_controls then effective_panel_width = 0 end
+
+          local left_col_has_content = layout.show_warp or layout.show_buttons or layout.show_fx or state.left_panel_tab == "quantize"
+          local effective_left_col = left_col_has_content and config.LEFT_COLUMN_WIDTH or 0
+          local effective_fx_col = (layout.show_fx and state.needs_fx_col) and config.LEFT_COLUMN_WIDTH or 0
+          local total_left_width = effective_left_col + effective_fx_col + effective_panel_width
+          local waveform_width = math.max(100, avail_w - config.WAVEFORM_MARGIN_LEFT - config.WAVEFORM_MARGIN_RIGHT - total_left_width)
+
+          local cursor_x, cursor_y = reaper.ImGui_GetCursorScreenPos(ctx)
+
+          -- Draw color strip
+          if state.strip_color then
+            reaper.ImGui_DrawList_AddRectFilled(reaper.ImGui_GetWindowDrawList(ctx),
+              cursor_x, cursor_y, cursor_x + avail_w, cursor_y + state.strip_h, state.strip_color)
+          end
+
+          local left_col_x = cursor_x + config.WINDOW_PADDING
+          local left_col_y = cursor_y + state.strip_h + config.WAVEFORM_MARGIN_V
+          local panel_x = left_col_x + effective_left_col + effective_fx_col
+          local panel_y = cursor_y + state.strip_h + config.WAVEFORM_MARGIN_V
+          local wave_x = cursor_x + total_left_width + config.WAVEFORM_MARGIN_LEFT
+          local info_bar_y = cursor_y + state.strip_h + config.WAVEFORM_MARGIN_V
+          local wave_y = info_bar_y + state.info_bar_height + config.RULER_HEIGHT
+          local scrollbar_y = wave_y + waveform_height + config.TIME_RULER_HEIGHT + config.ENVELOPE_BAR_HEIGHT
+
+          -- Reserve area
+          local total_height = state.strip_h + config.WAVEFORM_MARGIN_V + state.info_bar_height + config.RULER_HEIGHT + waveform_height + config.TIME_RULER_HEIGHT + config.ENVELOPE_BAR_HEIGHT + state.scrollbar_h
+          reaper.ImGui_InvisibleButton(ctx, "midi_area", avail_w, math.max(avail_h, total_height))
+
+          local draw_list = reaper.ImGui_GetWindowDrawList(ctx)
+          local mouse_x, mouse_y = reaper.ImGui_GetMousePos(ctx)
+          drawing.set_frame_time(reaper.time_precise())
+          drawing.tooltips_disabled = not settings.current.defaults.show_tooltips
+
+          -- Waveform background
+          reaper.ImGui_DrawList_AddRectFilled(draw_list, wave_x, info_bar_y,
+            wave_x + waveform_width, scrollbar_y + state.scrollbar_h, config.COLOR_WAVEFORM_BG)
+
+          -- Info bar (source=nil, file_path="" — bar handles nil gracefully)
+          local _, gear_clicked = drawing.draw_info_bar(draw_list, ctx, wave_x, info_bar_y,
+            waveform_width, state.info_bar_height, nil, "", mouse_x, mouse_y,
+            item, config, utils, 0, state, settings, state.toolbar_buttons)
+          if gear_clicked then settings_ui.open(settings) end
+
+          -- Defer toolbar action to next frame (same as audio path)
+          if state.toolbar_clicked then
+            if state.toolbar_buttons[state.toolbar_clicked] then
+              state._tb_pending_cmd = state.toolbar_buttons[state.toolbar_clicked].cmd
+            end
+            state.toolbar_clicked = nil
+          end
+
+          -- Left column backgrounds
+          if left_col_has_content then
+            reaper.ImGui_DrawList_AddRectFilled(draw_list, left_col_x, left_col_y,
+              left_col_x + config.LEFT_COLUMN_WIDTH - 2, left_col_y + panel_height, config.COLOR_WAVEFORM_BG)
+            if effective_fx_col > 0 then
+              local c2x = left_col_x + config.LEFT_COLUMN_WIDTH
+              reaper.ImGui_DrawList_AddRectFilled(draw_list, c2x, left_col_y,
+                c2x + config.LEFT_COLUMN_WIDTH - 2, left_col_y + panel_height, config.COLOR_WAVEFORM_BG)
+            end
+          end
+
+          -- Controls panel background
+          if layout.show_controls then
+            reaper.ImGui_DrawList_AddRectFilled(draw_list, panel_x, panel_y,
+              panel_x + effective_panel_width - 4, panel_y + panel_height, config.COLOR_INFO_BAR_BG)
+            -- Draw controls (interaction blocked by state.midi_item_mode)
+            if two_col_panel then
+              local div_x = panel_x + config.LEFT_PANEL_WIDTH - 2
+              reaper.ImGui_DrawList_AddLine(draw_list, div_x, panel_y + 4, div_x,
+                  panel_y + panel_height - 4, config.COLOR_CENTERLINE, 1)
+              controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y,
+                  panel_x, panel_y, panel_y + panel_height,
+                  item, item_vol, config, state, utils, drawing)
+              local knobs_x = panel_x + config.LEFT_PANEL_WIDTH
+              local knob_split = panel_y + panel_height * 0.45
+              controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y,
+                  knobs_x, panel_y, knob_split,
+                  item, take, config, state, utils, drawing, settings)
+              local take_pitch, knob_cx, knob_cy = controls.draw_pitch_knob(
+                  ctx, draw_list, mouse_x, mouse_y,
+                  knobs_x, knob_split, panel_y + panel_height,
+                  take, config, state, utils, drawing, settings)
+              controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y,
+                  knobs_x, knob_cy, take, take_pitch, config, state, utils, drawing)
+            else
+              local pan_height = 70
+              local pitch_height = 96
+              local panel_split1 = panel_y + panel_height - pan_height - pitch_height
+              local panel_split2 = panel_split1 + pan_height
+              controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y,
+                  panel_x, panel_y, panel_split1,
+                  item, item_vol, config, state, utils, drawing)
+              controls.draw_pan_knob(ctx, draw_list, mouse_x, mouse_y,
+                  panel_x, panel_split1, panel_split2,
+                  item, take, config, state, utils, drawing, settings)
+              local take_pitch, knob_cx, knob_cy = controls.draw_pitch_knob(
+                  ctx, draw_list, mouse_x, mouse_y,
+                  panel_x, panel_split2, panel_y + panel_height,
+                  take, config, state, utils, drawing, settings)
+              controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y,
+                  panel_x, knob_cy, take, take_pitch, config, state, utils, drawing)
+            end
+          end
+
+          -- Left column controls (disabled via state.midi_item_mode)
+          if left_col_has_content then
+            local tab_area_h = 0
+            if layout.show_warp or layout.show_buttons then
+              controls.draw_panel_tabs(ctx, draw_list, mouse_x, mouse_y,
+                left_col_x, left_col_y + 6, config, state, drawing)
+              tab_area_h = config.TAB_HEIGHT + 6
+            end
+            if state.left_panel_tab == "quantize" then
+              controls.draw_quantize_panel(ctx, draw_list, mouse_x, mouse_y,
+                left_col_x, left_col_y + tab_area_h + 4, config, state, utils, drawing, settings)
+              state.needs_fx_col = false
+            else
+              local c2x = (layout.show_fx and state.needs_fx_col) and (left_col_x + config.LEFT_COLUMN_WIDTH) or nil
+              local c1b, c2b = controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y,
+                left_col_x, left_col_y + tab_area_h, item, take, config, state, utils, drawing, settings,
+                panel_height - tab_area_h, c2x)
+              state.needs_fx_col = layout.show_fx and (left_col_y + panel_height - 14 - c1b) < 50
+              if layout.show_fx then
+              if c2x then
+                local fy = c2b and (c2b + 6) or (left_col_y + 10)
+                local tb = controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
+                  c2x + 8, fy, config.LEFT_COLUMN_WIDTH - 16, take, config, state, drawing)
+                local at = tb + 4
+                controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
+                  c2x + 4, at, config.LEFT_COLUMN_WIDTH - 10,
+                  (left_col_y + panel_height - 4) - at, take, config, state, drawing)
+              else
+                local tb = controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
+                  left_col_x + 8, c1b + 6, config.LEFT_COLUMN_WIDTH - 16,
+                  take, config, state, drawing)
+                local at = tb + 4
+                controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
+                  left_col_x + 4, at, config.LEFT_COLUMN_WIDTH - 10,
+                  (left_col_y + panel_height - 4) - at, take, config, state, drawing)
+              end
+              end -- if layout.show_fx
+            end
+          end
+
+          -- Dimming overlay over left column + controls panel
+          if left_col_has_content then
+            reaper.ImGui_DrawList_AddRectFilled(draw_list, left_col_x, left_col_y,
+              left_col_x + effective_left_col + effective_fx_col - 2, left_col_y + panel_height, 0x00000080)
+          end
+          if layout.show_controls then
+            reaper.ImGui_DrawList_AddRectFilled(draw_list, panel_x, panel_y,
+              panel_x + effective_panel_width - 4, panel_y + panel_height, 0x00000080)
+          end
+
+          -- Centered "MIDI Item" text in waveform area
+          local midi_text = "MIDI Item"
+          local midi_text_w = reaper.ImGui_CalcTextSize(ctx, midi_text)
+          local midi_text_h = 13
+          local midi_center_x = wave_x + (waveform_width - midi_text_w) / 2
+          local midi_center_y = wave_y + (waveform_height - midi_text_h) / 2
+          reaper.ImGui_DrawList_AddText(draw_list, midi_center_x, midi_center_y, 0x555555FF, midi_text)
+
+          state.midi_item_mode = false
+        else
+          -- No valid take
+          reaper.ImGui_Text(ctx, "No valid take")
+        end
       end
     else
       local avail_w, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
