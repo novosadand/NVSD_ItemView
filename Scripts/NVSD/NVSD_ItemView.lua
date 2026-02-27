@@ -569,9 +569,11 @@ local function loop()
       if not settings_ui.is_open() then settings_ui.open(settings) end
     end
 
-    -- Escape: clear selections (envelope nodes first, then waveform region)
+    -- Escape: clear selections (warp markers first, then envelope nodes, then waveform region)
     if not text_input_active and reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Escape()) then
-      if #state.env_selected_nodes > 0 then
+      if next(state.warp_marker_selected) ~= nil then
+        state.warp_marker_selected = {}
+      elseif #state.env_selected_nodes > 0 then
         state.env_selected_nodes = {}
       elseif state.region_selected then
         state.region_selected = false
@@ -1563,7 +1565,7 @@ local function loop()
             state.warp_markers = {}
             state.warp_markers_take = nil
             state.warp_marker_hovered_idx = -1
-            state.warp_marker_selected_idx = -1
+            state.warp_marker_selected = {}
             state.transients = {}
             state.transients_source = nil
             state.transients_computed = false
@@ -1740,6 +1742,7 @@ local function loop()
           -- Shared quantize helper (used by Ctrl+U, Apply button, context menu)
           local function do_quantize_action()
             if not take then return end
+            local has_sel = next(state.warp_marker_selected) ~= nil
             -- Selection range in source time (nil = entire item)
             -- Convert from pos-space to source-space when in warped view
             local sel_start = state.region_selected and math.min(state.selection_start_time, state.selection_end_time) or nil
@@ -1750,7 +1753,7 @@ local function loop()
             end
             reaper.Undo_BeginBlock()
             local n = 0
-            if state.transients and #state.transients > 0 then
+            if not has_sel and state.transients and #state.transients > 0 then
               n = utils.add_markers_at_transients(take, state.transients, sel_start, sel_end,
                   is_warped_view and state.warp_map or nil, playrate)
             end
@@ -1762,10 +1765,14 @@ local function loop()
             local snap_fn = utils.get_quantize_snap_fn(
               settings.current.quantize, settings.current.grid, config,
               vl_qn_end - vl_qn_start, waveform_width)
-            local q = utils.quantize_warp_markers_ex(take, snap_fn, settings.current.quantize.amount, sel_start, sel_end)
+            local q = utils.quantize_warp_markers_ex(take, snap_fn, settings.current.quantize.amount, sel_start, sel_end,
+                has_sel and state.warp_marker_selected or nil)
             reaper.UpdateItemInProject(item)
             reaper.UpdateArrange()
-            reaper.Undo_EndBlock("NVSD_ItemView: Quantize warp markers (+" .. n .. " new, " .. q .. " snapped)", -1)
+            local undo_text = has_sel
+                and ("NVSD_ItemView: Quantize selected warp markers (" .. q .. " snapped)")
+                or ("NVSD_ItemView: Quantize warp markers (+" .. n .. " new, " .. q .. " snapped)")
+            reaper.Undo_EndBlock(undo_text, -1)
             state.warp_markers = utils.get_stretch_markers(take)
             -- Defer selection remap to next frame (current frame still uses old warp map)
             if sel_start then
@@ -2292,7 +2299,7 @@ local function loop()
               if sm_px >= wave_x - 10 and sm_px <= wave_x + waveform_width + 10 then
                 local hovered = (state.warp_marker_hovered_idx == i)
                 local dragging = (state.dragging_warp_marker and state.warp_drag_idx == sm.idx)
-                local selected = (sm.idx == state.warp_marker_selected_idx)
+                local selected = state.warp_marker_selected[sm.idx] or false
                 drawing.draw_warp_marker(draw_list, sm_px, warp_bar_y, warp_bar_height,
                     wave_y, waveform_height, hovered, dragging, selected, nil, config)
               end
@@ -3316,9 +3323,7 @@ local function loop()
                 if reaper.ImGui_MenuItem(ctx, "Delete warp marker") then
                   local sm = state.warp_markers[rc_marker_idx]
                   if sm then
-                    if sm.idx == state.warp_marker_selected_idx then
-                      state.warp_marker_selected_idx = -1
-                    end
+                    state.warp_marker_selected[sm.idx] = nil
                     reaper.Undo_BeginBlock()
                     reaper.DeleteTakeStretchMarkers(take, sm.idx, 1)
                     reaper.UpdateArrange()
@@ -3386,7 +3391,7 @@ local function loop()
                   reaper.UpdateItemInProject(item)
                   reaper.Undo_EndBlock("NVSD_ItemView: Clear all stretch markers", -1)
                   state.warp_markers = utils.get_stretch_markers(take)
-                  state.warp_marker_selected_idx = -1
+                  state.warp_marker_selected = {}
                 end
               end
 
@@ -3558,9 +3563,7 @@ local function loop()
               -- Double-click existing marker: DELETE
               local sm = state.warp_markers[state.warp_marker_hovered_idx]
               if sm then
-                if sm.idx == state.warp_marker_selected_idx then
-                  state.warp_marker_selected_idx = -1
-                end
+                state.warp_marker_selected[sm.idx] = nil
                 reaper.Undo_BeginBlock()
                 reaper.DeleteTakeStretchMarkers(take, sm.idx, 1)
                 reaper.UpdateArrange()
@@ -3612,7 +3615,7 @@ local function loop()
                 -- Select the new marker
                 for _, sm in ipairs(state.warp_markers) do
                   if math.abs(sm.srcpos - srcpos) < 0.001 then
-                    state.warp_marker_selected_idx = sm.idx
+                    state.warp_marker_selected = {[sm.idx] = true}
                     break
                   end
                 end
@@ -3639,7 +3642,7 @@ local function loop()
                   -- Re-read after sort; find by pos proximity
                   for _, sm in ipairs(state.warp_markers) do
                     if math.abs(sm.pos - pos) < 0.01 then
-                      state.warp_marker_selected_idx = sm.idx
+                      state.warp_marker_selected = {[sm.idx] = true}
                       break
                     end
                   end
@@ -3654,9 +3657,7 @@ local function loop()
               and state.warp_marker_hovered_idx > 0 and not state.any_drag_active() then
             local sm = state.warp_markers[state.warp_marker_hovered_idx]
             if sm then
-              if sm.idx == state.warp_marker_selected_idx then
-                state.warp_marker_selected_idx = -1
-              end
+              state.warp_marker_selected[sm.idx] = nil
               reaper.Undo_BeginBlock()
               reaper.DeleteTakeStretchMarkers(take, sm.idx, 1)
               reaper.UpdateArrange()
@@ -3689,9 +3690,41 @@ local function loop()
               state.warp_drag_start_item_position = item_position
               state.warp_drag_start_item_length = item_length
               state.warp_drag_start_start_offset = start_offset
-              -- Select clicked marker
-              state.warp_marker_selected_idx = sm.idx
+              -- Multi-select: Ctrl+click toggle, Shift+click range, plain click replace
+              if ctrl_held then
+                if state.warp_marker_selected[sm.idx] then
+                  state.warp_marker_selected[sm.idx] = nil
+                else
+                  state.warp_marker_selected[sm.idx] = true
+                end
+              elseif shift_held then
+                -- Range: select all markers between existing selection bounds and clicked marker
+                state.warp_marker_selected[sm.idx] = true
+                local range_min, range_max = sm.srcpos, sm.srcpos
+                for _, m in ipairs(state.warp_markers) do
+                  if state.warp_marker_selected[m.idx] then
+                    if m.srcpos < range_min then range_min = m.srcpos end
+                    if m.srcpos > range_max then range_max = m.srcpos end
+                  end
+                end
+                for _, m in ipairs(state.warp_markers) do
+                  if m.srcpos >= range_min and m.srcpos <= range_max then
+                    state.warp_marker_selected[m.idx] = true
+                  end
+                end
+              else
+                state.warp_marker_selected = {[sm.idx] = true}
+              end
             end
+          end
+
+          -- Click empty warp bar: deselect all markers
+          if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_warp_bar
+              and state.warp_marker_hovered_idx <= 0
+              and state.transient_hovered_idx <= 0
+              and not state.any_drag_active()
+              and not warp_dblclick_handled then
+            state.warp_marker_selected = {}
           end
 
           -- Transient ghost click-drag: initiate on click (create marker on drag, not click)
@@ -3732,7 +3765,7 @@ local function loop()
                     state.warp_drag_start_item_position = item_position
                     state.warp_drag_start_item_length = item_length
                     state.warp_drag_start_start_offset = start_offset
-                    state.warp_marker_selected_idx = sm.idx
+                    state.warp_marker_selected = {[sm.idx] = true}
                     break
                   end
                 end

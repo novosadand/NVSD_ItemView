@@ -188,7 +188,7 @@ state.warp_restore_guid = nil        -- take GUID for marker restore
 state.warp_markers = {}
 state.warp_markers_take = nil
 state.warp_marker_hovered_idx = -1
-state.warp_marker_selected_idx = -1
+state.warp_marker_selected = {}   -- set: REAPER idx → true
 
 -- Right-click saved state (mouse pos and hover lost once popup opens)
 state.warp_right_click_time = 0

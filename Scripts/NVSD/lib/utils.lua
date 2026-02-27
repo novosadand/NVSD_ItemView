@@ -1056,7 +1056,7 @@ end
 -- Quantize all existing stretch markers using a custom snap function and amount.
 -- snap_fn(project_time) -> snapped_time
 -- amount: 0-100 (0 = no change, 100 = full snap)
-function utils.quantize_warp_markers_ex(take, snap_fn, amount, range_start, range_end)
+function utils.quantize_warp_markers_ex(take, snap_fn, amount, range_start, range_end, selected_set)
   local item = reaper.GetMediaItemTake_Item(take)
   local item_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
   local sm_count = reaper.GetTakeNumStretchMarkers(take)
@@ -1064,6 +1064,7 @@ function utils.quantize_warp_markers_ex(take, snap_fn, amount, range_start, rang
   local frac = (amount or 100) / 100
   local moved = 0
   for i = 0, sm_count - 1 do
+    if selected_set and not selected_set[i] then goto continue end
     local _, pos, srcpos = reaper.GetTakeStretchMarker(take, i)
     -- Skip markers outside the optional range (srcpos is in source time)
     if (not range_start or srcpos >= range_start - 0.001)
@@ -1077,6 +1078,7 @@ function utils.quantize_warp_markers_ex(take, snap_fn, amount, range_start, rang
         moved = moved + 1
       end
     end
+    ::continue::
   end
   return moved
 end
@@ -1253,7 +1255,7 @@ function utils.disable_warp(take, state)
   end
 
   state.warp_markers = {}
-  state.warp_marker_selected_idx = -1
+  state.warp_marker_selected = {}
 
   local cur_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH")
   local old_playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
