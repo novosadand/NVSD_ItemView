@@ -1679,7 +1679,7 @@ local function draw_toolbar_tab(ctx, settings)
   reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Border(), COLORS.border)
   local settings_icon_flags = reaper.ImGui_WindowFlags_NoTitleBar()
                             + reaper.ImGui_WindowFlags_NoScrollbar()
-  if reaper.ImGui_BeginPopup(ctx, "Choose Icon##tb_icon_picker", settings_icon_flags) then
+  if reaper.ImGui_BeginPopupModal(ctx, "Choose Icon##tb_icon_picker", nil, settings_icon_flags) then
     reaper.ImGui_SetNextFrameWantCaptureKeyboard(ctx, true)
     local icons = ui_state.icon_list or {}
     if #icons == 0 then
@@ -1871,6 +1871,7 @@ local HELP_SECTIONS = {
       "## Pitch Envelope",
       "- Scroll to shift pitch view range",
       "- Drag pitch label gutter to pan vertically",
+      "- Double-click pitch gutter to center 0 semitones",
     },
   },
   {

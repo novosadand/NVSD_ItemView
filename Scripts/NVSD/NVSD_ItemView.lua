@@ -3265,6 +3265,9 @@ local function loop()
                 drawing.tooltip(ctx, "slope_" .. state.slope_hovered_segment,
                     "Slope: " .. slope_pct .. "\nDrag vertical: adjust\nDbl-click: reset")
               end
+            -- Pitch gutter tooltip
+            elseif mouse_in_pitch_gutter then
+              drawing.tooltip(ctx, "pitch_gutter", "Drag: scroll pitch range\nDouble-click: center 0 st")
             -- Ruler tooltip
             elseif mouse_in_ruler then
               drawing.tooltip(ctx, "ruler", "Drag vertical: zoom\nDrag horizontal: pan")
@@ -3955,6 +3958,11 @@ local function loop()
             local max_pan = ext_end - range_center - half_view
             if min_pan > max_pan then min_pan, max_pan = max_pan, min_pan end
             state.pan_offset = math.max(min_pan, math.min(max_pan, state.pan_offset))
+          end
+
+          -- Pitch gutter double-click: reset view to center 0 semitones
+          if reaper.ImGui_IsMouseDoubleClicked(ctx, 0) and mouse_in_pitch_gutter then
+            state.pitch_view_offset = 0
           end
 
           -- Pitch gutter drag to scroll vertical view

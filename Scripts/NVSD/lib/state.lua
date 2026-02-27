@@ -155,12 +155,6 @@ state._copy_combo_prev = false       -- rising-edge detection for VKey Ctrl+C fa
 state._prev_active = nil             -- previous frame's reaper_is_active (nil on first frame)
 state._focus_suppress_frames = 0     -- frames remaining to suppress stale modifier keys after refocus
 
--- Edge auto-scroll state (for Mac/no-cursor-lock fallback)
-state.drag_imgui_last_y = nil        -- previous frame ImGui mouse_y
-state.drag_edge_stall_frames = 0     -- consecutive frames mouse hasn't moved
-state.drag_edge_direction = 0        -- last movement direction (-1 down, +1 up)
-state.drag_edge_bonus = 0            -- accumulated bonus delta from edge scrolling
-
 -- Warp mode state
 state.warp_mode = false
 state.warp_dropdown_open = false
@@ -463,11 +457,6 @@ function state.start_drag(name, mouse_y, value, track_shift)
   state.drag_last_screen_y = screen_y
   state.drag_cumulative_delta_y = 0
   state.cursor_lock_zero_frames = 0
-  -- Reset edge auto-scroll state
-  state.drag_imgui_last_y = nil
-  state.drag_edge_stall_frames = 0
-  state.drag_edge_direction = 0
-  state.drag_edge_bonus = 0
   if not state.undo_block_open then
     state.undo_block_open = name
   end
@@ -510,8 +499,6 @@ function state.get_drag_delta(ctx, name, mouse_y, current_value, fine_sensitivit
       ctrl.fine_held = ctrl_now
       state.drag_cumulative_delta_y = 0
       state.cursor_lock_zero_frames = 0
-      state.drag_edge_bonus = 0
-      state.drag_edge_stall_frames = 0
     end
     sensitivity = ctrl.fine_held and fine_sensitivity or 1.0
   end
@@ -526,43 +513,7 @@ function state.get_drag_delta(ctx, name, mouse_y, current_value, fine_sensitivit
   -- ImGui fallback: base delta from absolute position
   local base_delta = ctrl.start_y - mouse_y
 
-  -- Edge auto-scroll: when mouse is stuck at screen edge, keep moving the value.
-  local stall_threshold = 0.1  -- low threshold for Retina/HiDPI displays
-  if state.drag_imgui_last_y and math.abs(mouse_y - state.drag_imgui_last_y) < stall_threshold then
-    -- Mouse hasn't moved this frame
-    if state.drag_edge_stall_frames < 255 then
-      state.drag_edge_stall_frames = state.drag_edge_stall_frames + 1
-    end
-    -- Determine direction: prefer per-frame direction, fall back to overall drag direction
-    local dir = state.drag_edge_direction
-    if dir == 0 and math.abs(base_delta) > 1 then
-      dir = base_delta > 0 and 1 or -1
-      state.drag_edge_direction = dir
-    end
-    if state.drag_edge_stall_frames >= 4 and dir ~= 0 then
-      local speed = math.min(3, 0.5 + state.drag_edge_stall_frames * 0.05)
-      state.drag_edge_bonus = state.drag_edge_bonus + dir * speed
-    end
-  else
-    -- Mouse moved: absorb accumulated bonus into start_y for seamless transition
-    if state.drag_edge_bonus ~= 0 then
-      ctrl.start_y = ctrl.start_y + state.drag_edge_bonus
-      state.drag_edge_bonus = 0
-    end
-    state.drag_edge_stall_frames = 0
-    -- Record last movement direction from per-frame delta
-    if state.drag_imgui_last_y then
-      local frame_delta = state.drag_imgui_last_y - mouse_y
-      if math.abs(frame_delta) > stall_threshold then
-        state.drag_edge_direction = frame_delta > 0 and 1 or -1
-      end
-    end
-    -- Recalculate base_delta after potential start_y adjustment
-    base_delta = ctrl.start_y - mouse_y
-  end
-  state.drag_imgui_last_y = mouse_y
-
-  return (base_delta + state.drag_edge_bonus) * sensitivity
+  return base_delta * sensitivity
 end
 
 -- Reset all drag and interaction flags (used on dialog recovery / focus loss)
