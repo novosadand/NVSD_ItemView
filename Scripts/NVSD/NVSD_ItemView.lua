@@ -844,10 +844,24 @@ local function loop()
         end
 
         if source and reaper.ValidatePtr(source, "PCM_source*") then
-          local item_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
-          local item_position = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
-          local take_offset = reaper.GetMediaItemTakeInfo_Value(take, "D_STARTOFFS")
-          local source_length = reaper.GetMediaSourceLength(source)
+          -- Cache item properties when focused; reuse cache when REAPER is unfocused
+          -- to prevent transient API return-value changes from shifting the view.
+          local item_length, item_position, take_offset, source_length
+          if reaper_is_active or not state._cached_item_length then
+            item_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+            item_position = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
+            take_offset = reaper.GetMediaItemTakeInfo_Value(take, "D_STARTOFFS")
+            source_length = reaper.GetMediaSourceLength(source)
+            state._cached_item_length = item_length
+            state._cached_item_position = item_position
+            state._cached_take_offset = take_offset
+            state._cached_source_length = source_length
+          else
+            item_length = state._cached_item_length
+            item_position = state._cached_item_position
+            take_offset = state._cached_take_offset
+            source_length = state._cached_source_length
+          end
 
           local start_offset = section_offset + take_offset
 
@@ -1031,8 +1045,14 @@ local function loop()
             state.warp_map = nil
           end
 
-          local playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
-          if playrate == 0 then playrate = 1 end  -- Guard against division by zero
+          local playrate
+          if reaper_is_active or not state._cached_playrate then
+            playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
+            if playrate == 0 then playrate = 1 end  -- Guard against division by zero
+            state._cached_playrate = playrate
+          else
+            playrate = state._cached_playrate
+          end
 
           local item_vol = reaper.GetMediaItemInfo_Value(item, "D_VOL")
 
@@ -1447,9 +1467,10 @@ local function loop()
             -- Reset pitch scroll
             state.pitch_view_offset = 0
             state.zoom_toggle_active = false
-            -- Reset warp/transient state
+            -- Reset warp/transient state and property cache
             state.warp_markers = {}
             state.warp_markers_take = nil
+            state._cached_item_length = nil
             state.warp_marker_hovered_idx = -1
             state.warp_marker_selected_idx = -1
             state.transients = {}
