@@ -90,9 +90,10 @@ function utils.format_pan(pan)
 end
 
 -- Convert pitch float to semitones and cents display values
--- Uses round-to-nearest for Ableton-style ±50 cents range
+-- Truncates toward zero so sign of cents matches sign of pitch:
+-- 12.5 → 12 st, 50 cents; -12.5 → -12 st, -50 cents
 function utils.pitch_to_semitones_cents(pitch)
-  local semitones = math.floor(pitch + 0.5)
+  local semitones = (pitch >= 0) and math.floor(pitch) or math.ceil(pitch)
   local cents = math.floor((pitch - semitones) * 100 + 0.5)
   return semitones, cents
 end
