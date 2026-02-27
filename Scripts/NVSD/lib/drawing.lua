@@ -3180,16 +3180,17 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
   reaper.ImGui_DrawList_AddRect(draw_list, fit_btn_x, fit_btn_y,
       fit_btn_x + fit_btn_w, fit_btn_y + fit_btn_h, fit_border, 2)
 
-  -- Draw fit-to-markers icon: two inward-pointing arrows  >|<
+  -- Draw fit-to-markers icon: magnifying glass
   local fcx = fit_btn_x + fit_btn_w / 2
   local fcy = fit_btn_y + fit_btn_h / 2
   local fit_color = fit_active and 0x202020FF or 0xCCCCCCFF
-  -- Left arrow >
-  reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-    fcx - 6, fcy - 4, fcx - 6, fcy + 4, fcx - 2, fcy, fit_color)
-  -- Right arrow <
-  reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-    fcx + 6, fcy - 4, fcx + 6, fcy + 4, fcx + 2, fcy, fit_color)
+  -- Lens circle (slightly up-left of center)
+  local lens_cx = fcx - 1.5
+  local lens_cy = fcy - 1.5
+  local lens_r = 3.5
+  reaper.ImGui_DrawList_AddCircle(draw_list, lens_cx, lens_cy, lens_r, fit_color, 12, 1.5)
+  -- Handle (from circle edge at 45° down-right)
+  reaper.ImGui_DrawList_AddLine(draw_list, fcx + 1, fcy + 1, fcx + 5, fcy + 5, fit_color, 1.5)
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_fit then
     settings.toggle_default(state, "auto_fit_markers")
