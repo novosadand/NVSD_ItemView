@@ -6568,7 +6568,8 @@ local function loop()
                 state.preview_start_realtime = reaper.time_precise()
               else
                 -- Non-warp: use CF_Preview for isolated source playback
-                -- In warped view, cursor pos is in item-time; convert to source-time
+                -- If warp markers exist (warp_mode on but <2 markers),
+                -- convert cursor pos through warp map to source-time
                 if state.warp_map then
                   pos = utils.warp_pos_to_src(state.warp_map, pos, playrate)
                 end

@@ -152,6 +152,7 @@ state.has_js_extension = reaper.JS_Mouse_SetPosition ~= nil
 state.cursor_lock_works = nil  -- nil = untested, true/false after first verify
 state.cursor_lock_zero_frames = 0  -- count consecutive drag frames with zero cumulative delta
 state._copy_combo_prev = false       -- rising-edge detection for VKey Ctrl+C fallback
+state._prev_active = nil             -- previous frame's reaper_is_active (nil on first frame)
 
 -- Edge auto-scroll state (for Mac/no-cursor-lock fallback)
 state.drag_imgui_last_y = nil        -- previous frame ImGui mouse_y
@@ -334,9 +335,11 @@ state.preview_handle = nil           -- CF_Preview handle (userdata)
 state.preview_active = false         -- currently playing preview
 state.preview_item = nil             -- item being previewed (for validation)
 state.preview_start_requested = false -- preview playback pending (processed in item context)
+state.preview_from_start_requested = false -- preview-from-start pending (processed in item context)
 state.preview_via_transport = false   -- preview using REAPER transport instead of CF_Preview
 state.preview_virtual_start = nil    -- virtual start position of preview (source time)
 state.preview_start_realtime = nil   -- real-time clock at preview start
+state.preview_playrate = nil         -- playrate at preview start (for playhead computation)
 
 -- Region selection state (click+drag in waveform to select a portion)
 state.selecting_region = false           -- true during active selection drag
@@ -605,6 +608,10 @@ function state.stop_preview()
     state.preview_handle = nil
   end
   state.preview_active = false
+  state.preview_item = nil
+  state.preview_virtual_start = nil
+  state.preview_start_realtime = nil
+  state.preview_playrate = nil
 end
 
 -- Check if any interactive drag is active (markers, fades, envelopes, panning, etc.)
