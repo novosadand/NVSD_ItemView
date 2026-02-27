@@ -6582,13 +6582,23 @@ local function loop()
                 if handle then
                   reaper.CF_Preview_SetValue(handle, "D_POSITION", source_pos)
                   reaper.CF_Preview_SetValue(handle, "D_VOLUME", item_vol)
-                  -- Match take's playrate and pitch so preview sounds like actual playback
+                  -- Match take's playrate and pitch so preview sounds like
+                  -- actual REAPER playback
+                  local take_d_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH")
                   if playrate ~= 1 then
                     reaper.CF_Preview_SetValue(handle, "D_PLAYRATE", playrate)
                   end
-                  local take_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH")
-                  if take_pitch ~= 0 then
-                    reaper.CF_Preview_SetValue(handle, "D_PITCH", take_pitch)
+                  if state.warp_mode then
+                    -- Warp: pitch-preserving stretch + manual pitch offset
+                    reaper.CF_Preview_SetValue(handle, "B_PPITCH", 1)
+                    if take_d_pitch ~= 0 then
+                      reaper.CF_Preview_SetValue(handle, "D_PITCH", take_d_pitch)
+                    end
+                  else
+                    -- Non-warp: varispeed only (D_PLAYRATE handles speed+pitch)
+                    -- Explicitly disable pitch preservation and ignore D_PITCH
+                    -- (may contain stale value from previous warp session)
+                    reaper.CF_Preview_SetValue(handle, "B_PPITCH", 0)
                   end
                   -- Loop when playing in a looped/extended item so preview crosses source boundaries
                   local needs_loop = is_extended_view
@@ -6604,6 +6614,7 @@ local function loop()
                   -- Track virtual position for looped playhead drawing
                   state.preview_virtual_start = pos
                   state.preview_start_realtime = reaper.time_precise()
+                  state.preview_playrate = playrate
                 end
               end
             end
@@ -6631,7 +6642,8 @@ local function loop()
                 local virtual_pos
                 if state.preview_virtual_start and state.preview_start_realtime then
                   local elapsed = reaper.time_precise() - state.preview_start_realtime
-                  virtual_pos = state.preview_virtual_start + elapsed
+                  local rate = state.preview_playrate or 1
+                  virtual_pos = state.preview_virtual_start + elapsed * rate
                 else
                   virtual_pos = pos
                 end
