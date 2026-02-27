@@ -668,6 +668,7 @@ local function loop()
     -- Clear sticky when selection changes to a DIFFERENT item (not when deselecting to nil).
     -- Skip when unfocused/settling to prevent spurious resets from stale API values.
     if focus_settled and selected_item ~= state.last_selected_item then
+      state.editing_label = nil  -- cancel any active label edit on item switch
       if selected_item then
         -- Save current item's waveform zoom, load new item's zoom
         if state.last_selected_item then
@@ -2827,7 +2828,7 @@ local function loop()
                 -- CGWarpMouseCursorPosition suppresses all subsequent mouse deltas.
                 if state.drag_cumulative_delta_y == 0 then
                   state.cursor_lock_zero_frames = state.cursor_lock_zero_frames + 1
-                  if state.cursor_lock_zero_frames > 4 then
+                  if state.cursor_lock_zero_frames > 30 then
                     state.cursor_lock_works = false
                     state.drag_last_screen_y = cur_screen_y
                   end
@@ -6631,26 +6632,30 @@ local function loop()
 
           -- (No fade handle squares - REAPER-style grab from waveform corners)
 
-          -- Draw playhead on top of everything
+          -- Draw playhead/edit cursor on top of everything
           local play_state = reaper.GetPlayState()
+          local cursor_pos
           if play_state & 5 ~= 0 then -- playing (1) or recording (4+1)
-            local play_pos = reaper.GetPlayPosition()
-            local playhead_display
-            if is_warped_view then
-              playhead_display = play_pos - item_position  -- item-time (pos-space)
-            else
-              playhead_display = utils.project_to_source_time(play_pos, item_position, view_offset, playrate)
-            end
-            local playhead_px = time_to_px(playhead_display)
-            if playhead_px >= wave_x and playhead_px <= wave_x + waveform_width then
-              drawing.draw_playhead(draw_list, playhead_px, wave_y, waveform_height, config)
-            end
+            cursor_pos = reaper.GetPlayPosition()
+          else
+            cursor_pos = reaper.GetCursorPosition()
+          end
+          local playhead_display
+          if is_warped_view then
+            playhead_display = cursor_pos - item_position  -- item-time (pos-space)
+          else
+            playhead_display = utils.project_to_source_time(cursor_pos, item_position, view_offset, playrate)
+          end
+          local playhead_px = time_to_px(playhead_display)
+          if playhead_px >= wave_x and playhead_px <= wave_x + waveform_width then
+            drawing.draw_playhead(draw_list, playhead_px, wave_y, waveform_height, config)
           end
 
           -- Preview from start marker (Enter): jump cursor to left marker and start/restart preview
           if state.preview_from_start_requested then
             state.preview_from_start_requested = false
-            state.preview_cursor_pos = ext_start
+            -- In warp mode, item starts at pos 0; in non-warp, use ext_start (source-time)
+            state.preview_cursor_pos = is_warped_view and render_start or ext_start
             state.stop_preview()
             state.preview_start_requested = true
           end
@@ -6660,11 +6665,7 @@ local function loop()
             state.preview_start_requested = false
             if state.preview_active then
               -- Stop preview
-              if state.preview_via_transport then
-                -- Stop REAPER transport (action 1016 = Transport: Stop)
-                reaper.Main_OnCommand(1016, 0)
-                state.preview_via_transport = false
-              elseif state.preview_handle then
+              if state.preview_handle then
                 reaper.CF_Preview_Stop(state.preview_handle)
                 state.preview_handle = nil
               end
@@ -6672,92 +6673,71 @@ local function loop()
             else
               -- Start preview from cursor position (or item start if no cursor set)
               local pos = state.preview_cursor_pos or view_offset
-
-              if is_warped_view then
-                -- Warp mode: use REAPER transport so stretch markers are audible.
-                -- Move edit cursor to the marker's project-time position and play.
-                local proj_time = item_position + (pos or 0)
-                reaper.SetEditCurPos(proj_time, false, false)
-                -- Start transport (action 1007 = Transport: Play)
-                reaper.Main_OnCommand(1007, 0)
+              -- Convert to source-time for CF_Preview
+              local source_pos = pos
+              if is_warped_view and state.warp_map then
+                source_pos = utils.warp_pos_to_src(state.warp_map, pos, playrate)
+              end
+              -- Wrap to source coordinates for looped/extended items
+              if source_length > 0 then
+                source_pos = source_pos % source_length
+                if source_pos < 0 then source_pos = source_pos + source_length end
+              end
+              local handle = reaper.CF_CreatePreview(source)
+              if handle then
+                reaper.CF_Preview_SetValue(handle, "D_POSITION", source_pos)
+                reaper.CF_Preview_SetValue(handle, "D_VOLUME", item_vol)
+                -- Match take's playrate and pitch so preview sounds like
+                -- actual REAPER playback
+                local take_d_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH")
+                if playrate ~= 1 then
+                  reaper.CF_Preview_SetValue(handle, "D_PLAYRATE", playrate)
+                end
+                if state.warp_mode then
+                  -- Warp: pitch-preserving stretch + manual pitch offset
+                  reaper.CF_Preview_SetValue(handle, "B_PPITCH", 1)
+                  if take_d_pitch ~= 0 then
+                    reaper.CF_Preview_SetValue(handle, "D_PITCH", take_d_pitch)
+                  end
+                else
+                  -- Non-warp: varispeed only (D_PLAYRATE handles speed+pitch)
+                  -- Explicitly disable pitch preservation and ignore D_PITCH
+                  -- (may contain stale value from previous warp session)
+                  reaper.CF_Preview_SetValue(handle, "B_PPITCH", 0)
+                end
+                -- Loop when playing in a looped/extended item so preview crosses source boundaries
+                local needs_loop = is_extended_view
+                reaper.CF_Preview_SetValue(handle, "B_LOOP", needs_loop and 1 or 0)
+                local track = reaper.GetMediaItemTrack(item)
+                if track then
+                  reaper.CF_Preview_SetOutputTrack(handle, 0, track)
+                end
+                reaper.CF_Preview_Play(handle)
+                state.preview_handle = handle
                 state.preview_active = true
                 state.preview_item = item
-                state.preview_via_transport = true
+                -- Track virtual position for looped playhead drawing
                 state.preview_virtual_start = pos
                 state.preview_start_realtime = reaper.time_precise()
-              else
-                -- Non-warp: use CF_Preview for isolated source playback
-                -- pos is already in source-time (view coords are source-time
-                -- when is_warped_view is false), so no conversion needed
-                -- Wrap to source coordinates for looped/extended items
-                local source_pos = pos
-                if source_length > 0 then
-                  source_pos = pos % source_length
-                  if source_pos < 0 then source_pos = source_pos + source_length end
-                end
-                local handle = reaper.CF_CreatePreview(source)
-                if handle then
-                  reaper.CF_Preview_SetValue(handle, "D_POSITION", source_pos)
-                  reaper.CF_Preview_SetValue(handle, "D_VOLUME", item_vol)
-                  -- Match take's playrate and pitch so preview sounds like
-                  -- actual REAPER playback
-                  local take_d_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH")
-                  if playrate ~= 1 then
-                    reaper.CF_Preview_SetValue(handle, "D_PLAYRATE", playrate)
-                  end
-                  if state.warp_mode then
-                    -- Warp: pitch-preserving stretch + manual pitch offset
-                    reaper.CF_Preview_SetValue(handle, "B_PPITCH", 1)
-                    if take_d_pitch ~= 0 then
-                      reaper.CF_Preview_SetValue(handle, "D_PITCH", take_d_pitch)
-                    end
-                  else
-                    -- Non-warp: varispeed only (D_PLAYRATE handles speed+pitch)
-                    -- Explicitly disable pitch preservation and ignore D_PITCH
-                    -- (may contain stale value from previous warp session)
-                    reaper.CF_Preview_SetValue(handle, "B_PPITCH", 0)
-                  end
-                  -- Loop when playing in a looped/extended item so preview crosses source boundaries
-                  local needs_loop = is_extended_view
-                  reaper.CF_Preview_SetValue(handle, "B_LOOP", needs_loop and 1 or 0)
-                  local track = reaper.GetMediaItemTrack(item)
-                  if track then
-                    reaper.CF_Preview_SetOutputTrack(handle, 0, track)
-                  end
-                  reaper.CF_Preview_Play(handle)
-                  state.preview_handle = handle
-                  state.preview_active = true
-                  state.preview_item = item
-                  -- Track virtual position for looped playhead drawing
-                  state.preview_virtual_start = pos
-                  state.preview_start_realtime = reaper.time_precise()
-                  state.preview_playrate = playrate
-                end
+                state.preview_playrate = playrate
               end
             end
           end
 
           -- Audio preview: poll position and auto-stop at end
-          if state.preview_active and state.preview_via_transport then
-            -- Transport-based preview (warp mode): track REAPER's play state
-            local play_state = reaper.GetPlayState()
-            if play_state == 0 then
-              -- Transport stopped externally (user pressed stop, reached end, etc.)
-              state.preview_active = false
-              state.preview_via_transport = false
-            elseif item ~= state.preview_item then
-              state.stop_preview()
-            end
-          elseif state.preview_active and state.preview_handle then
-            -- CF_Preview-based preview (non-warp mode)
+          if state.preview_active and state.preview_handle then
             if item ~= state.preview_item then
               state.stop_preview()
             else
               local retval, pos = reaper.CF_Preview_GetValue(state.preview_handle, "D_POSITION")
               if retval then
-                -- Compute virtual playhead position (supports looped items)
+                -- Compute virtual playhead position in view coordinates
                 local virtual_pos
-                if state.preview_virtual_start and state.preview_start_realtime then
+                if is_warped_view and state.warp_map then
+                  -- Warp mode: convert CF_Preview's source position to pos-time
+                  virtual_pos = utils.warp_src_to_pos(state.warp_map, pos, playrate)
+                elseif state.preview_virtual_start and state.preview_start_realtime then
+                  -- Non-warp: estimate from elapsed time (smoother than polling)
                   local elapsed = reaper.time_precise() - state.preview_start_realtime
                   local rate = state.preview_playrate or 1
                   virtual_pos = state.preview_virtual_start + elapsed * rate
@@ -6769,8 +6749,13 @@ local function loop()
                 if preview_px >= wave_x and preview_px <= wave_x + waveform_width then
                   drawing.draw_preview_playhead(draw_list, preview_px, wave_y, waveform_height)
                 end
-                -- Auto-stop: past item extent for looped, past source end for normal
-                local stop_pos = is_extended_view and ext_end or source_length
+                -- Auto-stop: past item extent
+                local stop_pos
+                if is_warped_view then
+                  stop_pos = is_extended_view and ext_end or item_length
+                else
+                  stop_pos = is_extended_view and ext_end or source_length
+                end
                 if virtual_pos >= stop_pos then
                   state.stop_preview()
                 end

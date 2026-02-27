@@ -337,7 +337,6 @@ state.preview_active = false         -- currently playing preview
 state.preview_item = nil             -- item being previewed (for validation)
 state.preview_start_requested = false -- preview playback pending (processed in item context)
 state.preview_from_start_requested = false -- preview-from-start pending (processed in item context)
-state.preview_via_transport = false   -- preview using REAPER transport instead of CF_Preview
 state.preview_virtual_start = nil    -- virtual start position of preview (source time)
 state.preview_start_realtime = nil   -- real-time clock at preview start
 state.preview_playrate = nil         -- playrate at preview start (for playhead computation)
@@ -433,6 +432,11 @@ state.fx_context_menu_idx = -1           -- FX index for context menu
 state.fx_context_menu_take = nil         -- take for FX context menu
 state.fx_drag_drop_target = nil          -- FX drag drop target index
 
+-- Editable label state (gain dB, pan, pitch)
+state.editing_label = nil         -- "gain" | "pan" | "pitch" | nil
+state.editing_label_text = ""     -- current input buffer
+state.editing_label_focus = false -- one-shot SetKeyboardFocusHere flag
+
 -- Unified drag control state
 state.drag_controls = {
   gain = { active = false, start_y = 0, start_value = 0, fine_held = false },
@@ -445,6 +449,7 @@ state.drag_controls = {
 
 -- Start a drag operation
 function state.start_drag(name, mouse_y, value, track_shift)
+  state.editing_label = nil  -- cancel any active label edit
   local ctrl = state.drag_controls[name]
   ctrl.active = true
   ctrl.start_y = mouse_y
@@ -457,6 +462,7 @@ function state.start_drag(name, mouse_y, value, track_shift)
   state.drag_lock_screen_x, state.drag_lock_screen_y = screen_x, screen_y
   state.drag_last_screen_y = screen_y
   state.drag_cumulative_delta_y = 0
+  state.cursor_lock_zero_frames = 0
   -- Reset edge auto-scroll state
   state.drag_imgui_last_y = nil
   state.drag_edge_stall_frames = 0
@@ -503,6 +509,7 @@ function state.get_drag_delta(ctx, name, mouse_y, current_value, fine_sensitivit
       ctrl.start_value = current_value
       ctrl.fine_held = ctrl_now
       state.drag_cumulative_delta_y = 0
+      state.cursor_lock_zero_frames = 0
       state.drag_edge_bonus = 0
       state.drag_edge_stall_frames = 0
     end
@@ -598,13 +605,10 @@ function state.reset_all_drags()
   state.sb_zoom_handle_dragging = false
 end
 
--- Stop any active audio preview (CF_Preview or REAPER transport)
+-- Stop any active audio preview (CF_Preview)
 function state.stop_preview()
   if not state.preview_active then return end
-  if state.preview_via_transport then
-    reaper.Main_OnCommand(1016, 0) -- Transport: Stop
-    state.preview_via_transport = false
-  elseif state.preview_handle then
+  if state.preview_handle then
     reaper.CF_Preview_Stop(state.preview_handle)
     state.preview_handle = nil
   end
