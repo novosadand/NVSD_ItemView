@@ -6657,7 +6657,7 @@ local function loop()
           end
           local playhead_px = time_to_px(playhead_display)
           if playhead_px >= wave_x and playhead_px <= wave_x + waveform_width then
-            drawing.draw_playhead(draw_list, playhead_px, wave_y, waveform_height, config)
+            drawing.draw_playhead(draw_list, playhead_px, wave_y, waveform_height)
           end
 
           -- Preview from start marker (Enter): jump cursor to left marker and start/restart preview

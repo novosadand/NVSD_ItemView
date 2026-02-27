@@ -2647,7 +2647,7 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
   if end_px > start_px then
     reaper.ImGui_DrawList_AddRect(draw_list,
       x + math.max(0, start_px), y + 2,
-      x + math.min(width, end_px), y + height - 2,
+      x + math.min(width, end_px), y + height - 1,
       config.COLOR_BORDER, 0, 0, 2)
   end
 
@@ -2673,11 +2673,13 @@ function drawing.draw_marker(draw_list, x, y, height, is_start, is_hovered, is_d
 end
 
 -- Draw playhead (vertical line with triangle indicator at top)
-function drawing.draw_playhead(draw_list, x, y, height, config)
-  reaper.ImGui_DrawList_AddLine(draw_list, x, y, x, y + height, config.COLOR_PLAYHEAD, 2)
-  local tri_size = 6
+function drawing.draw_playhead(draw_list, x, y, height)
+  local color = 0x7CAFA4FF  -- muted teal, matches REAPER edit cursor
+  reaper.ImGui_DrawList_AddLine(draw_list, x, y + 2, x, y + height - 2, color, 1)
+  local tri_size = 8
+  local ty = y + 2  -- offset down to avoid overlapping ruler
   reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-    x - tri_size, y, x + tri_size, y, x, y + tri_size, config.COLOR_PLAYHEAD)
+    x - tri_size, ty, x + tri_size, ty, x, ty + tri_size, color)
 end
 
 -- Draw preview cursor (static position marker where user clicked)
