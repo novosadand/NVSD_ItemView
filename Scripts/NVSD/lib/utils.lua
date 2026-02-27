@@ -1111,6 +1111,26 @@ function utils.remap_envelopes_for_warp_change(take, old_map, new_map, playrate)
   end
 end
 
+--- Shift all take envelope points (Volume, Pitch, Pan) by a pos-time delta.
+--- Positive delta moves points right, negative moves them left.
+function utils.shift_envelope_points(take, delta)
+  if not take or math.abs(delta) < 0.000001 then return end
+  local env_names = { "Volume", "Pitch", "Pan" }
+  for _, ename in ipairs(env_names) do
+    local e = reaper.GetTakeEnvelopeByName(take, ename)
+    if e then
+      local np = reaper.CountEnvelopePoints(e)
+      for ei = 0, np - 1 do
+        local ret, pt_time, pt_val, pt_shape, pt_tension, pt_sel = reaper.GetEnvelopePoint(e, ei)
+        if ret then
+          reaper.SetEnvelopePoint(e, ei, pt_time + delta, pt_val, pt_shape, pt_tension, pt_sel, true)
+        end
+      end
+      reaper.Envelope_SortPoints(e)
+    end
+  end
+end
+
 -- Insert a single warp marker at a view-time position.
 -- Returns true if a marker was created, false if out of bounds or duplicate.
 function utils.insert_warp_marker_at(take, time, is_warped, warp_map, playrate, source_length)

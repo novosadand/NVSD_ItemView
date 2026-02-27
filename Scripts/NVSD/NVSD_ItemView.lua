@@ -1214,6 +1214,16 @@ local function loop()
             state.selection_start_time = state.region_sel_start
             state.selection_end_time = state.region_sel_end
           end
+          -- Cursor stabilization: remap preview cursor through warp map change
+          if state.preview_cursor_pos and state._cursor_src
+              and state._sel_prev_warp_hash and state.warp_hash ~= state._sel_prev_warp_hash
+              and not state.any_drag_active() then
+            if is_warped_view and state.warp_map then
+              state.preview_cursor_pos = utils.warp_src_to_pos(state.warp_map, state._cursor_src, playrate)
+            else
+              state.preview_cursor_pos = state._cursor_src
+            end
+          end
           state._sel_prev_warp_hash = state.warp_hash
 
           -- Reset unwrap tracking when item changes
@@ -1512,66 +1522,137 @@ local function loop()
             local sel_e = math.max(state.selection_start_time, state.selection_end_time)
             if sel_e - sel_s > 0.001 then
               reaper.Undo_BeginBlock()
-              local new_source_length = sel_e - sel_s
-              local new_item_length = new_source_length / playrate
-              local new_take_offset = sel_s - section_offset
-              -- Wrap for REAPER only when loop is on (non-looped items allow negative D_STARTOFFS)
-              if source_length > 0 and state.is_loop_src then
-                new_take_offset = new_take_offset % source_length
-              end
 
-              -- Fade adjustment (crop removes from both sides, scale proportionally)
-              local fi, fo = fade_in_len, fade_out_len
-              if fi + fo > new_item_length then
-                local scale = new_item_length / (fi + fo)
-                fi = fi * scale
-                fo = fo * scale
-              end
+              if is_warped_view and state.warp_map then
+                -- Warp mode: slide boundaries like alt-drag.
+                -- sel_s/sel_e are in pos-time. Shift stretch markers by -sel_s,
+                -- set D_LENGTH = sel_e - sel_s. Keep ALL markers and envelope points.
+                local delta = sel_s
+                local new_item_length = sel_e - sel_s
 
-              -- Remap envelope points to new take coordinate space
-              -- Uses modular arithmetic to correctly handle source boundary crossings
-              if not state.envelope_lock then
-                local env_names = { "Volume", "Pitch", "Pan" }
-                for _, ename in ipairs(env_names) do
-                  local e = reaper.GetTakeEnvelopeByName(take, ename)
-                  if e then
-                    local np = reaper.CountEnvelopePoints(e)
-                    local remapped = {}
-                    for ei = 0, np - 1 do
-                      local ret, pt_time, pt_val, pt_shape, pt_tension, pt_sel = reaper.GetEnvelopePoint(e, ei)
-                      if ret then
-                        local new_pt_time
-                        if source_length > 0 and state.is_loop_src then
-                          -- Source audio position of this point (wrapping around source)
-                          local src_time = (take_offset + pt_time) % source_length
-                          -- New take time relative to new D_STARTOFFS
-                          new_pt_time = (src_time - new_take_offset) % source_length
-                        else
-                          new_pt_time = pt_time - (new_take_offset - take_offset)
-                        end
-                        -- Keep only points within the new item bounds
-                        if new_pt_time >= -0.001 and new_pt_time <= new_item_length + 0.001 then
-                          new_pt_time = math.max(0, math.min(new_item_length, new_pt_time))
-                          remapped[#remapped + 1] = { time = new_pt_time, val = pt_val, shape = pt_shape, tension = pt_tension, sel = pt_sel }
-                        end
-                      end
-                    end
-                    -- Delete all existing points and re-insert remapped ones
-                    for ei = np - 1, 0, -1 do
-                      reaper.DeleteEnvelopePointEx(e, -1, ei)
-                    end
-                    for _, p in ipairs(remapped) do
-                      reaper.InsertEnvelopePoint(e, p.time, p.val, p.shape, p.tension, p.sel, true)
-                    end
-                    reaper.Envelope_SortPoints(e)
+                -- Compute new D_STARTOFFS from warp map before shifting markers
+                local new_srcpos = utils.warp_pos_to_src(state.warp_map, delta, playrate)
+                new_srcpos = math.max(0, new_srcpos)
+                local new_take_offset = new_srcpos - section_offset
+                if source_length > 0 and state.is_loop_src then
+                  new_take_offset = new_take_offset % source_length
+                end
+
+                -- Shift all stretch markers by -delta (keep all, even outside bounds)
+                local sm_count = reaper.GetTakeNumStretchMarkers(take)
+                if sm_count > 0 then
+                  local saved = {}
+                  for si = 0, sm_count - 1 do
+                    local _, pos, srcpos = reaper.GetTakeStretchMarker(take, si)
+                    saved[#saved + 1] = {pos = pos - delta, srcpos = srcpos}
+                  end
+                  for si = sm_count - 1, 0, -1 do
+                    reaper.DeleteTakeStretchMarkers(take, si)
+                  end
+                  for _, sm in ipairs(saved) do
+                    reaper.SetTakeStretchMarker(take, -1, sm.pos, sm.srcpos)
                   end
                 end
+
+                -- Shift envelope points to follow audio when unlocked
+                if not state.envelope_lock then
+                  local env_names = { "Volume", "Pitch", "Pan" }
+                  for _, ename in ipairs(env_names) do
+                    local e = reaper.GetTakeEnvelopeByName(take, ename)
+                    if e then
+                      local np = reaper.CountEnvelopePoints(e)
+                      local remapped = {}
+                      for ei = 0, np - 1 do
+                        local ret, pt_time, pt_val, pt_shape, pt_tension, pt_sel = reaper.GetEnvelopePoint(e, ei)
+                        if ret then
+                          local new_pt_time = pt_time - delta
+                          if new_pt_time >= -0.001 and new_pt_time <= new_item_length + 0.001 then
+                            new_pt_time = math.max(0, math.min(new_item_length, new_pt_time))
+                            remapped[#remapped + 1] = { time = new_pt_time, val = pt_val, shape = pt_shape, tension = pt_tension, sel = pt_sel }
+                          end
+                        end
+                      end
+                      for ei = np - 1, 0, -1 do
+                        reaper.DeleteEnvelopePointEx(e, -1, ei)
+                      end
+                      for _, p in ipairs(remapped) do
+                        reaper.InsertEnvelopePoint(e, p.time, p.val, p.shape, p.tension, p.sel, true)
+                      end
+                      reaper.Envelope_SortPoints(e)
+                    end
+                  end
+                end
+
+                -- Fade adjustment
+                local fi, fo = fade_in_len, fade_out_len
+                if fi + fo > new_item_length then
+                  local scale = new_item_length / (fi + fo)
+                  fi = fi * scale
+                  fo = fo * scale
+                end
+
+                reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
+                reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_item_length)
+                reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
+                reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
+              else
+                -- Non-warp mode: sel_s/sel_e are in source-time
+                local new_source_length = sel_e - sel_s
+                local new_item_length = new_source_length / playrate
+                local new_take_offset = sel_s - section_offset
+                if source_length > 0 and state.is_loop_src then
+                  new_take_offset = new_take_offset % source_length
+                end
+
+                -- Fade adjustment
+                local fi, fo = fade_in_len, fade_out_len
+                if fi + fo > new_item_length then
+                  local scale = new_item_length / (fi + fo)
+                  fi = fi * scale
+                  fo = fo * scale
+                end
+
+                -- Remap envelope points (source-time shift)
+                if not state.envelope_lock then
+                  local env_names = { "Volume", "Pitch", "Pan" }
+                  for _, ename in ipairs(env_names) do
+                    local e = reaper.GetTakeEnvelopeByName(take, ename)
+                    if e then
+                      local np = reaper.CountEnvelopePoints(e)
+                      local remapped = {}
+                      for ei = 0, np - 1 do
+                        local ret, pt_time, pt_val, pt_shape, pt_tension, pt_sel = reaper.GetEnvelopePoint(e, ei)
+                        if ret then
+                          local new_pt_time
+                          if source_length > 0 and state.is_loop_src then
+                            local src_time = (take_offset + pt_time) % source_length
+                            new_pt_time = (src_time - new_take_offset) % source_length
+                          else
+                            new_pt_time = pt_time - (new_take_offset - take_offset)
+                          end
+                          if new_pt_time >= -0.001 and new_pt_time <= new_item_length + 0.001 then
+                            new_pt_time = math.max(0, math.min(new_item_length, new_pt_time))
+                            remapped[#remapped + 1] = { time = new_pt_time, val = pt_val, shape = pt_shape, tension = pt_tension, sel = pt_sel }
+                          end
+                        end
+                      end
+                      for ei = np - 1, 0, -1 do
+                        reaper.DeleteEnvelopePointEx(e, -1, ei)
+                      end
+                      for _, p in ipairs(remapped) do
+                        reaper.InsertEnvelopePoint(e, p.time, p.val, p.shape, p.tension, p.sel, true)
+                      end
+                      reaper.Envelope_SortPoints(e)
+                    end
+                  end
+                end
+
+                reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
+                reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_item_length)
+                reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
+                reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
               end
 
-              reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
-              reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_item_length)
-              reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", fi)
-              reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fo)
               reaper.UpdateArrange()
               reaper.Undo_EndBlock("NVSD_ItemView: Crop to selection", -1)
               -- Clear selection and reset view state for clean reinitialization
@@ -1769,7 +1850,7 @@ local function loop()
             state._view_src_start = view_start
             state._view_src_end = view_start + view_length
           end
-          -- Save selection in source-space for stabilization on warp map changes
+          -- Save selection and cursor in source-space for stabilization on warp map changes
           if state.region_selected then
             if is_warped_view and state.warp_map then
               state._sel_src_start = utils.warp_pos_to_src(state.warp_map, state.region_sel_start, playrate)
@@ -1777,6 +1858,13 @@ local function loop()
             else
               state._sel_src_start = state.region_sel_start
               state._sel_src_end = state.region_sel_end
+            end
+          end
+          if state.preview_cursor_pos then
+            if is_warped_view and state.warp_map then
+              state._cursor_src = utils.warp_pos_to_src(state.warp_map, state.preview_cursor_pos, playrate)
+            else
+              state._cursor_src = state.preview_cursor_pos
             end
           end
 
@@ -2422,7 +2510,16 @@ local function loop()
               -- During drag: use live drag position; otherwise: use unwrapped offset if available
               -- (covers both looped items and items dragged past source boundary)
               local env_time_offset
-              if state.dragging_start or state.dragging_end then
+              if is_warped_view then
+                -- In warp mode, envelope times are already in pos-time (item-time).
+                -- During alt-drag with lock OFF, offset by -delta so points visually
+                -- track the sliding audio in real-time. Otherwise stay at 0.
+                if state.drag_alt_latched and not state.envelope_lock then
+                  env_time_offset = -(state._alt_drag_pos_delta or 0)
+                else
+                  env_time_offset = 0
+                end
+              elseif state.dragging_start or state.dragging_end then
                 env_time_offset = state.drag_current_start or start_offset
               elseif state.unwrapped_start_offset ~= nil then
                 env_time_offset = state.unwrapped_start_offset
@@ -5279,32 +5376,9 @@ local function loop()
                 end
               end
 
-              -- Shift envelope points so they stay audio-anchored
+              -- Shift envelope points to follow audio when unlocked
               if not state.envelope_lock then
-                local offset_delta = new_take_offset - take_offset
-                if source_length > 0 then
-                  if offset_delta > source_length * 0.5 then
-                    offset_delta = offset_delta - source_length
-                  elseif offset_delta < -source_length * 0.5 then
-                    offset_delta = offset_delta + source_length
-                  end
-                end
-                if math.abs(offset_delta) > 0.000001 then
-                  local env_names = { "Volume", "Pitch", "Pan" }
-                  for _, ename in ipairs(env_names) do
-                    local e = reaper.GetTakeEnvelopeByName(take, ename)
-                    if e then
-                      local np = reaper.CountEnvelopePoints(e)
-                      for ei = 0, np - 1 do
-                        local ret, pt_time, pt_val, pt_shape, pt_tension, pt_sel = reaper.GetEnvelopePoint(e, ei)
-                        if ret then
-                          reaper.SetEnvelopePoint(e, ei, pt_time - offset_delta, pt_val, pt_shape, pt_tension, pt_sel, true)
-                        end
-                      end
-                      reaper.Envelope_SortPoints(e)
-                    end
-                  end
-                end
+                utils.shift_envelope_points(take, -delta)
               end
 
               reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
@@ -5469,6 +5543,10 @@ local function loop()
                     end
                     for _, sm in ipairs(state.drag_start_warp_markers) do
                       reaper.SetTakeStretchMarker(take, -1, sm.pos - pos_delta, sm.srcpos)
+                    end
+                    -- Shift envelope points to follow audio when unlocked
+                    if not state.envelope_lock then
+                      utils.shift_envelope_points(take, -pos_delta)
                     end
                   end
                 end
