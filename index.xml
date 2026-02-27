@@ -1489,6 +1489,32 @@ Fixes:
         <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/d29ae2c/Scripts/NVSD/lib/settings.lua</source>
         <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/d29ae2c/Scripts/NVSD/lib/settings_ui.lua</source>
       </version>
+      <version name="1.2.1" author="NVSD" time="2026-02-27T18:00:00Z">
+        <changelog><![CDATA[Double-click dispatcher, MIDI handling, warp multi-select, and fixes.
+
+Features:
+- Double-click dispatcher: audio items open ItemView, MIDI items open MIDI editor
+- Graceful MIDI item handling with disabled UI shell instead of blank window
+- Warp marker multi-select, click-to-deselect, and selective quantize
+- Always-visible edit cursor line on waveform
+- Double-click setup instructions added to Help tips
+
+Fixes:
+- Pitch semitones/cents display truncates toward zero (sign matches pitch direction)
+- Remove edge auto-scroll, add pitch gutter reset
+- Fix settings icon picker column layout
+- Fix warp-mode preview cursor and waveform rendering]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/04bd41e/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/04bd41e/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/04bd41e/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/04bd41e/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/04bd41e/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/04bd41e/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/04bd41e/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/04bd41e/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/04bd41e/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/04bd41e/Scripts/NVSD/lib/settings_ui.lua</source>
+      </version>
     </reapack>
   </category>
 </index>
