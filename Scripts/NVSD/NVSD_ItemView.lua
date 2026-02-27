@@ -1201,30 +1201,33 @@ local function loop()
 
           -- Selection stabilization: when warp map changes (undo, marker edit),
           -- remap selection from saved source-space to current coordinate system.
-          if state.region_selected and state._sel_src_start
-              and state._sel_prev_warp_hash and state.warp_hash ~= state._sel_prev_warp_hash
-              and not state.any_drag_active() then
-            if is_warped_view and state.warp_map then
-              state.region_sel_start = utils.warp_src_to_pos(state.warp_map, state._sel_src_start, playrate)
-              state.region_sel_end = utils.warp_src_to_pos(state.warp_map, state._sel_src_end, playrate)
-            else
-              state.region_sel_start = state._sel_src_start
-              state.region_sel_end = state._sel_src_end
+          -- Skip when unfocused to prevent transient warp_hash changes from corrupting state.
+          if reaper_is_active then
+            if state.region_selected and state._sel_src_start
+                and state._sel_prev_warp_hash and state.warp_hash ~= state._sel_prev_warp_hash
+                and not state.any_drag_active() then
+              if is_warped_view and state.warp_map then
+                state.region_sel_start = utils.warp_src_to_pos(state.warp_map, state._sel_src_start, playrate)
+                state.region_sel_end = utils.warp_src_to_pos(state.warp_map, state._sel_src_end, playrate)
+              else
+                state.region_sel_start = state._sel_src_start
+                state.region_sel_end = state._sel_src_end
+              end
+              state.selection_start_time = state.region_sel_start
+              state.selection_end_time = state.region_sel_end
             end
-            state.selection_start_time = state.region_sel_start
-            state.selection_end_time = state.region_sel_end
-          end
-          -- Cursor stabilization: remap preview cursor through warp map change
-          if state.preview_cursor_pos and state._cursor_src
-              and state._sel_prev_warp_hash and state.warp_hash ~= state._sel_prev_warp_hash
-              and not state.any_drag_active() then
-            if is_warped_view and state.warp_map then
-              state.preview_cursor_pos = utils.warp_src_to_pos(state.warp_map, state._cursor_src, playrate)
-            else
-              state.preview_cursor_pos = state._cursor_src
+            -- Cursor stabilization: remap preview cursor through warp map change
+            if state.preview_cursor_pos and state._cursor_src
+                and state._sel_prev_warp_hash and state.warp_hash ~= state._sel_prev_warp_hash
+                and not state.any_drag_active() then
+              if is_warped_view and state.warp_map then
+                state.preview_cursor_pos = utils.warp_src_to_pos(state.warp_map, state._cursor_src, playrate)
+              else
+                state.preview_cursor_pos = state._cursor_src
+              end
             end
+            state._sel_prev_warp_hash = state.warp_hash
           end
-          state._sel_prev_warp_hash = state.warp_hash
 
           -- Reset unwrap tracking when item changes
           if state.unwrap_tracked_item ~= item then
@@ -1792,29 +1795,33 @@ local function loop()
           -- View stabilization: when ext changes or the coordinate system toggles
           -- (warped ↔ non-warped), recompute zoom/pan so the same audio stays visible.
           -- Uses source-space view bounds (invariant) saved at the end of each frame.
-          if (is_warped_view ~= (state._stab_prev_warped or false)
-              or (state._prev_ext_start
-                and (math.abs(ext_start - state._prev_ext_start) > 0.0001
-                  or math.abs(ext_end - state._prev_ext_end) > 0.0001)))
-              and state._view_src_start and not state.any_drag_active() then
-            -- Convert saved source-space view to current coordinate system
-            local target_start, target_end
-            if is_warped_view and state.warp_map then
-              target_start = utils.warp_src_to_pos(state.warp_map, state._view_src_start, playrate)
-              target_end = utils.warp_src_to_pos(state.warp_map, state._view_src_end, playrate)
-            else
-              target_start = state._view_src_start
-              target_end = state._view_src_end
+          -- Skip when REAPER is unfocused: ext can fluctuate transiently on focus loss,
+          -- and updating tracking state would corrupt the saved view for the return frame.
+          if reaper_is_active then
+            if (is_warped_view ~= (state._stab_prev_warped or false)
+                or (state._prev_ext_start
+                  and (math.abs(ext_start - state._prev_ext_start) > 0.0001
+                    or math.abs(ext_end - state._prev_ext_end) > 0.0001)))
+                and state._view_src_start and not state.any_drag_active() then
+              -- Convert saved source-space view to current coordinate system
+              local target_start, target_end
+              if is_warped_view and state.warp_map then
+                target_start = utils.warp_src_to_pos(state.warp_map, state._view_src_start, playrate)
+                target_end = utils.warp_src_to_pos(state.warp_map, state._view_src_end, playrate)
+              else
+                target_start = state._view_src_start
+                target_end = state._view_src_end
+              end
+              local target_len = target_end - target_start
+              if target_len > 0 then
+                state.zoom_level = ext_length / target_len
+                state.pan_offset = (target_start + target_end) / 2 - range_center
+              end
             end
-            local target_len = target_end - target_start
-            if target_len > 0 then
-              state.zoom_level = ext_length / target_len
-              state.pan_offset = (target_start + target_end) / 2 - range_center
-            end
+            state._stab_prev_warped = is_warped_view
+            state._prev_ext_start = ext_start
+            state._prev_ext_end = ext_end
           end
-          state._stab_prev_warped = is_warped_view
-          state._prev_ext_start = ext_start
-          state._prev_ext_end = ext_end
           local view_length, view_start, view_end
           if (state.dragging_start or state.dragging_end) and state.marker_drag_activated
               and state.drag_start_view_length then
@@ -1843,28 +1850,34 @@ local function loop()
           if view_length <= 0 then view_length = 0.001 end
           -- Save view bounds in source-space (invariant across coordinate systems)
           -- Used by stabilization on the next frame to restore the correct view window.
-          if is_warped_view and state.warp_map then
-            state._view_src_start = utils.warp_pos_to_src(state.warp_map, view_start, playrate)
-            state._view_src_end = utils.warp_pos_to_src(state.warp_map, view_start + view_length, playrate)
-          else
-            state._view_src_start = view_start
-            state._view_src_end = view_start + view_length
-          end
-          -- Save selection and cursor in source-space for stabilization on warp map changes
-          if state.region_selected then
+          -- Skip when unfocused so transient ext fluctuations don't corrupt the saved view.
+          if reaper_is_active then
             if is_warped_view and state.warp_map then
-              state._sel_src_start = utils.warp_pos_to_src(state.warp_map, state.region_sel_start, playrate)
-              state._sel_src_end = utils.warp_pos_to_src(state.warp_map, state.region_sel_end, playrate)
+              state._view_src_start = utils.warp_pos_to_src(state.warp_map, view_start, playrate)
+              state._view_src_end = utils.warp_pos_to_src(state.warp_map, view_start + view_length, playrate)
             else
-              state._sel_src_start = state.region_sel_start
-              state._sel_src_end = state.region_sel_end
+              state._view_src_start = view_start
+              state._view_src_end = view_start + view_length
             end
           end
-          if state.preview_cursor_pos then
-            if is_warped_view and state.warp_map then
-              state._cursor_src = utils.warp_pos_to_src(state.warp_map, state.preview_cursor_pos, playrate)
-            else
-              state._cursor_src = state.preview_cursor_pos
+          -- Save selection and cursor in source-space for stabilization on warp map changes
+          -- Skip when unfocused (same rationale as view stabilization guard above)
+          if reaper_is_active then
+            if state.region_selected then
+              if is_warped_view and state.warp_map then
+                state._sel_src_start = utils.warp_pos_to_src(state.warp_map, state.region_sel_start, playrate)
+                state._sel_src_end = utils.warp_pos_to_src(state.warp_map, state.region_sel_end, playrate)
+              else
+                state._sel_src_start = state.region_sel_start
+                state._sel_src_end = state.region_sel_end
+              end
+            end
+            if state.preview_cursor_pos then
+              if is_warped_view and state.warp_map then
+                state._cursor_src = utils.warp_pos_to_src(state.warp_map, state.preview_cursor_pos, playrate)
+              else
+                state._cursor_src = state.preview_cursor_pos
+              end
             end
           end
 
