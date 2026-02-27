@@ -263,6 +263,49 @@ local function loop()
     return
   end
 
+  -- Ctrl fine-tune helper: virtual position advances at reduced speed when ctrl is held.
+  -- Updates vt.virtual_x/y and vt.last_mouse_x/y in place.
+  -- On ctrl release, warps OS cursor to virtual position (requires JS extension).
+  local function apply_fine_tune(vt, mouse_x, mouse_y, ctrl)
+    if not vt.virtual_y then
+      vt.virtual_x = mouse_x
+      vt.virtual_y = mouse_y
+      vt.last_mouse_x = mouse_x
+      vt.last_mouse_y = mouse_y
+    end
+    -- Ctrl released: snap real cursor to virtual position
+    if vt.was_ctrl and not ctrl and state.has_js_extension then
+      local dx = mouse_x - vt.virtual_x
+      local dy = mouse_y - vt.virtual_y
+      if math.abs(dx) > 0.5 or math.abs(dy) > 0.5 then
+        local sx, sy = reaper.GetMousePosition()
+        reaper.JS_Mouse_SetPosition(math.floor(sx - dx + 0.5), math.floor(sy - dy + 0.5))
+      end
+      vt.last_mouse_x = vt.virtual_x
+      vt.last_mouse_y = vt.virtual_y
+    else
+      local scale = ctrl and 0.25 or 1.0
+      vt.virtual_x = vt.virtual_x + (mouse_x - vt.last_mouse_x) * scale
+      vt.virtual_y = vt.virtual_y + (mouse_y - vt.last_mouse_y) * scale
+      vt.last_mouse_x = mouse_x
+      vt.last_mouse_y = mouse_y
+    end
+    vt.was_ctrl = ctrl
+  end
+
+  -- Snap OS cursor to virtual position if fine-tune was active when drag ended.
+  -- mouse_x/mouse_y are the current ImGui-space cursor coords.
+  local function end_fine_tune(vt, mouse_x, mouse_y)
+    if vt and vt.was_ctrl and state.has_js_extension then
+      local dx = mouse_x - vt.virtual_x
+      local dy = mouse_y - vt.virtual_y
+      if math.abs(dx) > 0.5 or math.abs(dy) > 0.5 then
+        local sx, sy = reaper.GetMousePosition()
+        reaper.JS_Mouse_SetPosition(math.floor(sx - dx + 0.5), math.floor(sy - dy + 0.5))
+      end
+    end
+  end
+
   -- Everything below is wrapped in pcall to catch Lua-level errors.
   local open = true
   local needs_reload = false
@@ -3144,9 +3187,9 @@ local function loop()
               if alt_held then
                 drawing.tooltip(ctx, "env_node", "Click to delete node")
               elseif state.env_node_hovered_is_selected and #state.env_selected_nodes > 1 then
-                drawing.tooltip(ctx, "env_node", "Drag to move selected nodes\nShift+drag: vertical only\nAlt+click: delete")
+                drawing.tooltip(ctx, "env_node", "Drag to move selected nodes\nShift+drag: vertical only\nCtrl+drag: fine-tune\nAlt+click: delete")
               else
-                drawing.tooltip(ctx, "env_node", "Drag to move node\nShift+drag: vertical only\nAlt+click: delete")
+                drawing.tooltip(ctx, "env_node", "Drag to move node\nShift+drag: vertical only\nCtrl+drag: fine-tune\nAlt+click: delete")
               end
             -- Envelope segment tooltips
             elseif state.envelopes_visible and state.envelope_hovered_segment >= 0 then
@@ -4947,15 +4990,20 @@ local function loop()
                 state.env_drag_activated = true
               end
               if state.env_drag_activated then
-                pitch_auto_scroll(mouse_y)
+                -- Ctrl fine-tune: virtual position advances at 25% speed
+                if not state.env_drag_ft then state.env_drag_ft = {} end
+                apply_fine_tune(state.env_drag_ft, mouse_x, mouse_y, ctrl_held)
+                if ctrl_held then reaper.ImGui_SetMouseCursor(ctx, -1) end
+
+                pitch_auto_scroll(state.env_drag_ft.virtual_y)
                 local env = reaper.GetTakeEnvelopeByName(take, env_name)
                 if env then
-                  local new_raw = mouse_y_to_raw(mouse_y)
+                  local new_raw = mouse_y_to_raw(state.env_drag_ft.virtual_y)
                   local take_time
                   if shift_held then
                     take_time = state.env_drag_start_time
                   else
-                    local new_source_time = px_to_time(mouse_x)
+                    local new_source_time = px_to_time(state.env_drag_ft.virtual_x)
                     new_source_time = math.max(env_time_min, math.min(env_time_max, new_source_time))
                     new_source_time = snap_to_grid_if_enabled(new_source_time)
                     take_time = new_source_time - env_offset
@@ -4983,7 +5031,13 @@ local function loop()
                 state.env_segment_activated = true
               end
               if state.env_segment_activated then
-                pitch_auto_scroll(mouse_y)
+                -- Ctrl fine-tune (Y axis only for segments)
+                if not state.env_segment_ft then state.env_segment_ft = {} end
+                apply_fine_tune(state.env_segment_ft, mouse_x, mouse_y, ctrl_held)
+                if ctrl_held then reaper.ImGui_SetMouseCursor(ctx, -1) end
+
+                local dy = state.env_segment_ft.virtual_y - state.env_segment_start_mouse_y
+                pitch_auto_scroll(state.env_segment_ft.virtual_y)
                 local env = reaper.GetTakeEnvelopeByName(take, env_name)
                 if env then
                   -- Convert pixel delta to value delta (use view window for coordinate mapping)
@@ -5107,7 +5161,12 @@ local function loop()
                 end
               end
               if state.env_multi_drag_activated then
-                pitch_auto_scroll(mouse_y)
+                -- Ctrl fine-tune: virtual position advances at 25% speed
+                if not state.env_multi_drag_ft then state.env_multi_drag_ft = {} end
+                apply_fine_tune(state.env_multi_drag_ft, mouse_x, mouse_y, ctrl_held)
+                if ctrl_held then reaper.ImGui_SetMouseCursor(ctx, -1) end
+
+                pitch_auto_scroll(state.env_multi_drag_ft.virtual_y)
                 local m_env_name = state.env_multi_drag_env_name or env_name
                 local m_env_offset = state.env_multi_drag_env_offset or env_offset
                 local env = reaper.GetTakeEnvelopeByName(take, m_env_name)
@@ -5117,12 +5176,12 @@ local function loop()
                     dt = 0
                   else
                     local start_src_t = px_to_time(state.env_multi_drag_start_mouse_x)
-                    local current_src_t = px_to_time(mouse_x)
+                    local current_src_t = px_to_time(state.env_multi_drag_ft.virtual_x)
                     local snapped_current = snap_to_grid_if_enabled(current_src_t)
                     dt = snapped_current - start_src_t
                   end
                   local start_raw = mouse_y_to_raw(state.env_multi_drag_start_mouse_y)
-                  local current_raw = mouse_y_to_raw(mouse_y)
+                  local current_raw = mouse_y_to_raw(state.env_multi_drag_ft.virtual_y)
                   local dv = current_raw - start_raw
 
                   -- Compute current span of selected nodes (their footprint after drag)
@@ -5689,6 +5748,8 @@ local function loop()
             state.dragging_env_node = false
             state.env_drag_activated = false
             state.env_drag_node_idx = -1
+            end_fine_tune(state.env_drag_ft, mouse_x, mouse_y)
+            state.env_drag_ft = nil
             if state.env_freehand_drawing then
               state.env_freehand_drawing = false
               reaper.UpdateArrange()
@@ -5702,11 +5763,15 @@ local function loop()
               state.env_multi_drag_activated = false
               state.env_multi_drag_start_positions = {}
               state.env_multi_drag_all_points = {}
+              end_fine_tune(state.env_multi_drag_ft, mouse_x, mouse_y)
+              state.env_multi_drag_ft = nil
             end
             state.env_segment_dragging = false
             state.env_segment_activated = false
             state.env_segment_idx1 = -1
             state.env_segment_idx2 = -1
+            end_fine_tune(state.env_segment_ft, mouse_x, mouse_y)
+            state.env_segment_ft = nil
             state.env_rect_selecting = false
             state.env_rect_sel_activated = false
             state.slope_dragging = false
@@ -6771,14 +6836,17 @@ local function loop()
     state.env_drag_activated = false
     state.env_freehand_drawing = false
     state.env_drag_node_idx = -1
+    state.env_drag_ft = nil
     state.env_segment_dragging = false
     state.env_segment_activated = false
+    state.env_segment_ft = nil
     state.env_rect_selecting = false
     state.env_rect_sel_activated = false
     state.env_multi_dragging = false
     state.env_multi_drag_activated = false
     state.env_multi_drag_start_positions = {}
     state.env_multi_drag_all_points = {}
+    state.env_multi_drag_ft = nil
     state.env_selected_nodes = {}
     -- Restore stretch markers if a warp-mode drag was interrupted mid-frame
     if state.drag_start_warp_markers and state.remembered_item then

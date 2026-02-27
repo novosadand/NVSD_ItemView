@@ -1857,6 +1857,7 @@ local HELP_SECTIONS = {
       "## Editing",
       {key = "Drag node", desc = "Move point"},
       {key = "Shift+drag node", desc = "Vertical only (lock time position)"},
+      {key = "Ctrl+drag node", desc = "Fine-tune (25% sensitivity)"},
       {key = "Drag segment", desc = "Move both endpoints vertically"},
       {key = "Shift+click", desc = "Insert node and start dragging"},
       {key = "Alt+click node", desc = "Delete node"},
