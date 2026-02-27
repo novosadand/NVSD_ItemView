@@ -1668,7 +1668,7 @@ local function loop()
                   fo = fo * scale
                 end
 
-                -- Remap envelope points (source-time shift)
+                -- Shift envelope points to follow audio when unlocked
                 if not state.envelope_lock then
                   local env_names = { "Volume", "Pitch", "Pan" }
                   for _, ename in ipairs(env_names) do
