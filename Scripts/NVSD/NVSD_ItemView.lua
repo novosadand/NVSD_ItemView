@@ -2473,30 +2473,15 @@ local function loop()
               project_t = utils.source_to_project_time(source_t, pos, offset, playrate)
             end
 
-            -- Compute finest visible grid subdivision (same logic as grid display)
-            local bpm, bpi = reaper.GetProjectTimeSignature2(0, project_t)
-            local beats_per_bar = math.floor(bpi)
-            if beats_per_bar < 1 then beats_per_bar = 4 end
-            local avg_bar_duration = 60 / bpm * beats_per_bar
-            local px_per_bar = (avg_bar_duration / view_length) * waveform_width
-            local px_per_beat = px_per_bar / beats_per_bar
+            -- Compute effective grid division in QN (same as grid drawing)
+            local grid = settings.current.grid
+            local p_start = utils.source_to_project_time(view_start, item_position, start_offset, playrate)
+            local p_end = utils.source_to_project_time(view_start + view_length, item_position, start_offset, playrate)
+            local vlqn = reaper.TimeMap2_timeToQN(0, p_end) - reaper.TimeMap2_timeToQN(0, p_start)
+            local division_qn = utils.get_effective_grid_qn(grid, config, vlqn, waveform_width)
 
-            local finest_sub = 1
-            while (px_per_beat / (finest_sub * 2)) >= 42 do
-              finest_sub = finest_sub * 2
-            end
-
-            -- Snap in beat space: get beat position, round to nearest subdivision
-            local snap_unit = 1 / finest_sub
-            local beat_in_measure, measure = reaper.TimeMap2_timeToBeats(0, project_t)
-            local snapped_beat = math.floor(beat_in_measure / snap_unit + 0.5) * snap_unit
-            local snapped_measure = measure
-            if snapped_beat >= beats_per_bar then
-              snapped_beat = snapped_beat - beats_per_bar
-              snapped_measure = measure + 1
-            end
-
-            local snapped_project_t = reaper.TimeMap2_beatsToTime(0, snapped_beat, snapped_measure)
+            -- Snap in QN space with triplet support (matches grid display exactly)
+            local snapped_project_t = utils.snap_to_division(project_t, division_qn, grid.triplet)
             if pos_time_mode then
               return snapped_project_t - pos
             else
@@ -3092,8 +3077,21 @@ local function loop()
           elseif state.is_panning then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeAll())
           elseif state.dragging_env_node then
-            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
+            if shift_held then
+              reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
+            else
+              reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
+            end
+          elseif state.env_multi_dragging then
+            if shift_held then
+              reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
+            else
+              reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
+            end
           elseif state.env_segment_dragging then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
+          elseif state.envelopes_visible and shift_held and reaper_is_active
+              and state.env_node_hovered_idx >= 0 and not alt_held then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
           elseif state.envelopes_visible and reaper_is_active
               and state.env_node_hovered_idx >= 0
@@ -3146,9 +3144,9 @@ local function loop()
               if alt_held then
                 drawing.tooltip(ctx, "env_node", "Click to delete node")
               elseif state.env_node_hovered_is_selected and #state.env_selected_nodes > 1 then
-                drawing.tooltip(ctx, "env_node", "Drag to move selected nodes\nAlt+click: delete")
+                drawing.tooltip(ctx, "env_node", "Drag to move selected nodes\nShift+drag: vertical only\nAlt+click: delete")
               else
-                drawing.tooltip(ctx, "env_node", "Drag to move node\nAlt+click: delete")
+                drawing.tooltip(ctx, "env_node", "Drag to move node\nShift+drag: vertical only\nAlt+click: delete")
               end
             -- Envelope segment tooltips
             elseif state.envelopes_visible and state.envelope_hovered_segment >= 0 then
@@ -4547,7 +4545,7 @@ local function loop()
             -- Left-click: create node on segment or start dragging existing node
             if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_waveform
                 and not reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
-                and not alt_held and not shift_held
+                and not alt_held
                 and not state.dragging_start and not state.dragging_end
                 and not state.dragging_fade_in and not state.dragging_fade_out
                 and not state.dragging_fade_curve_in and not state.dragging_fade_curve_out
@@ -4952,12 +4950,16 @@ local function loop()
                 pitch_auto_scroll(mouse_y)
                 local env = reaper.GetTakeEnvelopeByName(take, env_name)
                 if env then
-                  local new_source_time = px_to_time(mouse_x)
                   local new_raw = mouse_y_to_raw(mouse_y)
-                  new_source_time = math.max(env_time_min, math.min(env_time_max, new_source_time))
-                  new_source_time = snap_to_grid_if_enabled(new_source_time)
-                  -- Convert source time to take time
-                  local take_time = new_source_time - env_offset
+                  local take_time
+                  if shift_held then
+                    take_time = state.env_drag_start_time
+                  else
+                    local new_source_time = px_to_time(mouse_x)
+                    new_source_time = math.max(env_time_min, math.min(env_time_max, new_source_time))
+                    new_source_time = snap_to_grid_if_enabled(new_source_time)
+                    take_time = new_source_time - env_offset
+                  end
                   reaper.SetEnvelopePoint(env, state.env_drag_node_idx, take_time, new_raw, state.env_drag_node_shape or 0, state.env_drag_node_tension or 0, false, true)
                   reaper.Envelope_SortPoints(env)
                   -- Re-find the point after sort (index may have changed)
@@ -5110,11 +5112,15 @@ local function loop()
                 local m_env_offset = state.env_multi_drag_env_offset or env_offset
                 local env = reaper.GetTakeEnvelopeByName(take, m_env_name)
                 if env and #state.env_multi_drag_all_points > 0 then
-                  local start_src_t = px_to_time(state.env_multi_drag_start_mouse_x)
-                  local current_src_t = px_to_time(mouse_x)
-                  -- Snap: compute dt so that the reference node lands on a grid line
-                  local snapped_current = snap_to_grid_if_enabled(current_src_t)
-                  local dt = snapped_current - start_src_t
+                  local dt
+                  if shift_held then
+                    dt = 0
+                  else
+                    local start_src_t = px_to_time(state.env_multi_drag_start_mouse_x)
+                    local current_src_t = px_to_time(mouse_x)
+                    local snapped_current = snap_to_grid_if_enabled(current_src_t)
+                    dt = snapped_current - start_src_t
+                  end
                   local start_raw = mouse_y_to_raw(state.env_multi_drag_start_mouse_y)
                   local current_raw = mouse_y_to_raw(mouse_y)
                   local dv = current_raw - start_raw
