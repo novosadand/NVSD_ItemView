@@ -311,6 +311,10 @@ local function loop()
   local focus_settled = reaper_is_active
   state.reaper_is_active = reaper_is_active
 
+  -- Detect focus-return transition (before updating prev_active)
+  local focus_just_returned = reaper_is_active and state._prev_active == false
+  state._prev_active = reaper_is_active
+
   if reaper_is_active and reaper.JS_Mouse_GetState then
     local mouse_state = reaper.JS_Mouse_GetState(1)
     mouse_is_down = (mouse_state & 1) ~= 0
@@ -358,9 +362,11 @@ local function loop()
 
   if visible then
     -- Cache modifier key state once per frame (avoids repeated Lua→C bridge calls)
-    local ctrl_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
-    local shift_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
-    local alt_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
+    -- Clear stale modifier state on the frame focus returns (Alt+Tab leaves Alt
+    -- "stuck" because the key-up event fires while REAPER is unfocused)
+    local ctrl_held = not focus_just_returned and reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Ctrl())
+    local shift_held = not focus_just_returned and reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Shift())
+    local alt_held = not focus_just_returned and reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
 
     -- Raw VKey rising-edge detection for Ctrl/Cmd+C (macOS: REAPER may consume
     -- Cmd+C before ImGui sees it, so ImGui_IsKeyPressed(Key_C) never fires).
@@ -1610,33 +1616,10 @@ local function loop()
                   end
                 end
 
-                -- Shift envelope points to follow audio when unlocked
+                -- Shift envelope to follow audio when unlocked (SetEnvelopePoint
+                -- in-place, matching alt+drag behavior — preserves all points)
                 if not state.envelope_lock then
-                  local env_names = { "Volume", "Pitch", "Pan" }
-                  for _, ename in ipairs(env_names) do
-                    local e = reaper.GetTakeEnvelopeByName(take, ename)
-                    if e then
-                      local np = reaper.CountEnvelopePoints(e)
-                      local remapped = {}
-                      for ei = 0, np - 1 do
-                        local ret, pt_time, pt_val, pt_shape, pt_tension, pt_sel = reaper.GetEnvelopePoint(e, ei)
-                        if ret then
-                          local new_pt_time = pt_time - delta
-                          if new_pt_time >= -0.001 and new_pt_time <= new_item_length + 0.001 then
-                            new_pt_time = math.max(0, math.min(new_item_length, new_pt_time))
-                            remapped[#remapped + 1] = { time = new_pt_time, val = pt_val, shape = pt_shape, tension = pt_tension, sel = pt_sel }
-                          end
-                        end
-                      end
-                      for ei = np - 1, 0, -1 do
-                        reaper.DeleteEnvelopePointEx(e, -1, ei)
-                      end
-                      for _, p in ipairs(remapped) do
-                        reaper.InsertEnvelopePoint(e, p.time, p.val, p.shape, p.tension, p.sel, true)
-                      end
-                      reaper.Envelope_SortPoints(e)
-                    end
-                  end
+                  utils.shift_envelope_points(take, -delta)
                 end
 
                 -- Fade adjustment
@@ -1660,47 +1643,19 @@ local function loop()
                   new_take_offset = new_take_offset % source_length
                 end
 
+                -- Shift envelope to follow audio when unlocked (SetEnvelopePoint
+                -- in-place, matching alt+drag behavior — preserves all points)
+                if not state.envelope_lock then
+                  local offset_delta = new_take_offset - take_offset
+                  utils.shift_envelope_points(take, -offset_delta)
+                end
+
                 -- Fade adjustment
                 local fi, fo = fade_in_len, fade_out_len
                 if fi + fo > new_item_length then
                   local scale = new_item_length / (fi + fo)
                   fi = fi * scale
                   fo = fo * scale
-                end
-
-                -- Shift envelope points to follow audio when unlocked
-                if not state.envelope_lock then
-                  local env_names = { "Volume", "Pitch", "Pan" }
-                  for _, ename in ipairs(env_names) do
-                    local e = reaper.GetTakeEnvelopeByName(take, ename)
-                    if e then
-                      local np = reaper.CountEnvelopePoints(e)
-                      local remapped = {}
-                      for ei = 0, np - 1 do
-                        local ret, pt_time, pt_val, pt_shape, pt_tension, pt_sel = reaper.GetEnvelopePoint(e, ei)
-                        if ret then
-                          local new_pt_time
-                          if source_length > 0 and state.is_loop_src then
-                            local src_time = (take_offset + pt_time) % source_length
-                            new_pt_time = (src_time - new_take_offset) % source_length
-                          else
-                            new_pt_time = pt_time - (new_take_offset - take_offset)
-                          end
-                          if new_pt_time >= -0.001 and new_pt_time <= new_item_length + 0.001 then
-                            new_pt_time = math.max(0, math.min(new_item_length, new_pt_time))
-                            remapped[#remapped + 1] = { time = new_pt_time, val = pt_val, shape = pt_shape, tension = pt_tension, sel = pt_sel }
-                          end
-                        end
-                      end
-                      for ei = np - 1, 0, -1 do
-                        reaper.DeleteEnvelopePointEx(e, -1, ei)
-                      end
-                      for _, p in ipairs(remapped) do
-                        reaper.InsertEnvelopePoint(e, p.time, p.val, p.shape, p.tension, p.sel, true)
-                      end
-                      reaper.Envelope_SortPoints(e)
-                    end
-                  end
                 end
 
                 reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", new_take_offset)
