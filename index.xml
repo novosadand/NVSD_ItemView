@@ -1471,21 +1471,23 @@ Fixes:
 - Envelope lock works correctly for crop, alt-drag, and double-click in warp mode
 - Envelope segments take priority over markers when overlapping
 - CF_Preview playback matches take playrate (varispeed) with correct playhead tracking
+- Preview cursor position correct in warp mode with non-1.0 playrate
+- Undo point created when focus lost during active marker drag
 - Settings page no longer scrolls during shortcut capture
 - Warp mode transitions no longer cause view jumps or pixelated waveforms
 - Extreme zoom performance and sample-level zoom range
 - Toolbar and toggle button persistence across restarts
 - Pitch knob double-click reset, marker selection in warped view]]></changelog>
-        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/7919d99/Scripts/NVSD/NVSD_ItemView.lua</source>
-        <source>https://github.com/novosadand/NVSD_ItemView/raw/7919d99/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
-        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/7919d99/Scripts/NVSD/lib/config.lua</source>
-        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/7919d99/Scripts/NVSD/lib/state.lua</source>
-        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/7919d99/Scripts/NVSD/lib/utils.lua</source>
-        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/7919d99/Scripts/NVSD/lib/drawing.lua</source>
-        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/7919d99/Scripts/NVSD/lib/fade_curves.lua</source>
-        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/7919d99/Scripts/NVSD/lib/controls.lua</source>
-        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/7919d99/Scripts/NVSD/lib/settings.lua</source>
-        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/7919d99/Scripts/NVSD/lib/settings_ui.lua</source>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/d29ae2c/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/d29ae2c/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/d29ae2c/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/d29ae2c/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/d29ae2c/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/d29ae2c/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/d29ae2c/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/d29ae2c/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/d29ae2c/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/d29ae2c/Scripts/NVSD/lib/settings_ui.lua</source>
       </version>
     </reapack>
   </category>
