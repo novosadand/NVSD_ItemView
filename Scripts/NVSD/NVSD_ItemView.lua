@@ -6859,7 +6859,7 @@ local function loop()
           reaper.ImGui_InvisibleButton(ctx, "midi_area", avail_w, math.max(avail_h, total_height))
 
           local draw_list = reaper.ImGui_GetWindowDrawList(ctx)
-          local mouse_x, mouse_y = reaper.ImGui_GetMousePos(ctx)
+          local mouse_x, mouse_y = reaper.ImGui_GetMousePos(ctx)  -- real mouse for info bar
           drawing.set_frame_time(reaper.time_precise())
           drawing.tooltips_disabled = not settings.current.defaults.show_tooltips
 
@@ -6880,6 +6880,9 @@ local function loop()
             end
             state.toolbar_clicked = nil
           end
+
+          -- Suppress hover for all controls below info bar
+          mouse_x, mouse_y = -9999, -9999
 
           -- Left column backgrounds
           if left_col_has_content then

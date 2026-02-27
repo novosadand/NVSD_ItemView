@@ -1991,7 +1991,7 @@ local HELP_SECTIONS = {
     lines = {
       "- Map the script to a toolbar button for quick toggle",
       "- Running it again while open closes it",
-      "- Right-click title bar to dock",
+      "- Drag the title bar into a REAPER docker to dock it",
       "- WARP markers persist per-item across sessions",
       "- Scroll over dropdowns (Algorithm, Mode, Options) to cycle values",
       "- JS_ReaScriptAPI improves knob/slider drag range",

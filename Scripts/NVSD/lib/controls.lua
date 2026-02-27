@@ -1763,7 +1763,13 @@ function controls.draw_panel_tabs(ctx, draw_list, mouse_x, mouse_y, left_col_x, 
   local active = state.left_panel_tab or "warp"
   local COLOR_ACTIVE_BG = config.COLOR_BTN_OFF       -- slightly highlighted
   local COLOR_INACTIVE_BG = config.COLOR_WAVEFORM_BG  -- same as column bg
-  local COLOR_HOVER = config.COLOR_BTN_HOVER
+  -- Brighten inactive bg for hover (shift each RGB channel up by ~20)
+  local ib = COLOR_INACTIVE_BG
+  local r = math.min(255, ((ib >> 24) & 0xFF) + 20)
+  local g = math.min(255, ((ib >> 16) & 0xFF) + 20)
+  local b = math.min(255, ((ib >> 8) & 0xFF) + 20)
+  local a = ib & 0xFF
+  local COLOR_HOVER = (r << 24) | (g << 16) | (b << 8) | a
   local COLOR_TEXT = config.COLOR_BTN_TEXT
   local COLOR_DIM = config.COLOR_INFO_BAR_TEXT
 
