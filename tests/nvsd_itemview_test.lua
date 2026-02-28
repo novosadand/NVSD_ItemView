@@ -1318,3 +1318,18 @@ function TestNVSDItemView:test_find_prev_region_from_region_start()
   local peaks = make_sausage_peaks()
   lu.assertEquals(utils.find_prev_region(peaks, 7), 1)
 end
+
+function TestNVSDItemView:test_find_nearest_sound_in_sound()
+  local peaks = make_sausage_peaks()
+  lu.assertEquals(utils.find_nearest_sound_column(peaks, 2), 2)
+end
+
+function TestNVSDItemView:test_find_nearest_sound_in_silence_biased_forward()
+  local peaks = make_sausage_peaks()
+  lu.assertEquals(utils.find_nearest_sound_column(peaks, 5), 7)
+end
+
+function TestNVSDItemView:test_find_nearest_sound_trailing_silence()
+  local peaks = make_sausage_peaks()
+  lu.assertEquals(utils.find_nearest_sound_column(peaks, 10), 9)
+end

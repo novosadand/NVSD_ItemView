@@ -1365,4 +1365,18 @@ function utils.find_prev_region(peaks, col)
   return i
 end
 
+--- Find nearest non-silent column, biased forward (toward next onset).
+function utils.find_nearest_sound_column(peaks, col)
+  if not utils.is_column_silent(peaks, col) then return col end
+  -- Search forward first (bias toward next attack)
+  for i = col + 1, peaks.count do
+    if not utils.is_column_silent(peaks, i) then return i end
+  end
+  -- Search backward
+  for i = col - 1, 1, -1 do
+    if not utils.is_column_silent(peaks, i) then return i end
+  end
+  return col  -- all silent, return original
+end
+
 return utils
