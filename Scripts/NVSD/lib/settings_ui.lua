@@ -737,35 +737,35 @@ local function draw_shortcuts_tab(ctx, settings)
       -- Column: Grab from REAPER button
       reaper.ImGui_TableNextColumn(ctx)
       local reaper_action_id = REAPER_ACTION_MAP[name]
-      if reaper_action_id and not is_listening then
+      local g_hovered = false
+      if reaper_action_id and not is_listening
+          and reaper.GetActionShortcutDesc then
         reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(),        0x00000000)
         reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x66333399)
         reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(),  0xCC444499)
         reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(),          0x888888FF)
         if reaper.ImGui_SmallButton(ctx, "G##grab_" .. name) then
-          local section = reaper.SectionFromUniqueID(0)
-          local count = reaper.CountActionShortcuts(section, reaper_action_id)
-          if count > 0 then
-            local ok, desc = reaper.GetActionShortcutDesc(section, reaper_action_id, 0)
-            if ok and desc ~= "" then
-              local binding = settings.string_to_shortcut(desc)
-              if binding.key ~= "" then
-                local conflict = settings.find_conflict(
-                  settings.current.shortcuts, name, binding)
-                if conflict then
-                  ui_state.conflict_pending = {
-                    target = name,
-                    binding = binding,
-                    conflict_name = conflict,
-                  }
-                else
-                  apply_shortcut(settings, name, binding)
-                end
+          local ok, rv, desc = pcall(
+            reaper.GetActionShortcutDesc, 0, reaper_action_id, 0, "")
+          if ok and rv and desc and desc ~= "" then
+            local binding = settings.string_to_shortcut(desc)
+            if binding.key ~= "" then
+              local conflict = settings.find_conflict(
+                settings.current.shortcuts, name, binding)
+              if conflict then
+                ui_state.conflict_pending = {
+                  target = name,
+                  binding = binding,
+                  conflict_name = conflict,
+                }
+              else
+                apply_shortcut(settings, name, binding)
               end
             end
           end
         end
-        if reaper.ImGui_IsItemHovered(ctx) then
+        g_hovered = reaper.ImGui_IsItemHovered(ctx)
+        if g_hovered then
           reaper.ImGui_SetTooltip(ctx, "Grab shortcut from REAPER")
         end
         reaper.ImGui_PopStyleColor(ctx, 4)
@@ -844,7 +844,7 @@ local function draw_shortcuts_tab(ctx, settings)
         reaper.ImGui_PopStyleColor(ctx, 4)
       end
 
-      ui_state.shortcut_hover[name] = btn_hovered or x_hovered
+      ui_state.shortcut_hover[name] = btn_hovered or x_hovered or g_hovered
 
       -- Column 4: Reset button (only if non-default)
       reaper.ImGui_TableNextColumn(ctx)
