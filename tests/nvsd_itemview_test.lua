@@ -1239,3 +1239,34 @@ function TestNVSDItemView:test_string_to_shortcut_empty()
     lu.assertEquals(result.key, "")
     lu.assertFalse(result.ctrl)
 end
+
+-- Sausage navigation: silence detection
+function TestNVSDItemView:test_is_column_silent_all_zero()
+  local peaks = {mins = {0, 0}, maxs = {0, 0}, count = 2, channels = 1}
+  lu.assertTrue(utils.is_column_silent(peaks, 1))
+end
+
+function TestNVSDItemView:test_is_column_silent_has_sound()
+  local peaks = {mins = {-0.5, 0}, maxs = {0.5, 0}, count = 2, channels = 1}
+  lu.assertFalse(utils.is_column_silent(peaks, 1))
+  lu.assertTrue(utils.is_column_silent(peaks, 2))
+end
+
+function TestNVSDItemView:test_is_column_silent_stereo()
+  local peaks = {
+    mins = {0, 0,  -0.3, 0},
+    maxs = {0, 0,   0.3, 0},
+    count = 2, channels = 2
+  }
+  lu.assertTrue(utils.is_column_silent(peaks, 1))
+  lu.assertFalse(utils.is_column_silent(peaks, 2))
+end
+
+function TestNVSDItemView:test_is_column_silent_stereo_one_channel_nonzero()
+  local peaks = {
+    mins = {0, -0.1},
+    maxs = {0,  0.1},
+    count = 1, channels = 2
+  }
+  lu.assertFalse(utils.is_column_silent(peaks, 1))
+end

@@ -1306,4 +1306,15 @@ function utils.disable_warp(take, state)
   return saved
 end
 
+--- Check if a peak column is silent (all channels min and max are 0.0)
+function utils.is_column_silent(peaks, col)
+  for ch = 1, peaks.channels do
+    local idx = (col - 1) * peaks.channels + ch
+    if (peaks.mins[idx] or 0) ~= 0 or (peaks.maxs[idx] or 0) ~= 0 then
+      return false
+    end
+  end
+  return true
+end
+
 return utils
