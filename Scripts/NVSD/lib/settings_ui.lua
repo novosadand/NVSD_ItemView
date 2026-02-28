@@ -71,6 +71,16 @@ local EDITABLE_SHORTCUTS = {
   {name = "show_in_explorer",  label = "Show in Media Explorer"},
 }
 
+-- REAPER Main section action IDs for shortcuts that have direct equivalents
+local REAPER_ACTION_MAP = {
+  toggle_mute     = 40175,  -- Item properties: Toggle mute
+  reverse         = 41051,  -- Item properties: Toggle take reverse
+  open_editor     = 40153,  -- Item: Open in built-in MIDI editor
+  show_volume_env = 40693,  -- Take: Toggle take volume envelope
+  show_pitch_env  = 40714,  -- Take: Toggle take pitch envelope
+  show_pan_env    = 40694,  -- Take: Toggle take pan envelope
+}
+
 -- Reference shortcuts (not editable, grouped by section)
 local REFERENCE_SHORTCUTS = {
   -- Keyboard
@@ -680,8 +690,9 @@ local function draw_shortcuts_tab(ctx, settings)
   local flags = reaper.ImGui_TableFlags_None()
   if not ui_state.shortcut_hover then ui_state.shortcut_hover = {} end
 
-  if reaper.ImGui_BeginTable(ctx, "editable_shortcuts", 4, flags) then
+  if reaper.ImGui_BeginTable(ctx, "editable_shortcuts", 5, flags) then
     reaper.ImGui_TableSetupColumn(ctx, "Action", reaper.ImGui_TableColumnFlags_WidthStretch())
+    reaper.ImGui_TableSetupColumn(ctx, "Grab", reaper.ImGui_TableColumnFlags_WidthFixed(), 24)
     reaper.ImGui_TableSetupColumn(ctx, "Binding", reaper.ImGui_TableColumnFlags_WidthFixed(), 120)
     reaper.ImGui_TableSetupColumn(ctx, "Clear", reaper.ImGui_TableColumnFlags_WidthFixed(), 24)
     reaper.ImGui_TableSetupColumn(ctx, "Reset", reaper.ImGui_TableColumnFlags_WidthFixed(), 30)
@@ -721,6 +732,43 @@ local function draw_shortcuts_tab(ctx, settings)
         reaper.ImGui_TextColored(ctx, COLORS.warning, entry.label)
       else
         reaper.ImGui_Text(ctx, entry.label)
+      end
+
+      -- Column: Grab from REAPER button
+      reaper.ImGui_TableNextColumn(ctx)
+      local reaper_action_id = REAPER_ACTION_MAP[name]
+      if reaper_action_id and not is_listening then
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(),        0x00000000)
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x66333399)
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(),  0xCC444499)
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(),          0x888888FF)
+        if reaper.ImGui_SmallButton(ctx, "G##grab_" .. name) then
+          local section = reaper.SectionFromUniqueID(0)
+          local count = reaper.CountActionShortcuts(section, reaper_action_id)
+          if count > 0 then
+            local ok, desc = reaper.GetActionShortcutDesc(section, reaper_action_id, 0)
+            if ok and desc ~= "" then
+              local binding = settings.string_to_shortcut(desc)
+              if binding.key ~= "" then
+                local conflict = settings.find_conflict(
+                  settings.current.shortcuts, name, binding)
+                if conflict then
+                  ui_state.conflict_pending = {
+                    target = name,
+                    binding = binding,
+                    conflict_name = conflict,
+                  }
+                else
+                  apply_shortcut(settings, name, binding)
+                end
+              end
+            end
+          end
+        end
+        if reaper.ImGui_IsItemHovered(ctx) then
+          reaper.ImGui_SetTooltip(ctx, "Grab shortcut from REAPER")
+        end
+        reaper.ImGui_PopStyleColor(ctx, 4)
       end
 
       -- Column 2: Binding button

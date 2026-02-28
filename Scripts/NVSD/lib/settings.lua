@@ -886,6 +886,7 @@ local function string_to_shortcut(str)
   end
   return shortcut
 end
+settings.string_to_shortcut = string_to_shortcut
 
 -- Load settings from ExtState
 function settings.load()
