@@ -40,7 +40,7 @@ settings.DEFAULT_SHORTCUTS = {
   set_fade_in = {ctrl = false, shift = true, alt = false, key = "Mouse4"},
   set_fade_out = {ctrl = false, shift = true, alt = false, key = "Mouse5"},
   zoom_to_markers = {ctrl = false, shift = false, alt = false, key = "Z"},
-  unzoom_all = {ctrl = false, shift = false, alt = true, key = "Z"},
+  unzoom_all = {ctrl = false, shift = true, alt = false, key = "Z"},
   toggle_cue_markers = {ctrl = false, shift = false, alt = false, key = "M"},
   toggle_ghost_markers = {ctrl = false, shift = false, alt = false, key = "G"},
   show_in_explorer = {ctrl = true, shift = false, alt = false, key = "F"},
@@ -915,6 +915,7 @@ function settings.load()
     {key = "shortcut_toggle_mute", old = "M"},           -- was M, now Num0
     {key = "shortcut_toggle_cue_markers", old = "T"},     -- was T, now M
     {key = "shortcut_open_editor", old = "E"},             -- was E, now Ctrl+Alt+E
+    {key = "shortcut_unzoom_all", old = "alt+Z"},          -- was Alt+Z, now Shift+Z
   }
   for _, m in ipairs(MIGRATIONS) do
     local saved = reaper.GetExtState(EXT_SECTION, m.key)
