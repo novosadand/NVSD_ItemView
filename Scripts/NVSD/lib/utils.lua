@@ -1317,4 +1317,52 @@ function utils.is_column_silent(peaks, col)
   return true
 end
 
+--- Find the start column of the next sound region after a silence gap.
+function utils.find_next_region(peaks, col)
+  local n = peaks.count
+  if col >= n then return nil end
+
+  local i = col
+  if utils.is_column_silent(peaks, i) then
+    -- Already in silence — find end of this gap
+    while i <= n and utils.is_column_silent(peaks, i) do i = i + 1 end
+    return i <= n and i or nil
+  end
+
+  -- In sound — skip past current sound, then past silence gap
+  while i <= n and not utils.is_column_silent(peaks, i) do i = i + 1 end
+  while i <= n and utils.is_column_silent(peaks, i) do i = i + 1 end
+  return i <= n and i or nil
+end
+
+--- Find the start column of the current or previous sound region.
+function utils.find_prev_region(peaks, col)
+  if col <= 1 then return nil end
+
+  local i = col
+  -- If in silence, walk backward into previous sound region
+  if utils.is_column_silent(peaks, i) then
+    while i > 1 and utils.is_column_silent(peaks, i - 1) do i = i - 1 end
+    if i <= 1 then return nil end
+    i = i - 1  -- step into previous sound region
+  end
+
+  -- Now in sound. Walk backward to find start of this sound region.
+  while i > 1 and not utils.is_column_silent(peaks, i - 1) do i = i - 1 end
+
+  -- If this is the same position we started from (we're at start of our region), go to previous
+  if i == col then
+    -- We're at the start of our region. Go backward past the silence to previous region.
+    local j = i - 1
+    if j < 1 then return nil end
+    while j > 0 and utils.is_column_silent(peaks, j) do j = j - 1 end
+    if j < 1 then return nil end
+    -- j is now in previous sound region. Find its start.
+    while j > 1 and not utils.is_column_silent(peaks, j - 1) do j = j - 1 end
+    return j
+  end
+
+  return i
+end
+
 return utils

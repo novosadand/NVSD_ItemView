@@ -1270,3 +1270,51 @@ function TestNVSDItemView:test_is_column_silent_stereo_one_channel_nonzero()
   }
   lu.assertFalse(utils.is_column_silent(peaks, 1))
 end
+
+-- Sausage navigation: region finding
+-- Test fixture: sound(1-3), silence(4-6), sound(7-9), silence(10)
+local function make_sausage_peaks()
+  local mins = {-0.5, -0.4, -0.3,  0, 0, 0,  -0.6, -0.5, -0.4,  0}
+  local maxs = { 0.5,  0.4,  0.3,  0, 0, 0,   0.6,  0.5,  0.4,  0}
+  return {mins = mins, maxs = maxs, count = 10, channels = 1}
+end
+
+function TestNVSDItemView:test_find_next_region_from_sound()
+  local peaks = make_sausage_peaks()
+  lu.assertEquals(utils.find_next_region(peaks, 2), 7)
+end
+
+function TestNVSDItemView:test_find_next_region_from_silence()
+  local peaks = make_sausage_peaks()
+  lu.assertEquals(utils.find_next_region(peaks, 5), 7)
+end
+
+function TestNVSDItemView:test_find_next_region_at_end()
+  local peaks = make_sausage_peaks()
+  lu.assertNil(utils.find_next_region(peaks, 8))
+end
+
+function TestNVSDItemView:test_find_next_region_from_last_silence()
+  local peaks = make_sausage_peaks()
+  lu.assertNil(utils.find_next_region(peaks, 10))
+end
+
+function TestNVSDItemView:test_find_prev_region_from_sound_middle()
+  local peaks = make_sausage_peaks()
+  lu.assertEquals(utils.find_prev_region(peaks, 8), 7)
+end
+
+function TestNVSDItemView:test_find_prev_region_from_silence()
+  local peaks = make_sausage_peaks()
+  lu.assertEquals(utils.find_prev_region(peaks, 5), 1)
+end
+
+function TestNVSDItemView:test_find_prev_region_from_first_region()
+  local peaks = make_sausage_peaks()
+  lu.assertNil(utils.find_prev_region(peaks, 1))
+end
+
+function TestNVSDItemView:test_find_prev_region_from_region_start()
+  local peaks = make_sausage_peaks()
+  lu.assertEquals(utils.find_prev_region(peaks, 7), 1)
+end
