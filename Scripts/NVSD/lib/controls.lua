@@ -2040,8 +2040,8 @@ function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, pa
 
   local slider_x = panel_x + (config.LEFT_PANEL_WIDTH - config.GAIN_SLIDER_WIDTH) / 2 - 2
   local available = panel_split - panel_y
-  local pad = math.max(2, math.min(20, (available - 40) * 0.25))
-  local label_h = (available < 100) and 10 or 14
+  local pad = math.max(1, math.min(10, (available - 40) * 0.15))
+  local label_h = (available < 100) and 8 or 12
   local slider_top = panel_y + pad + label_h
   local slider_bottom = panel_split - pad - label_h
   local slider_height = slider_bottom - slider_top
@@ -2147,7 +2147,7 @@ function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, pa
   end
 
   local slider_center_x = slider_x + config.GAIN_SLIDER_WIDTH / 2
-  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - 14, panel_y + math.max(1, pad - 4), config.COLOR_INFO_BAR_TEXT, "Gain")
+  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - 14, panel_y + math.max(0, pad - 2), config.COLOR_INFO_BAR_TEXT, "Gain")
   local db_text = utils.format_db(item_db)
   local db_text_w = reaper.ImGui_CalcTextSize(ctx, db_text)
   local db_gap = math.max(4, math.min(8, pad - 1))
@@ -2561,15 +2561,16 @@ function controls.draw_semitones_cents_boxes(ctx, draw_list, mouse_x, mouse_y, p
   end
 end
 
--- Draw FX toolbar: +/Power button and FX button above the FX beveled box
+-- Draw FX toolbar: [+] Add, [⏻] Bypass, [FX] chain — above the FX beveled box
 -- Returns the bottom Y coordinate so the FX box can start below it
 function controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
                                    toolbar_x, toolbar_y, toolbar_width,
                                    take, config, state, drawing)
   local btn_height = 20
-  local left_btn_width = 24
-  local gap = 4
-  local right_btn_width = toolbar_width - left_btn_width - gap
+  local add_btn_width = 20
+  local bypass_btn_width = 20
+  local gap = 3
+  local fx_btn_width = toolbar_width - add_btn_width - bypass_btn_width - gap * 2
   local rounding = 3
   local _, text_height = reaper.ImGui_CalcTextSize(ctx, "W")
 
@@ -2581,91 +2582,118 @@ function controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
   local fx_count = take and reaper.TakeFX_GetCount(take) or 0
   local has_fx = fx_count > 0
 
-  -- Left button: + (no FX) or Power icon (has FX)
-  local left_x = toolbar_x
-  local left_y = toolbar_y
-
-  local mouse_in_left = mouse_x >= left_x and mouse_x <= left_x + left_btn_width
-                        and mouse_y >= left_y and mouse_y <= left_y + btn_height
-
-  local left_bg = mouse_in_left and COLOR_BTN_HOVER or COLOR_BTN_OFF
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, left_x, left_y, left_x + left_btn_width, left_y + btn_height, left_bg, rounding)
-
+  -- Pre-compute any_enabled for bypass icon color and click logic
+  local any_enabled = false
   if has_fx then
-    -- Draw power icon centered, colored with accent
-    local icon_cx = left_x + left_btn_width / 2
-    local icon_cy = left_y + btn_height / 2
-    drawing.draw_power_icon(draw_list, icon_cx, icon_cy, 5, COLOR_BTN_ON)
-  else
-    -- Draw "+" text centered
-    local plus_w = reaper.ImGui_CalcTextSize(ctx, "+")
-    local plus_x = left_x + (left_btn_width - plus_w) / 2
-    local plus_y = left_y + (btn_height - text_height) / 2
-    reaper.ImGui_DrawList_AddText(draw_list, plus_x, plus_y, COLOR_BTN_TEXT, "+")
-  end
-
-  if mouse_in_left and not state._dropdown_menu_open then
-    local left_tip = has_fx and "Toggle all FX bypass" or "Add FX to take"
-    drawing.tooltip(ctx, "fx_add_btn", left_tip)
-  end
-
-  -- Left button click
-  if not state.midi_item_mode and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_left and not state._dropdown_menu_open then
-    if take then
-      if not has_fx then
-        -- No FX: open take FX chain (same as clicking item's FX button)
-        local fx_item = reaper.GetMediaItemTake_Item(take)
-        if fx_item then
-          reaper.SetMediaItemSelected(fx_item, true)
-          reaper.SetActiveTake(take)
-          reaper.Main_OnCommand(40638, 0)  -- Item: Show FX chain for item take
-        end
-      else
-        -- Has FX: toggle bypass on all
-        local any_enabled = false
-        for i = 0, fx_count - 1 do
-          if reaper.TakeFX_GetEnabled(take, i) then
-            any_enabled = true
-            break
-          end
-        end
-        reaper.Undo_BeginBlock()
-        for i = 0, fx_count - 1 do
-          reaper.TakeFX_SetEnabled(take, i, not any_enabled)
-        end
-        reaper.Undo_EndBlock("NVSD_ItemView: Toggle all FX bypass", -1)
+    for i = 0, fx_count - 1 do
+      if reaper.TakeFX_GetEnabled(take, i) then
+        any_enabled = true
+        break
       end
     end
   end
 
-  -- Right button: FX
-  local right_x = left_x + left_btn_width + gap
-  local right_y = toolbar_y
+  -- Button 1: [+] Add FX (always visible, always "Add FX")
+  local add_x = toolbar_x
+  local add_y = toolbar_y
 
-  local mouse_in_right = mouse_x >= right_x and mouse_x <= right_x + right_btn_width
-                         and mouse_y >= right_y and mouse_y <= right_y + btn_height
+  local mouse_in_add = mouse_x >= add_x and mouse_x <= add_x + add_btn_width
+                       and mouse_y >= add_y and mouse_y <= add_y + btn_height
 
-  local right_bg
-  if has_fx then
-    right_bg = mouse_in_right and COLOR_BTN_HOVER or COLOR_BTN_ON
-  else
-    right_bg = mouse_in_right and COLOR_BTN_HOVER or COLOR_BTN_OFF
+  local add_bg = mouse_in_add and COLOR_BTN_HOVER or COLOR_BTN_OFF
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, add_x, add_y, add_x + add_btn_width, add_y + btn_height, add_bg, rounding)
+
+  local plus_w = reaper.ImGui_CalcTextSize(ctx, "+")
+  local plus_x = add_x + (add_btn_width - plus_w) / 2
+  local plus_y = add_y + (btn_height - text_height) / 2
+  reaper.ImGui_DrawList_AddText(draw_list, plus_x, plus_y, COLOR_BTN_TEXT, "+")
+
+  if mouse_in_add and not state._dropdown_menu_open then
+    drawing.tooltip(ctx, "fx_add_btn", "Add FX to take")
   end
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, right_x, right_y, right_x + right_btn_width, right_y + btn_height, right_bg, rounding)
+
+  if not state.midi_item_mode and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_add and not state._dropdown_menu_open then
+    if take then
+      local chain_visible = reaper.TakeFX_GetChainVisible(take)
+      if chain_visible ~= -1 then
+        reaper.TakeFX_Show(take, 0, 0)  -- hide chain
+      elseif has_fx then
+        reaper.TakeFX_Show(take, 0, 1)  -- show chain
+      else
+        local fx_item = reaper.GetMediaItemTake_Item(take)
+        if fx_item then
+          reaper.SetMediaItemSelected(fx_item, true)
+          reaper.SetActiveTake(take)
+          reaper.Main_OnCommand(40638, 0)  -- open FX browser
+        end
+      end
+    end
+  end
+
+  -- Button 2: [⏻] Bypass All (always visible)
+  local bypass_x = add_x + add_btn_width + gap
+  local bypass_y = toolbar_y
+
+  local mouse_in_bypass = mouse_x >= bypass_x and mouse_x <= bypass_x + bypass_btn_width
+                          and mouse_y >= bypass_y and mouse_y <= bypass_y + btn_height
+
+  local bypass_bg = (mouse_in_bypass and has_fx) and COLOR_BTN_HOVER or COLOR_BTN_OFF
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, bypass_x, bypass_y, bypass_x + bypass_btn_width, bypass_y + btn_height, bypass_bg, rounding)
+
+  local icon_cx = bypass_x + bypass_btn_width / 2
+  local icon_cy = bypass_y + btn_height / 2
+  local icon_color
+  if not has_fx then
+    icon_color = 0x555555FF  -- dim, no FX
+  elseif any_enabled then
+    icon_color = COLOR_BTN_ON  -- accent, some FX enabled
+  else
+    icon_color = 0x999999FF  -- dim, all bypassed
+  end
+  drawing.draw_power_icon(draw_list, icon_cx, icon_cy, 5, icon_color)
+
+  if mouse_in_bypass and not state._dropdown_menu_open then
+    local bypass_tip = has_fx and "Toggle all FX bypass" or "No FX to bypass"
+    drawing.tooltip(ctx, "fx_bypass_btn", bypass_tip)
+  end
+
+  if not state.midi_item_mode and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_bypass and not state._dropdown_menu_open then
+    if take and has_fx then
+      reaper.Undo_BeginBlock()
+      for i = 0, fx_count - 1 do
+        reaper.TakeFX_SetEnabled(take, i, not any_enabled)
+      end
+      reaper.Undo_EndBlock("NVSD_ItemView: Toggle all FX bypass", -1)
+    end
+  end
+
+  -- Button 3: [FX] (open/toggle FX chain, Alt+click removes all)
+  local fx_x = bypass_x + bypass_btn_width + gap
+  local fx_y = toolbar_y
+
+  local mouse_in_fx = mouse_x >= fx_x and mouse_x <= fx_x + fx_btn_width
+                      and mouse_y >= fx_y and mouse_y <= fx_y + btn_height
+
+  local fx_bg
+  if has_fx then
+    fx_bg = mouse_in_fx and COLOR_BTN_HOVER or COLOR_BTN_ON
+  else
+    fx_bg = mouse_in_fx and COLOR_BTN_HOVER or COLOR_BTN_OFF
+  end
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, fx_x, fx_y, fx_x + fx_btn_width, fx_y + btn_height, fx_bg, rounding)
 
   local fx_text = "FX"
   local fx_text_w = reaper.ImGui_CalcTextSize(ctx, fx_text)
-  local fx_text_x = right_x + (right_btn_width - fx_text_w) / 2
-  local fx_text_y = right_y + (btn_height - text_height) / 2
+  local fx_text_x = fx_x + (fx_btn_width - fx_text_w) / 2
+  local fx_text_y = fx_y + (btn_height - text_height) / 2
   local fx_text_color = has_fx and config.COLOR_WAVEFORM_BG or COLOR_BTN_TEXT
   reaper.ImGui_DrawList_AddText(draw_list, fx_text_x, fx_text_y, fx_text_color, fx_text)
 
-  if mouse_in_right and not state._dropdown_menu_open then
+  if mouse_in_fx and not state._dropdown_menu_open then
     drawing.tooltip(ctx, "fx_chain_btn", has_fx and "Open FX chain\nAlt+click: remove all FX" or "Add FX to take")
   end
 
-  -- Right button click
-  if not state.midi_item_mode and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_right and not state._dropdown_menu_open then
+  if not state.midi_item_mode and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_fx and not state._dropdown_menu_open then
     if take then
       local alt_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
       if alt_held and has_fx then
@@ -2675,21 +2703,21 @@ function controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
           reaper.TakeFX_Delete(take, i)
         end
         reaper.Undo_EndBlock("NVSD_ItemView: Remove all FX", -1)
-      elseif has_fx then
-        -- Has FX: toggle FX chain window
-        local chain_visible = reaper.TakeFX_GetChainVisible(take)
-        if chain_visible >= 0 then
-          reaper.TakeFX_Show(take, 0, 0)  -- hide chain
-        else
-          reaper.TakeFX_Show(take, 0, 1)  -- show chain
-        end
       else
-        -- No FX: open take FX chain (same as clicking item's FX button)
-        local fx_item = reaper.GetMediaItemTake_Item(take)
-        if fx_item then
-          reaper.SetMediaItemSelected(fx_item, true)
-          reaper.SetActiveTake(take)
-          reaper.Main_OnCommand(40638, 0)  -- Item: Show FX chain for item take
+        -- Toggle FX chain: check visibility first (works even with 0 FX)
+        local chain_visible = reaper.TakeFX_GetChainVisible(take)
+        if chain_visible ~= -1 then
+          reaper.TakeFX_Show(take, 0, 0)  -- hide chain
+        elseif has_fx then
+          reaper.TakeFX_Show(take, 0, 1)  -- show chain
+        else
+          -- No FX: open take FX chain dialog
+          local fx_item = reaper.GetMediaItemTake_Item(take)
+          if fx_item then
+            reaper.SetMediaItemSelected(fx_item, true)
+            reaper.SetActiveTake(take)
+            reaper.Main_OnCommand(40638, 0)
+          end
         end
       end
     end
