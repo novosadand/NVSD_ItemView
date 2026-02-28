@@ -1208,3 +1208,34 @@ function TestNVSDItemView:test_format_shortcut_scroll()
     lu.assertEquals(settings.format_shortcut({ctrl = false, shift = false, alt = true, key = "Scroll"}), "Alt+Scroll")
     lu.assertEquals(settings.format_shortcut({ctrl = false, shift = false, alt = false, key = "Scroll"}), "Scroll")
 end
+
+-- Test string_to_shortcut parsing REAPER-style shortcut strings
+function TestNVSDItemView:test_string_to_shortcut_simple_key()
+    local result = settings.string_to_shortcut("A")
+    lu.assertEquals(result.key, "A")
+    lu.assertFalse(result.ctrl)
+    lu.assertFalse(result.shift)
+    lu.assertFalse(result.alt)
+end
+
+function TestNVSDItemView:test_string_to_shortcut_ctrl_modifier()
+    local result = settings.string_to_shortcut("Ctrl+Z")
+    lu.assertEquals(result.key, "Z")
+    lu.assertTrue(result.ctrl)
+    lu.assertFalse(result.shift)
+    lu.assertFalse(result.alt)
+end
+
+function TestNVSDItemView:test_string_to_shortcut_multi_modifier()
+    local result = settings.string_to_shortcut("Ctrl+Shift+Alt+F5")
+    lu.assertEquals(result.key, "F5")
+    lu.assertTrue(result.ctrl)
+    lu.assertTrue(result.shift)
+    lu.assertTrue(result.alt)
+end
+
+function TestNVSDItemView:test_string_to_shortcut_empty()
+    local result = settings.string_to_shortcut("")
+    lu.assertEquals(result.key, "")
+    lu.assertFalse(result.ctrl)
+end
