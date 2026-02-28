@@ -5571,6 +5571,19 @@ local function loop()
             else
               click_t = snap_to_grid_if_enabled(click_t)
             end
+            -- Snap click out of silence if preference enabled
+            if settings.current.defaults.snap_click_to_sound
+                and state.view_peaks and state.view_peaks.count > 0 and item then
+              state._snap_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
+              state._snap_len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+              state._snap_col = math.floor((click_t - state._snap_pos) / state._snap_len * state.view_peaks.count) + 1
+              if state._snap_col >= 1 and state._snap_col <= state.view_peaks.count then
+                if utils.is_column_silent(state.view_peaks, state._snap_col) then
+                  state._snap_result = utils.find_nearest_sound_column(state.view_peaks, state._snap_col)
+                  click_t = state._snap_pos + (state._snap_result - 1) / state.view_peaks.count * state._snap_len
+                end
+              end
+            end
             state.preview_cursor_pos = click_t
             -- If preview is playing, restart from new position; otherwise just place cursor
             if state.preview_active then
