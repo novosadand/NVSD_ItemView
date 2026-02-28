@@ -13,70 +13,88 @@ function settings_ui.set_drawing(drawing_module)
   drawing = drawing_module
 end
 
--- Editable keyboard shortcuts (order matches display)
+-- Editable keyboard shortcuts (order matches display, grouped by section)
 local EDITABLE_SHORTCUTS = {
-  {name = "toggle_warp",  label = "Toggle WARP mode"},
-  {name = "toggle_mute",  label = "Toggle mute"},
-  {name = "reverse",      label = "Reverse item"},
-  {name = "crop_to_selection", label = "Crop markers to selection"},
-  {name = "open_editor",  label = "Open in external editor"},
-  {name = "reset_zoom",   label = "Reset zoom to fit"},
-  {name = "zoom_in",      label = "Zoom in"},
-  {name = "zoom_out",     label = "Zoom out"},
-  {name = "toggle_snap",  label = "Toggle envelope snap"},
-  {name = "audio_preview", label = "Audio preview"},
-  {name = "envelope_lock", label = "Lock envelopes"},
-  {name = "show_volume_env", label = "Show Volume envelope"},
-  {name = "show_pitch_env", label = "Show Pitch envelope"},
-  {name = "show_pan_env", label = "Show Pan envelope"},
-  {name = "hide_envelopes", label = "Hide envelopes"},
-  {name = "open_settings", label = "Open settings"},
-  {name = "set_start_marker", label = "Set start marker at cursor"},
-  {name = "set_end_marker", label = "Set end marker at cursor"},
-  {name = "set_fade_in", label = "Set fade-in at cursor"},
-  {name = "set_fade_out", label = "Set fade-out at cursor"},
-  {name = "zoom_to_markers", label = "Zoom to region / markers"},
-  {name = "unzoom_all", label = "Zoom out to full source"},
+  -- Playback & Preview
+  {section = "Playback & Preview"},
+  {name = "audio_preview",     label = "Audio preview"},
+  {name = "preview_from_start", label = "Preview from start marker"},
+  -- Markers & Fades
+  {section = "Markers & Fades"},
+  {name = "set_start_marker",  label = "Set start marker at cursor"},
+  {name = "set_end_marker",    label = "Set end marker at cursor"},
+  {name = "set_fade_in",       label = "Set fade-in at cursor"},
+  {name = "set_fade_out",      label = "Set fade-out at cursor"},
   {name = "toggle_cue_markers", label = "Toggle WAV cue markers"},
   {name = "toggle_ghost_markers", label = "Toggle ghost markers"},
-  {name = "show_in_explorer", label = "Show in Media Explorer"},
-  {name = "quantize_transients", label = "Add markers at all transients"},
-  {name = "preview_from_start", label = "Preview from start marker"},
-  {name = "clear", label = "Clear pitch/speed/WARP"},
+  -- Editing
+  {section = "Editing"},
+  {name = "clear",             label = "Clear pitch/speed/WARP"},
+  {name = "crop_to_selection", label = "Crop markers to selection"},
+  {name = "open_editor",       label = "Open in external editor"},
+  {name = "reverse",           label = "Reverse item"},
+  {name = "toggle_mute",       label = "Toggle mute"},
+  -- Envelopes
+  {section = "Envelopes"},
+  {name = "envelope_lock",     label = "Lock envelopes"},
+  {name = "hide_envelopes",    label = "Hide envelopes"},
+  {name = "show_pan_env",      label = "Show Pan envelope"},
+  {name = "show_pitch_env",    label = "Show Pitch envelope"},
+  {name = "show_volume_env",   label = "Show Volume envelope"},
+  {name = "toggle_snap",       label = "Toggle envelope snap"},
+  -- WARP & Transients
+  {section = "WARP & Transients"},
+  {name = "add_transient",     label = "Insert transient at cursor"},
   {name = "insert_warp_marker", label = "Insert warp marker at cursor"},
-  {name = "add_transient", label = "Insert transient at cursor"},
-  {name = "toggle_auto_fit", label = "Toggle Autozoom"},
-  {name = "scroll_zoom", label = "Scroll zoom (horizontal)"},
-  {name = "scroll_vzoom", label = "Scroll zoom (vertical)"},
-  {name = "scroll_hpan", label = "Scroll pan (horizontal)"},
+  {name = "quantize_transients", label = "Quantize to transients"},
   {name = "quantize_settings", label = "Open quantize panel"},
-  {name = "narrow_grid", label = "Narrow grid"},
-  {name = "widen_grid", label = "Widen grid"},
-  {name = "triplet_grid", label = "Toggle triplet grid"},
+  {name = "toggle_warp",       label = "Toggle WARP mode"},
+  -- View & Zoom
+  {section = "View & Zoom"},
+  {name = "reset_zoom",        label = "Reset zoom to fit"},
+  {name = "scroll_hpan",       label = "Scroll pan (horizontal)"},
+  {name = "scroll_vzoom",      label = "Scroll zoom (vertical)"},
+  {name = "scroll_zoom",       label = "Scroll zoom (horizontal)"},
+  {name = "toggle_auto_fit",   label = "Toggle Autozoom"},
+  {name = "unzoom_all",        label = "Zoom out to full source"},
+  {name = "zoom_in",           label = "Zoom in"},
+  {name = "zoom_out",          label = "Zoom out"},
+  {name = "zoom_to_markers",   label = "Zoom to region / markers"},
+  -- Grid
+  {section = "Grid"},
+  {name = "narrow_grid",       label = "Narrow grid"},
+  {name = "triplet_grid",      label = "Toggle triplet grid"},
+  {name = "widen_grid",        label = "Widen grid"},
+  -- General
+  {section = "General"},
+  {name = "open_settings",     label = "Open settings"},
+  {name = "show_in_explorer",  label = "Show in Media Explorer"},
 }
 
--- Reference shortcuts (not editable)
+-- Reference shortcuts (not editable, grouped by section)
 local REFERENCE_SHORTCUTS = {
-  -- Keyboard (hardcoded, not rebindable)
-  {"Space",          "Play / Stop transport"},
-  {"Ctrl+Z",         "Undo"},
-  {"Ctrl+Y",         "Redo"},
-  {"Escape",         "Clear selection / Close"},
-  {"Delete",         "Delete selected nodes"},
+  -- Keyboard
+  {section = "Keyboard"},
   {"Ctrl+C",         "Copy region to clipboard"},
-  -- Mouse (not rebindable)
-  {"Middle Drag",    "Pan waveform"},
-  {"Ruler Drag",     "Zoom + Pan"},
-  {"Left Drag",      "Select time region"},
-  {"Drag Marker",    "Move start/end point"},
+  {"Ctrl+Y",         "Redo"},
+  {"Ctrl+Z",         "Undo"},
+  {"Delete",         "Delete selected nodes"},
+  {"Escape",         "Clear selection / Close"},
+  {"Space",          "Play / Stop transport"},
+  -- Mouse
+  {section = "Mouse"},
+  {"Alt+click fade body", "Adjust fade curve bias"},
   {"Alt + Drag",     "Slide both markers"},
+  {"Ctrl+Alt + Drag", "Pan waveform (alt. to middle)"},
+  {"Ctrl + Drag",    "Fine control on knobs/sliders"},
   {"Double-click",   "Reset knob/slider to default"},
   {"Double-click waveform", "Slide markers to cursor"},
-  {"Ctrl + Drag",    "Fine control on knobs/sliders"},
-  {"Ctrl+Alt + Drag", "Pan waveform (alt. to middle)"},
+  {"Drag Marker",    "Move start/end point"},
+  {"Left Drag",      "Select time region"},
+  {"Middle Drag",    "Pan waveform"},
   {"Right-click fade", "Pick fade shape"},
-  {"Alt+click fade body", "Adjust fade curve bias"},
   {"Right Drag",     "Select envelope nodes"},
+  {"Ruler Drag",     "Zoom + Pan"},
 }
 
 -- Core colors: 4 essential pickers that derive all other colors
@@ -669,6 +687,15 @@ local function draw_shortcuts_tab(ctx, settings)
     reaper.ImGui_TableSetupColumn(ctx, "Reset", reaper.ImGui_TableColumnFlags_WidthFixed(), 30)
 
     for _, entry in ipairs(EDITABLE_SHORTCUTS) do
+      -- Section header row
+      if entry.section then
+        reaper.ImGui_TableNextRow(ctx)
+        reaper.ImGui_TableNextColumn(ctx)
+        reaper.ImGui_Dummy(ctx, 0, 2)
+        reaper.ImGui_TextColored(ctx, COLORS.accent, entry.section:upper())
+        reaper.ImGui_Dummy(ctx, 0, 1)
+      else
+
       local name = entry.name
       local shortcut = settings.current.shortcuts[name]
       if not shortcut then
@@ -805,6 +832,7 @@ local function draw_shortcuts_tab(ctx, settings)
           reaper.ImGui_SetTooltip(ctx, "Reset to default: " .. default_text)
         end
       end
+      end -- if section/else
     end
 
     reaper.ImGui_EndTable(ctx)
@@ -910,11 +938,19 @@ local function draw_shortcuts_tab(ctx, settings)
     reaper.ImGui_TableSetupColumn(ctx, "Action", reaper.ImGui_TableColumnFlags_WidthStretch())
 
     for _, entry in ipairs(REFERENCE_SHORTCUTS) do
-      reaper.ImGui_TableNextRow(ctx)
-      reaper.ImGui_TableNextColumn(ctx)
-      reaper.ImGui_TextColored(ctx, COLORS.accent, "  " .. entry[1])
-      reaper.ImGui_TableNextColumn(ctx)
-      reaper.ImGui_Text(ctx, entry[2])
+      if entry.section then
+        reaper.ImGui_TableNextRow(ctx)
+        reaper.ImGui_TableNextColumn(ctx)
+        reaper.ImGui_Dummy(ctx, 0, 2)
+        reaper.ImGui_TextColored(ctx, COLORS.accent, entry.section:upper())
+        reaper.ImGui_Dummy(ctx, 0, 1)
+      else
+        reaper.ImGui_TableNextRow(ctx)
+        reaper.ImGui_TableNextColumn(ctx)
+        reaper.ImGui_TextColored(ctx, COLORS.accent, "  " .. entry[1])
+        reaper.ImGui_TableNextColumn(ctx)
+        reaper.ImGui_Text(ctx, entry[2])
+      end
     end
 
     reaper.ImGui_EndTable(ctx)
@@ -1945,45 +1981,65 @@ local HELP_SECTIONS = {
     lines = {
       "Rebindable in the Shortcuts tab.",
       "",
-      "## Rebindable",
-      {key = "W", desc = "Toggle WARP"},
-      {key = "Num0", desc = "Toggle mute"},
-      {key = "R", desc = "Reverse"},
-      {key = "C", desc = "Crop to selection"},
-      {key = "Shift+C", desc = "Clear pitch/speed/WARP"},
-      {key = "Ctrl+Alt+E", desc = "External editor"},
-      {key = "F", desc = "Fit zoom"},
-      {key = "Z", desc = "Zoom to selection/markers"},
-      {key = "Alt+Z", desc = "Zoom out to full source"},
-      {key = "Ctrl+4", desc = "Snap to grid"},
-      {key = "L", desc = "Lock envelopes"},
-      {key = "Shift+V / H / P", desc = "Volume / Pitch / Pan envelope"},
-      {key = "H", desc = "Hide envelopes"},
-      {key = "M", desc = "Cue markers"},
-      {key = "G", desc = "Ghost markers"},
+      "## Playback & Preview",
       {key = "Ctrl+Space", desc = "Audio preview"},
       {key = "Enter", desc = "Preview from start marker"},
-      {key = "Ctrl+F", desc = "Show in Media Explorer"},
-      {key = "S", desc = "Settings"},
+      "",
+      "## Markers & Fades",
       {key = "Mouse4 / Mouse5", desc = "Set start/end marker"},
       {key = "Shift+Mouse4/5", desc = "Set fade-in/out"},
-      {key = "Ctrl+I", desc = "Insert warp marker"},
-      {key = "Ctrl+Shift+I", desc = "Insert transient"},
-      {key = "Ctrl+U", desc = "Quantize to transients"},
+      {key = "M", desc = "Cue markers"},
+      {key = "G", desc = "Ghost markers"},
       "",
-      "## Fixed",
-      {key = "Space", desc = "Play/Stop (or stop preview)"},
-      {key = "Ctrl+Z / Ctrl+Y", desc = "Undo / Redo (zoom history first)"},
+      "## Editing",
+      {key = "Shift+C", desc = "Clear pitch/speed/WARP"},
+      {key = "C", desc = "Crop to selection"},
+      {key = "Ctrl+Alt+E", desc = "External editor"},
+      {key = "R", desc = "Reverse"},
+      {key = "Num0", desc = "Toggle mute"},
+      "",
+      "## Envelopes",
+      {key = "L", desc = "Lock envelopes"},
+      {key = "H", desc = "Hide envelopes"},
+      {key = "Shift+V / H / P", desc = "Volume / Pitch / Pan envelope"},
+      {key = "Ctrl+4", desc = "Snap to grid"},
+      "",
+      "## WARP & Transients",
+      {key = "Ctrl+Shift+I", desc = "Insert transient"},
+      {key = "Ctrl+I", desc = "Insert warp marker"},
+      {key = "Ctrl+U", desc = "Quantize to transients"},
+      {key = "Ctrl+Shift+U", desc = "Open quantize panel"},
+      {key = "W", desc = "Toggle WARP"},
+      "",
+      "## View & Zoom",
+      {key = "F", desc = "Fit zoom"},
+      {key = "A", desc = "Toggle Autozoom"},
+      {key = "Z", desc = "Zoom to selection/markers"},
+      {key = "Alt+Z", desc = "Zoom out to full source"},
+      "",
+      "## Grid",
+      {key = "Ctrl+1", desc = "Narrow grid"},
+      {key = "Ctrl+2", desc = "Widen grid"},
+      {key = "Ctrl+3", desc = "Toggle triplet grid"},
+      "",
+      "## General",
+      {key = "Alt+S", desc = "Settings"},
+      {key = "Ctrl+F", desc = "Show in Media Explorer"},
+      "",
+      "## Fixed (not rebindable)",
       {key = "Ctrl+C", desc = "Copy selected region as new item"},
-      {key = "Escape", desc = "Clear nodes, then selection, then close"},
+      {key = "Ctrl+Z / Ctrl+Y", desc = "Undo / Redo (zoom history first)"},
       {key = "Delete", desc = "Delete selected nodes / hovered warp marker"},
-      {key = "Ctrl+Scroll", desc = "Zoom (rebindable in Shortcuts)"},
-      {key = "Ctrl+Shift+Scroll", desc = "Vertical amplitude zoom (rebindable in Shortcuts)"},
-      {key = "Middle-drag", desc = "Pan"},
+      {key = "Escape", desc = "Clear nodes, then selection, then close"},
+      {key = "Space", desc = "Play/Stop (or stop preview)"},
+      "",
+      "## Fixed Mouse",
+      {key = "Alt+click fade body", desc = "Adjust fade curve bias"},
       {key = "Ctrl+Alt+drag", desc = "Pan (alt. to middle)"},
-      {key = "Ctrl+drag marker", desc = "Fine-tune drag (4x slower)"},
-      {key = "Ctrl+drag knob/slider", desc = "Fine-tune adjustment"},
+      {key = "Ctrl+drag", desc = "Fine-tune drag (4x slower)"},
       {key = "Double-click", desc = "Slide markers to cursor / reset knob"},
+      {key = "Middle-drag", desc = "Pan"},
+      {key = "Right-click fade", desc = "Pick fade shape"},
     },
   },
   {
