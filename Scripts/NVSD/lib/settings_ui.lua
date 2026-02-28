@@ -2132,7 +2132,7 @@ local HELP_SECTIONS = {
       "- Autozoom has 3 modes: Soft fits view on item change, Live tracks edge edits in real-time",
       "- Use the Preferences tab to control initial toggle states and hide UI panels",
       "- Shortcuts tab: [G] grabs the binding from REAPER's action list for that action",
-      "- Left/Right arrows navigate between sound regions in sausage files (multi-variation files with silence gaps)",
+      "- Left/Right arrows navigate between sound regions in sausage files (multi-variation files with silence gaps). During preview, playback jumps to the new region instantly",
       "",
       "## Double-click to open",
       "Open ItemView by double-clicking audio items (MIDI items still open the MIDI editor):",
