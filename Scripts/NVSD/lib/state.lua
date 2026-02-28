@@ -597,6 +597,7 @@ function state.invalidate_view_peaks()
   state.view_num_samples = 0
   state.view_warp_hash = nil
   state.view_warped = nil
+  state._peak_retry_count = 0
 end
 
 -- Apply toggle defaults from settings (called at startup and optionally on item switch)

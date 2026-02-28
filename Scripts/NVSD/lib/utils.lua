@@ -223,7 +223,6 @@ function utils.get_peaks_for_range(source, start_time, duration, num_samples)
   local actual_samples = math.min(ret & 0xFFFFF, num_samples)
   local output_mode = (ret >> 20) & 0xF
   local min_block_offset = actual_samples * num_channels
-  local total = actual_samples * num_channels
   local mins = {}
   local maxs = {}
 
@@ -231,6 +230,11 @@ function utils.get_peaks_for_range(source, start_time, duration, num_samples)
     for i = 1, actual_samples do
       mins[i] = buf[min_block_offset + i] or 0
       maxs[i] = buf[i] or 0
+    end
+    -- Zero-fill if REAPER returned fewer peaks than requested (peak file still building)
+    for i = actual_samples + 1, num_samples do
+      mins[i] = 0
+      maxs[i] = 0
     end
   else
     for i = 1, actual_samples do
@@ -242,9 +246,33 @@ function utils.get_peaks_for_range(source, start_time, duration, num_samples)
         mins[flat_idx] = buf[min_block_offset + base_idx + ch - 1] or 0
       end
     end
+    -- Zero-fill if REAPER returned fewer peaks than requested (peak file still building)
+    for i = actual_samples + 1, num_samples do
+      local flat_base = (i - 1) * num_channels
+      for ch = 1, num_channels do
+        maxs[flat_base + ch] = 0
+        mins[flat_base + ch] = 0
+      end
+    end
   end
 
-  return { mins = mins, maxs = maxs, count = actual_samples, channels = num_channels, output_mode = output_mode }, num_channels
+  local complete = actual_samples >= num_samples
+  -- Detect partially-built .reapeaks: REAPER reports full count but only the first
+  -- portion has real data (rest is zeros).  Check that the last 10% of peaks has at
+  -- least one non-zero value.  If only the beginning has data, mark incomplete so the
+  -- retry mechanism reloads once peak building finishes.
+  if complete and actual_samples > 20 then
+    local check_from = actual_samples - math.max(1, math.floor(actual_samples / 10))
+    local has_end_data = false
+    for i = check_from, actual_samples do
+      if maxs[i] ~= 0 or mins[i] ~= 0 then
+        has_end_data = true
+        break
+      end
+    end
+    if not has_end_data then complete = false end
+  end
+  return { mins = mins, maxs = maxs, count = num_samples, channels = num_channels, output_mode = output_mode, complete = complete }, num_channels
 end
 
 -- Get peaks for a view range, clipping to source_length (non-looped items).

@@ -2265,6 +2265,7 @@ function drawing.draw_waveform(draw_list, x, y, width, height, peaks, start_offs
   local peak_mins = peaks.mins
   local peak_maxs = peaks.maxs
 
+
   -- Cache draw functions locally (reduces Lua→C lookup overhead per call)
   local DL_QuadFilled = reaper.ImGui_DrawList_AddQuadFilled
   local DL_AddLine = reaper.ImGui_DrawList_AddLine

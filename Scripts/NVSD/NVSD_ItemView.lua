@@ -1977,6 +1977,11 @@ local function loop()
                   or start_offset + source_item_length > source_length + 0.0001
                   or view_start + view_length > source_length + 0.0001)))
 
+          -- Retry incomplete peaks (e.g. peak file still building for new files).
+          -- Cap retries to ~2s (120 frames) to avoid infinite reload for edge-case sources.
+          local peaks_incomplete = state.view_peaks and not state.view_peaks.complete
+              and (state._peak_retry_count or 0) < 120
+
           local need_reload = state.view_peaks == nil
             or source ~= state.view_source
             or is_reversed ~= state.view_reversed
@@ -1986,6 +1991,8 @@ local function loop()
             or (is_warped_view and state.view_warp_hash ~= state.warp_hash)
             or is_warped_view ~= (state.view_warped or false)
             or state.is_loop_src ~= state.view_loop_src
+            or num_view_samples ~= (state.view_num_samples or 0)
+            or peaks_incomplete
 
           if need_reload and view_length > 0 then
             local peaks_result, num_ch
@@ -2019,6 +2026,12 @@ local function loop()
               state.view_warp_hash = state.warp_hash
               state.view_warped = is_warped_view
               state.view_loop_src = state.is_loop_src
+              -- Track incomplete peak retries (peak file may still be building)
+              if peaks_result.complete == false then
+                state._peak_retry_count = (state._peak_retry_count or 0) + 1
+              else
+                state._peak_retry_count = 0
+              end
               -- Bust waveform draw cache since peak data changed
               drawing.invalidate_wf_cache()
             end
@@ -6694,7 +6707,9 @@ local function loop()
               end
               local handle = reaper.CF_CreatePreview(source)
               if handle then
-                reaper.CF_Preview_SetValue(handle, "D_POSITION", source_pos)
+                -- D_POSITION is in output-time (scaled by playrate), not source-time
+                -- To seek to source second X: D_POSITION = X / playrate
+                reaper.CF_Preview_SetValue(handle, "D_POSITION", source_pos / playrate)
                 reaper.CF_Preview_SetValue(handle, "D_VOLUME", item_vol)
                 -- Match take's playrate and pitch so preview sounds like
                 -- actual REAPER playback
@@ -6742,16 +6757,18 @@ local function loop()
               if retval then
                 -- Compute virtual playhead position in view coordinates
                 local virtual_pos
+                -- D_POSITION returns output-time; convert to source-time: pos * playrate
+                local source_pos_from_preview = pos * playrate
                 if is_warped_view and state.warp_map then
-                  -- Warp mode: convert CF_Preview's source position to pos-time
-                  virtual_pos = utils.warp_src_to_pos(state.warp_map, pos, playrate)
+                  -- Warp mode: convert source-time to pos-time for view
+                  virtual_pos = utils.warp_src_to_pos(state.warp_map, source_pos_from_preview, playrate)
                 elseif state.preview_virtual_start and state.preview_start_realtime then
                   -- Non-warp: estimate from elapsed time (smoother than polling)
                   local elapsed = reaper.time_precise() - state.preview_start_realtime
                   local rate = state.preview_playrate or 1
                   virtual_pos = state.preview_virtual_start + elapsed * rate
                 else
-                  virtual_pos = pos
+                  virtual_pos = source_pos_from_preview
                 end
                 -- Draw moving preview playhead
                 local preview_px = time_to_px(virtual_pos)
