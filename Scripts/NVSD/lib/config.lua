@@ -249,7 +249,7 @@ end
 
 -- Pitch shift mode values (I_PITCHMODE)
 config.PITCH_MODES = {
-  {name = "Project Default", value = -1},
+  {name = "Project default", value = -1},
   {name = "SoundTouch", value = 0},
   {name = "Simple Windowed", value = 131072},
   {name = "Elastique 3 Pro", value = 589824},
