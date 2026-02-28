@@ -611,4 +611,10 @@ function state.apply_defaults(s)
   -- envelopes_visible is handled per-item-switch, not here
 end
 
+-- Sausage navigation grace period
+state.prev_region_last_time = 0
+state.prev_region_last_col = 0
+state.prev_region_land_col = 0
+state.prev_region_end_col = 0
+
 return state
