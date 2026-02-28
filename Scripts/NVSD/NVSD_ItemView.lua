@@ -898,12 +898,13 @@ local function loop()
           end
         end
         -- Region navigation (sausage files)
+        -- Note: time->col uses +0.5 rounding to avoid float round-trip off-by-one
         if state.view_peaks and state.view_peaks.count > 0 then
           if settings.check_shortcut(ctx, "next_region") then
             state._nav_cur = state.preview_cursor_pos or reaper.GetCursorPosition()
             state._nav_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
             state._nav_len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
-            state._nav_col = math.floor((state._nav_cur - state._nav_pos) / state._nav_len * state.view_peaks.count) + 1
+            state._nav_col = math.floor((state._nav_cur - state._nav_pos) / state._nav_len * state.view_peaks.count + 0.5) + 1
             if state._nav_col < 1 then state._nav_col = 1 end
             if state._nav_col > state.view_peaks.count then state._nav_col = state.view_peaks.count end
             state._nav_result = utils.find_next_region(state.view_peaks, state._nav_col)
@@ -920,7 +921,7 @@ local function loop()
             state._nav_cur = state.preview_cursor_pos or reaper.GetCursorPosition()
             state._nav_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
             state._nav_len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
-            state._nav_col = math.floor((state._nav_cur - state._nav_pos) / state._nav_len * state.view_peaks.count) + 1
+            state._nav_col = math.floor((state._nav_cur - state._nav_pos) / state._nav_len * state.view_peaks.count + 0.5) + 1
             if state._nav_col < 1 then state._nav_col = 1 end
             if state._nav_col > state.view_peaks.count then state._nav_col = state.view_peaks.count end
 
@@ -4516,7 +4517,7 @@ local function loop()
                     and state.view_peaks and state.view_peaks.count > 0 and item then
                   state._snap_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
                   state._snap_len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
-                  state._snap_col = math.floor((click_t - state._snap_pos) / state._snap_len * state.view_peaks.count) + 1
+                  state._snap_col = math.floor((click_t - state._snap_pos) / state._snap_len * state.view_peaks.count + 0.5) + 1
                   if state._snap_col >= 1 and state._snap_col <= state.view_peaks.count then
                     if utils.is_column_silent(state.view_peaks, state._snap_col) then
                       state._snap_result = utils.find_nearest_sound_column(state.view_peaks, state._snap_col)
@@ -5574,7 +5575,7 @@ local function loop()
                 and state.view_peaks and state.view_peaks.count > 0 and item then
               state._snap_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
               state._snap_len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
-              state._snap_col = math.floor((click_t - state._snap_pos) / state._snap_len * state.view_peaks.count) + 1
+              state._snap_col = math.floor((click_t - state._snap_pos) / state._snap_len * state.view_peaks.count + 0.5) + 1
               if state._snap_col >= 1 and state._snap_col <= state.view_peaks.count then
                 if utils.is_column_silent(state.view_peaks, state._snap_col) then
                   state._snap_result = utils.find_nearest_sound_column(state.view_peaks, state._snap_col)
