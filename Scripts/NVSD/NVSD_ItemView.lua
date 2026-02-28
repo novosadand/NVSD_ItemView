@@ -525,70 +525,6 @@ local function loop()
       state.zoom_toggle_active = false
     end
 
-    -- Region navigation (sausage files)
-    if reaper_is_active and not text_input_active and state.view_peaks
-        and state.view_peaks.count > 0 and item then
-      if settings.check_shortcut(ctx, "next_region") then
-        state._nav_cur = state.preview_cursor_pos or reaper.GetCursorPosition()
-        state._nav_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
-        state._nav_len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
-        state._nav_col = math.floor((state._nav_cur - state._nav_pos) / state._nav_len * state.view_peaks.count) + 1
-        if state._nav_col < 1 then state._nav_col = 1 end
-        if state._nav_col > state.view_peaks.count then state._nav_col = state.view_peaks.count end
-        state._nav_result = utils.find_next_region(state.view_peaks, state._nav_col)
-        if state._nav_result then
-          state._nav_t = state._nav_pos + (state._nav_result - 1) / state.view_peaks.count * state._nav_len
-          state.preview_cursor_pos = state._nav_t
-          reaper.SetEditCurPos(state._nav_t, false, true)
-        else
-          state._nav_t = math.min(state._nav_pos + state._nav_len, state._nav_cur + 3)
-          state.preview_cursor_pos = state._nav_t
-          reaper.SetEditCurPos(state._nav_t, false, true)
-        end
-      elseif settings.check_shortcut(ctx, "prev_region") then
-        state._nav_cur = state.preview_cursor_pos or reaper.GetCursorPosition()
-        state._nav_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
-        state._nav_len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
-        state._nav_col = math.floor((state._nav_cur - state._nav_pos) / state._nav_len * state.view_peaks.count) + 1
-        if state._nav_col < 1 then state._nav_col = 1 end
-        if state._nav_col > state.view_peaks.count then state._nav_col = state.view_peaks.count end
-
-        -- Grace period: if repeated within 1.5s and haven't moved past midpoint
-        state._nav_search = state._nav_col
-        state._nav_now = reaper.time_precise()
-        if state._nav_now - state.prev_region_last_time < 1.5 and state.prev_region_land_col > 0 then
-          state._nav_mid = math.floor((state.prev_region_land_col + state.prev_region_end_col) / 2)
-          if state._nav_col <= state._nav_mid then
-            state._nav_search = state.prev_region_land_col - 1
-            if state._nav_search < 1 then state._nav_search = 1 end
-          end
-        end
-
-        state._nav_result = utils.find_prev_region(state.view_peaks, state._nav_search)
-        if state._nav_result then
-          state._nav_t = state._nav_pos + (state._nav_result - 1) / state.view_peaks.count * state._nav_len
-          state.preview_cursor_pos = state._nav_t
-          reaper.SetEditCurPos(state._nav_t, false, true)
-          -- Track for grace period: find end of this region
-          state._nav_end = state._nav_result
-          while state._nav_end < state.view_peaks.count
-              and not utils.is_column_silent(state.view_peaks, state._nav_end + 1) do
-            state._nav_end = state._nav_end + 1
-          end
-          state.prev_region_land_col = state._nav_result
-          state.prev_region_end_col = state._nav_end
-        else
-          state._nav_t = math.max(state._nav_pos, state._nav_cur - 3)
-          state.preview_cursor_pos = state._nav_t
-          reaper.SetEditCurPos(state._nav_t, false, true)
-          state.prev_region_land_col = 0
-          state.prev_region_end_col = 0
-        end
-        state.prev_region_last_time = state._nav_now
-        state.prev_region_last_col = state._nav_col
-      end
-    end
-
     -- Toggle envelope snap (configurable shortcut, default Ctrl+4)
     if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "toggle_snap") then
       settings.toggle_default(state, "env_snap_enabled")
@@ -959,6 +895,68 @@ local function loop()
             if fp and fp ~= "" and reaper.OpenMediaExplorer then
               reaper.OpenMediaExplorer(fp, false)
             end
+          end
+        end
+        -- Region navigation (sausage files)
+        if state.view_peaks and state.view_peaks.count > 0 then
+          if settings.check_shortcut(ctx, "next_region") then
+            state._nav_cur = state.preview_cursor_pos or reaper.GetCursorPosition()
+            state._nav_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
+            state._nav_len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+            state._nav_col = math.floor((state._nav_cur - state._nav_pos) / state._nav_len * state.view_peaks.count) + 1
+            if state._nav_col < 1 then state._nav_col = 1 end
+            if state._nav_col > state.view_peaks.count then state._nav_col = state.view_peaks.count end
+            state._nav_result = utils.find_next_region(state.view_peaks, state._nav_col)
+            if state._nav_result then
+              state._nav_t = state._nav_pos + (state._nav_result - 1) / state.view_peaks.count * state._nav_len
+              state.preview_cursor_pos = state._nav_t
+              reaper.SetEditCurPos(state._nav_t, false, true)
+            else
+              state._nav_t = math.min(state._nav_pos + state._nav_len, state._nav_cur + 3)
+              state.preview_cursor_pos = state._nav_t
+              reaper.SetEditCurPos(state._nav_t, false, true)
+            end
+          elseif settings.check_shortcut(ctx, "prev_region") then
+            state._nav_cur = state.preview_cursor_pos or reaper.GetCursorPosition()
+            state._nav_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
+            state._nav_len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+            state._nav_col = math.floor((state._nav_cur - state._nav_pos) / state._nav_len * state.view_peaks.count) + 1
+            if state._nav_col < 1 then state._nav_col = 1 end
+            if state._nav_col > state.view_peaks.count then state._nav_col = state.view_peaks.count end
+
+            -- Grace period: if repeated within 1.5s and haven't moved past midpoint
+            state._nav_search = state._nav_col
+            state._nav_now = reaper.time_precise()
+            if state._nav_now - state.prev_region_last_time < 1.5 and state.prev_region_land_col > 0 then
+              state._nav_mid = math.floor((state.prev_region_land_col + state.prev_region_end_col) / 2)
+              if state._nav_col <= state._nav_mid then
+                state._nav_search = state.prev_region_land_col - 1
+                if state._nav_search < 1 then state._nav_search = 1 end
+              end
+            end
+
+            state._nav_result = utils.find_prev_region(state.view_peaks, state._nav_search)
+            if state._nav_result then
+              state._nav_t = state._nav_pos + (state._nav_result - 1) / state.view_peaks.count * state._nav_len
+              state.preview_cursor_pos = state._nav_t
+              reaper.SetEditCurPos(state._nav_t, false, true)
+              -- Track for grace period: find end of this region
+              state._nav_end = state._nav_result
+              while state._nav_end < state.view_peaks.count
+                  and not utils.is_column_silent(state.view_peaks, state._nav_end + 1) do
+                state._nav_end = state._nav_end + 1
+              end
+              state.prev_region_land_col = state._nav_result
+              state.prev_region_end_col = state._nav_end
+            else
+              state._nav_t = math.max(state._nav_pos, state._nav_cur - 3)
+              state.preview_cursor_pos = state._nav_t
+              reaper.SetEditCurPos(state._nav_t, false, true)
+              state.prev_region_land_col = 0
+              state.prev_region_end_col = 0
+            end
+            state.prev_region_last_time = state._nav_now
+            state.prev_region_last_col = state._nav_col
           end
         end
       end
