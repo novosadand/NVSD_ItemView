@@ -561,7 +561,7 @@ local function loop()
 
     -- Toggle Autozoom (configurable shortcut, default A)
     if reaper_is_active and not text_input_active and settings.check_shortcut(ctx, "toggle_auto_fit") then
-      settings.toggle_default(state, "auto_fit_markers")
+      settings.cycle_auto_fit(state)
     end
 
     -- Open settings (configurable shortcut, default S)
@@ -1574,12 +1574,30 @@ local function loop()
             state.transient_hovered_idx = -1
           end
 
-          -- Autozoom: fit view to markers when item changes (if enabled)
-          if state.item_just_changed and state.auto_fit_markers and source_item_length > 0 then
+          -- Autozoom (soft): fit view to markers when item changes
+          if state.item_just_changed and state.auto_fit_markers == "soft" and source_item_length > 0 then
             local so = start_offset
             if source_length > 0 and state.is_loop_src and so >= source_length then so = so % source_length end
             state.zoom_level = math.min(config.MAX_ZOOM, ext_length / source_item_length)
             state.pan_offset = (so + source_item_length / 2) - (ext_start + ext_end) / 2
+          end
+
+          -- Autozoom (live): re-fit view when item edges change (user dragged in arrange view)
+          if state.auto_fit_markers == "live" and source_item_length > 0 then
+            local so = start_offset
+            if source_length > 0 and state.is_loop_src and so >= source_length then so = so % source_length end
+            local edges_changed = state._live_prev_so == nil
+              or math.abs(so - state._live_prev_so) > 0.0001
+              or math.abs(source_item_length - state._live_prev_len) > 0.0001
+            if edges_changed then
+              state.zoom_level = math.min(config.MAX_ZOOM, ext_length / source_item_length)
+              state.pan_offset = (so + source_item_length / 2) - (ext_start + ext_end) / 2
+            end
+            state._live_prev_so = so
+            state._live_prev_len = source_item_length
+          elseif state._live_prev_so ~= nil then
+            state._live_prev_so = nil
+            state._live_prev_len = nil
           end
 
           -- Zoom (Z): toggle. New selection/markers zooms in, same target or no selection restores.

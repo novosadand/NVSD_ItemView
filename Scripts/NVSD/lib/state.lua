@@ -313,7 +313,7 @@ state.cached_cue_source = nil        -- Source pointer for which cue markers wer
 state.cue_label_hovered = false      -- cue marker label is being hovered
 
 -- Auto-fit zoom to markers on item selection
-state.auto_fit_markers = false
+state.auto_fit_markers = "off"
 
 -- Ghost marker state (other selected items' regions)
 state.show_ghost_markers = true

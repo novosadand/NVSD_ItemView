@@ -3191,8 +3191,17 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
   local mouse_in_fit = mouse_x >= fit_btn_x and mouse_x <= fit_btn_x + fit_btn_w
                         and mouse_y >= fit_btn_y and mouse_y <= fit_btn_y + fit_btn_h
   local fit_active = state.auto_fit_markers
-  local fit_bg = fit_active and config.COLOR_BTN_ON or (mouse_in_fit and 0x505050FF or 0x303030FF)
-  local fit_border = fit_active and config.COLOR_BTN_ON or 0x555555FF
+  local is_on = fit_active ~= "off"
+  local is_live = fit_active == "live"
+  local fit_bg
+  if is_live then
+    fit_bg = 0x40A040FF
+  elseif is_on then
+    fit_bg = config.COLOR_BTN_ON
+  else
+    fit_bg = mouse_in_fit and 0x505050FF or 0x303030FF
+  end
+  local fit_border = is_on and (is_live and 0x40A040FF or config.COLOR_BTN_ON) or 0x555555FF
   reaper.ImGui_DrawList_AddRectFilled(draw_list, fit_btn_x, fit_btn_y,
       fit_btn_x + fit_btn_w, fit_btn_y + fit_btn_h, fit_bg, 2)
   reaper.ImGui_DrawList_AddRect(draw_list, fit_btn_x, fit_btn_y,
@@ -3201,7 +3210,7 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
   -- Draw fit-to-markers icon: magnifying glass
   local fcx = fit_btn_x + fit_btn_w / 2
   local fcy = fit_btn_y + fit_btn_h / 2
-  local fit_color = fit_active and 0x202020FF or 0xCCCCCCFF
+  local fit_color = is_on and 0x202020FF or 0xCCCCCCFF
   -- Lens circle (slightly up-left of center)
   local lens_cx = fcx - 1.5
   local lens_cy = fcy - 1.5
@@ -3211,10 +3220,11 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
   reaper.ImGui_DrawList_AddLine(draw_list, fcx + 1, fcy + 1, fcx + 5, fcy + 5, fit_color, 1.5)
 
   if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_fit then
-    settings.toggle_default(state, "auto_fit_markers")
+    settings.cycle_auto_fit(state)
   end
   if mouse_in_fit then
-    local fit_tip = "Autozoom: fit view to markers on item selection"
+    local mode_labels = { off = "Off", soft = "Soft", live = "Live" }
+    local fit_tip = "Autozoom: " .. (mode_labels[fit_active] or "Off")
     if settings then
       local sc = settings.current.shortcuts.toggle_auto_fit
       if sc and sc.key ~= "" then

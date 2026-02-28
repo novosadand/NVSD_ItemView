@@ -683,7 +683,7 @@ settings.DEFAULT_DEFAULTS = {
   auto_show_envelopes = true,
   envelope_lock = false,
   env_snap_enabled = true,
-  auto_fit_markers = false,
+  auto_fit_markers = "off",
   show_tooltips = true,
 }
 
@@ -947,7 +947,18 @@ function settings.load()
   for name, default_val in pairs(settings.DEFAULT_DEFAULTS) do
     local saved = reaper.GetExtState(EXT_SECTION, "default_" .. name)
     if saved ~= "" then
-      settings.current.defaults[name] = (saved == "true")
+      if name == "auto_fit_markers" then
+        -- Backward compat: old "true" → "soft", old "false" → "off"
+        if saved == "true" then
+          settings.current.defaults[name] = "soft"
+        elseif saved == "false" then
+          settings.current.defaults[name] = "off"
+        else
+          settings.current.defaults[name] = saved
+        end
+      else
+        settings.current.defaults[name] = (saved == "true")
+      end
     else
       settings.current.defaults[name] = default_val
     end
@@ -1006,6 +1017,16 @@ function settings.toggle_default(state_tbl, key)
   state_tbl[key] = not state_tbl[key]
   settings.current.defaults[key] = state_tbl[key]
   settings.save_default(key)
+end
+
+-- Cycle auto_fit_markers through off → soft → live → off, sync and persist.
+function settings.cycle_auto_fit(state_tbl)
+  local order = { off = "soft", soft = "live", live = "off" }
+  local cur = state_tbl.auto_fit_markers or "off"
+  local next_val = order[cur] or "off"
+  state_tbl.auto_fit_markers = next_val
+  settings.current.defaults.auto_fit_markers = next_val
+  settings.save_default("auto_fit_markers")
 end
 
 -- Save a single layout toggle to ExtState (avoids full save overhead)
