@@ -2147,7 +2147,7 @@ function controls.draw_gain_slider(ctx, draw_list, mouse_x, mouse_y, panel_x, pa
   end
 
   local slider_center_x = slider_x + config.GAIN_SLIDER_WIDTH / 2
-  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - 14, panel_y + math.max(0, pad - 2), config.COLOR_INFO_BAR_TEXT, "Gain")
+  reaper.ImGui_DrawList_AddText(draw_list, slider_center_x - 14, panel_y + math.max(0, pad - 4), config.COLOR_INFO_BAR_TEXT, "Gain")
   local db_text = utils.format_db(item_db)
   local db_text_w = reaper.ImGui_CalcTextSize(ctx, db_text)
   local db_gap = math.max(4, math.min(8, pad - 1))

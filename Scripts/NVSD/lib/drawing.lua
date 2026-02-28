@@ -2904,7 +2904,7 @@ function drawing.draw_knob(draw_list, cx, cy, radius, angle, is_hovered, is_acti
 
   if label then
     local lw = #label * 6
-    reaper.ImGui_DrawList_AddText(draw_list, cx - lw / 2, cy - radius - 18, config and config.COLOR_INFO_BAR_TEXT or 0xAAAAAAFF, label)
+    reaper.ImGui_DrawList_AddText(draw_list, cx - lw / 2, cy - radius - 20, config and config.COLOR_INFO_BAR_TEXT or 0xAAAAAAFF, label)
   end
   if unit_text then
     reaper.ImGui_DrawList_AddText(draw_list, cx - 5, cy + radius + 2, config and config.COLOR_RULER_TEXT or 0x888888FF, unit_text)
