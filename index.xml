@@ -1536,6 +1536,36 @@ Fixes:
         <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/cb778b1/Scripts/NVSD/lib/settings.lua</source>
         <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/cb778b1/Scripts/NVSD/lib/settings_ui.lua</source>
       </version>
+      <version name="1.2.3" author="NVSD" time="2026-02-28T22:00:00Z">
+        <changelog><![CDATA[Sausage file navigation, Grab from REAPER, 3-button FX toolbar, UI polish.
+
+Features:
+- Sausage file navigation: Left/Right arrows skip between sound regions in multi-variation files
+- Grace period for rapid backward skipping (1.5s window)
+- Optional snap-click-to-sound preference (auto-snap clicks out of silence gaps)
+- During preview, arrow navigation instantly jumps playback to new region
+- Grab from REAPER button [G] imports shortcut bindings from REAPER's action list
+- 3-button FX toolbar: dedicated [+] Add, [bypass] toggle, and [FX] chain buttons
+- Unzoom All shortcut (Alt+Z) resets zoom to full source view
+
+Fixes:
+- Gain slider taller with reduced top padding
+- Gain/Pitch/Pan labels moved up to reduce cramping
+- Region navigation correctly uses source-relative coordinates
+- Peak noise blips (1-2 column artifacts) skipped during navigation
+- Float round-trip precision fix for column conversion]]></changelog>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/84b16b7/Scripts/NVSD/NVSD_ItemView.lua</source>
+        <source>https://github.com/novosadand/NVSD_ItemView/raw/84b16b7/Scripts/NVSD/NVSD_ItemView_Settings.lua</source>
+        <source main="main">https://github.com/novosadand/NVSD_ItemView/raw/84b16b7/Scripts/NVSD/NVSD_ItemView_DoubleClick.lua</source>
+        <source file="lib/config.lua">https://github.com/novosadand/NVSD_ItemView/raw/84b16b7/Scripts/NVSD/lib/config.lua</source>
+        <source file="lib/state.lua">https://github.com/novosadand/NVSD_ItemView/raw/84b16b7/Scripts/NVSD/lib/state.lua</source>
+        <source file="lib/utils.lua">https://github.com/novosadand/NVSD_ItemView/raw/84b16b7/Scripts/NVSD/lib/utils.lua</source>
+        <source file="lib/drawing.lua">https://github.com/novosadand/NVSD_ItemView/raw/84b16b7/Scripts/NVSD/lib/drawing.lua</source>
+        <source file="lib/fade_curves.lua">https://github.com/novosadand/NVSD_ItemView/raw/84b16b7/Scripts/NVSD/lib/fade_curves.lua</source>
+        <source file="lib/controls.lua">https://github.com/novosadand/NVSD_ItemView/raw/84b16b7/Scripts/NVSD/lib/controls.lua</source>
+        <source file="lib/settings.lua">https://github.com/novosadand/NVSD_ItemView/raw/84b16b7/Scripts/NVSD/lib/settings.lua</source>
+        <source file="lib/settings_ui.lua">https://github.com/novosadand/NVSD_ItemView/raw/84b16b7/Scripts/NVSD/lib/settings_ui.lua</source>
+      </version>
     </reapack>
   </category>
 </index>
