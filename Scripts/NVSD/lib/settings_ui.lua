@@ -625,6 +625,38 @@ local function get_shortcut_label(name)
   return name
 end
 
+-- Local action cache for toolbar tab and grab-from-REAPER (same pattern as drawing.lua)
+local tb_action_cache = nil
+
+local function get_tb_action_cache()
+  if tb_action_cache then return tb_action_cache end
+  tb_action_cache = {}
+  local has_shortcuts = reaper.GetActionShortcutDesc ~= nil
+  local idx = 0
+  while true do
+    local retval, name = reaper.kbd_enumerateActions(0, idx)
+    if retval == 0 then break end
+    local cmd_str
+    local named = reaper.ReverseNamedCommandLookup and reaper.ReverseNamedCommandLookup(retval) or ""
+    if named and named ~= "" then
+      cmd_str = "_" .. named
+    else
+      cmd_str = tostring(retval)
+    end
+    if name and name ~= "" then
+      local shortcut = ""
+      if has_shortcuts then
+        local ok, rv, desc = pcall(reaper.GetActionShortcutDesc, 0, retval, 0, "")
+        if ok and rv and desc and desc ~= "" then shortcut = desc end
+      end
+      tb_action_cache[#tb_action_cache + 1] = {name = name, cmd = cmd_str, shortcut = shortcut}
+    end
+    idx = idx + 1
+  end
+  table.sort(tb_action_cache, function(a, b) return a.name:lower() < b.name:lower() end)
+  return tb_action_cache
+end
+
 -- Draw Shortcuts tab content
 local function draw_shortcuts_tab(ctx, settings)
   -- Key capture logic (runs every frame while listening)
@@ -738,35 +770,49 @@ local function draw_shortcuts_tab(ctx, settings)
       reaper.ImGui_TableNextColumn(ctx)
       local reaper_action_id = REAPER_ACTION_MAP[name]
       local g_hovered = false
-      if reaper_action_id and not is_listening
-          and reaper.GetActionShortcutDesc then
+      if reaper_action_id and not is_listening then
         reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(),        0x00000000)
         reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x66333399)
         reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(),  0xCC444499)
         reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(),          0x888888FF)
-        if reaper.ImGui_SmallButton(ctx, "G##grab_" .. name) then
-          local ok, rv, desc = pcall(
-            reaper.GetActionShortcutDesc, 0, reaper_action_id, 0, "")
-          if ok and rv and desc and desc ~= "" then
-            local binding = settings.string_to_shortcut(desc)
-            if binding.key ~= "" then
-              local conflict = settings.find_conflict(
-                settings.current.shortcuts, name, binding)
-              if conflict then
-                ui_state.conflict_pending = {
-                  target = name,
-                  binding = binding,
-                  conflict_name = conflict,
-                }
-              else
-                apply_shortcut(settings, name, binding)
+        if reaper.ImGui_Button(ctx, "G##grab_" .. name, 24, 0) then
+          local grabbed = false
+          if reaper.SectionFromUniqueID and reaper.GetActionShortcutDesc then
+            local section = reaper.SectionFromUniqueID(0)
+            if section then
+              local ok, rv, desc = pcall(reaper.GetActionShortcutDesc, section, reaper_action_id, 0, "")
+              if ok and rv and desc and desc ~= "" then
+                local binding = settings.string_to_shortcut(desc)
+                if binding.key ~= "" then
+                  local conflict = settings.find_conflict(
+                    settings.current.shortcuts, name, binding)
+                  if conflict then
+                    ui_state.conflict_pending = {
+                      target = name,
+                      binding = binding,
+                      conflict_name = conflict,
+                    }
+                  else
+                    apply_shortcut(settings, name, binding)
+                  end
+                  grabbed = true
+                end
               end
             end
+          end
+          if not grabbed then
+            ui_state.grab_no_shortcut = name
+            ui_state.grab_no_shortcut_time = reaper.time_precise()
           end
         end
         g_hovered = reaper.ImGui_IsItemHovered(ctx)
         if g_hovered then
-          reaper.ImGui_SetTooltip(ctx, "Grab shortcut from REAPER")
+          if ui_state.grab_no_shortcut == name
+              and reaper.time_precise() - (ui_state.grab_no_shortcut_time or 0) < 2.0 then
+            reaper.ImGui_SetTooltip(ctx, "No REAPER shortcut assigned")
+          else
+            reaper.ImGui_SetTooltip(ctx, "Grab shortcut from REAPER")
+          end
         end
         reaper.ImGui_PopStyleColor(ctx, 4)
       end
@@ -1040,38 +1086,6 @@ local function get_settings_icon(ctx, filename)
   end
   settings_icon_cache[filename] = false
   return nil, nil
-end
-
--- Local action cache for toolbar tab (same pattern as drawing.lua, avoids coupling)
-local tb_action_cache = nil
-
-local function get_tb_action_cache()
-  if tb_action_cache then return tb_action_cache end
-  tb_action_cache = {}
-  local has_shortcuts = reaper.GetActionShortcutDesc ~= nil
-  local idx = 0
-  while true do
-    local retval, name = reaper.kbd_enumerateActions(0, idx)
-    if retval == 0 then break end
-    local cmd_str
-    local named = reaper.ReverseNamedCommandLookup and reaper.ReverseNamedCommandLookup(retval) or ""
-    if named and named ~= "" then
-      cmd_str = "_" .. named
-    else
-      cmd_str = tostring(retval)
-    end
-    if name and name ~= "" then
-      local shortcut = ""
-      if has_shortcuts then
-        local ok, rv, desc = pcall(reaper.GetActionShortcutDesc, 0, retval, 0, "")
-        if ok and rv and desc and desc ~= "" then shortcut = desc end
-      end
-      tb_action_cache[#tb_action_cache + 1] = {name = name, cmd = cmd_str, shortcut = shortcut}
-    end
-    idx = idx + 1
-  end
-  table.sort(tb_action_cache, function(a, b) return a.name:lower() < b.name:lower() end)
-  return tb_action_cache
 end
 
 -- Look up resolved action name from a command ID string
@@ -2102,6 +2116,7 @@ local HELP_SECTIONS = {
       "- Hover any element for a tooltip",
       "- Autozoom has 3 modes: Soft fits view on item change, Live tracks edge edits in real-time",
       "- Use the Preferences tab to control initial toggle states and hide UI panels",
+      "- Shortcuts tab: [G] grabs the binding from REAPER's action list for that action",
       "",
       "## Double-click to open",
       "Open ItemView by double-clicking audio items (MIDI items still open the MIDI editor):",
