@@ -3223,8 +3223,12 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
     settings.cycle_auto_fit(state)
   end
   if mouse_in_fit then
-    local mode_labels = { off = "Off", soft = "Soft", live = "Live" }
-    local fit_tip = "Autozoom: " .. (mode_labels[fit_active] or "Off")
+    local mode_tips = {
+      off = "Off",
+      soft = "Soft (fit on item change)",
+      live = "Live (track edge edits)",
+    }
+    local fit_tip = "Autozoom: " .. (mode_tips[fit_active] or "Off")
     if settings then
       local sc = settings.current.shortcuts.toggle_auto_fit
       if sc and sc.key ~= "" then
