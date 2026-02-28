@@ -913,6 +913,10 @@ local function loop()
               state._nav_t = math.min(state.view_start + state.view_length, state._nav_cur + 3)
               state.preview_cursor_pos = state._nav_t
             end
+            if state.preview_active then
+              state.stop_preview()
+              state.preview_start_requested = true
+            end
           elseif settings.check_shortcut(ctx, "prev_region") and state.view_start and state.view_length and state.view_length > 0 then
             state._nav_cur = state.preview_cursor_pos or 0
             state._nav_col = math.floor((state._nav_cur - state.view_start) / state.view_length * state.view_peaks.count + 0.5) + 1
@@ -950,6 +954,10 @@ local function loop()
             end
             state.prev_region_last_time = state._nav_now
             state.prev_region_last_col = state._nav_col
+            if state.preview_active then
+              state.stop_preview()
+              state.preview_start_requested = true
+            end
           end
         end
       end
