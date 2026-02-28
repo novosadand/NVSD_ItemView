@@ -60,6 +60,10 @@ local EDITABLE_SHORTCUTS = {
   {name = "zoom_in",           label = "Zoom in"},
   {name = "zoom_out",          label = "Zoom out"},
   {name = "zoom_to_markers",   label = "Zoom to region / markers"},
+  -- Navigation
+  {section = "Navigation"},
+  {name = "next_region",       label = "Skip to next region"},
+  {name = "prev_region",       label = "Skip to previous region"},
   -- Grid
   {section = "Grid"},
   {name = "narrow_grid",       label = "Narrow grid"},
@@ -2188,6 +2192,7 @@ end
 local DEFAULTS_ITEMS = {
   {key = "auto_show_envelopes", label = "Auto-show envelopes",   tip = "Show envelope overlay when an item has volume, pitch, or pan envelopes"},
   {key = "show_tooltips",       label = "Show tooltips",         tip = "Show hover tooltips on controls and UI elements"},
+  {key = "snap_click_to_sound", label = "Snap click to sound", tip = "When clicking in a silent gap, snap cursor to nearest sound onset"},
 }
 
 -- Layout items: which UI panels can be hidden

@@ -56,6 +56,8 @@ settings.DEFAULT_SHORTCUTS = {
   narrow_grid = {ctrl = true, shift = false, alt = false, key = "1"},
   widen_grid = {ctrl = true, shift = false, alt = false, key = "2"},
   triplet_grid = {ctrl = true, shift = false, alt = false, key = "3"},
+  next_region = {ctrl = false, shift = false, alt = false, key = "Right"},
+  prev_region = {ctrl = false, shift = false, alt = false, key = "Left"},
 }
 
 -- Map key names to ImGui key getter function names (created once at module load)
@@ -685,6 +687,7 @@ settings.DEFAULT_DEFAULTS = {
   env_snap_enabled = true,
   auto_fit_markers = "off",
   show_tooltips = true,
+  snap_click_to_sound = false,
 }
 
 -- Default layout visibility (which UI panels are shown)
