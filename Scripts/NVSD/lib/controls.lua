@@ -392,7 +392,7 @@ end
 
 -- Draw WARP/Reverse/Edit buttons in the left column
 function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take, config, state, utils, drawing, settings, panel_height, col2_x)
-  local btn_height = 16
+  local btn_height = 18
   local btn_margin = 10
   local btn_padding = 8
   local row_y = left_col_y + 10
@@ -629,10 +629,33 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   reaper.ImGui_PopStyleColor(ctx, 2)
   reaper.ImGui_PopStyleVar(ctx, 4)
 
+  -- Draw a small 8x8 icon inside a dropdown button
+  local function draw_dropdown_icon(dl, icon_type, x, cy, color)
+    if icon_type == "algo" then
+      -- Sine wave: full period (mid -> peak -> mid -> trough -> mid)
+      reaper.ImGui_DrawList_AddLine(dl, x, cy, x + 2, cy - 3, color, 1.0)
+      reaper.ImGui_DrawList_AddLine(dl, x + 2, cy - 3, x + 4, cy, color, 1.0)
+      reaper.ImGui_DrawList_AddLine(dl, x + 4, cy, x + 6, cy + 3, color, 1.0)
+      reaper.ImGui_DrawList_AddLine(dl, x + 6, cy + 3, x + 8, cy, color, 1.0)
+    elseif icon_type == "preset" then
+      -- Three horizontal bars (6px wide, 3px apart)
+      reaper.ImGui_DrawList_AddLine(dl, x, cy - 3, x + 6, cy - 3, color, 1.0)
+      reaper.ImGui_DrawList_AddLine(dl, x, cy, x + 6, cy, color, 1.0)
+      reaper.ImGui_DrawList_AddLine(dl, x, cy + 3, x + 6, cy + 3, color, 1.0)
+    elseif icon_type == "options" then
+      -- Two horizontal lines with circle knobs (mixer sliders)
+      reaper.ImGui_DrawList_AddLine(dl, x, cy - 2, x + 8, cy - 2, color, 1.0)
+      reaper.ImGui_DrawList_AddCircleFilled(dl, x + 2, cy - 2, 2, color)
+      reaper.ImGui_DrawList_AddLine(dl, x, cy + 2, x + 8, cy + 2, color, 1.0)
+      reaper.ImGui_DrawList_AddCircleFilled(dl, x + 6, cy + 2, 2, color)
+    end
+  end
+
   -- Warp mode dropdown
-  local dropdown_y = warp_btn_y + btn_height + 4
-  local dropdown_btn_height = 16
-  local dropdown_height = dropdown_btn_height + 6
+  local dropdown_y = warp_btn_y + btn_height + 3
+  local dropdown_btn_height = 18
+  local dropdown_height = dropdown_btn_height + 4
+  local dropdown_text_oy = math.floor((dropdown_btn_height - text_height) / 2)
   local dropdown_x = left_col_x + btn_padding
   local dropdown_width = warp_btn_width
 
@@ -673,7 +696,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
   -- Truncate algo name if it exceeds available space (before arrow)
   local algo_text_w = reaper.ImGui_CalcTextSize(ctx, current_mode_name)
-  local algo_max_text_w = dropdown_width - 15  -- 3px left pad + 12px arrow area
+  local algo_max_text_w = dropdown_width - 26  -- 14px left (3px pad + 8px icon + 3px gap) + 12px arrow area
   local algo_display_name = current_mode_name
   local algo_truncated = algo_text_w > algo_max_text_w
 
@@ -687,24 +710,26 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
   if algo_truncated and mouse_in_dropdown then
     -- Hover expansion: draw wider button on foreground to show full name
-    local expanded_w = math.max(dropdown_width, algo_text_w + 15)
+    local expanded_w = math.max(dropdown_width, algo_text_w + 26)
     local fg_dl = reaper.ImGui_GetForegroundDrawList(ctx)
     reaper.ImGui_DrawList_AddRectFilled(fg_dl, dropdown_x, dropdown_y, dropdown_x + expanded_w, dropdown_y + dropdown_btn_height, dropdown_bg, 2)
     reaper.ImGui_DrawList_AddRect(fg_dl, dropdown_x, dropdown_y, dropdown_x + expanded_w, dropdown_y + dropdown_btn_height, 0x666666FF, 2)
-    reaper.ImGui_DrawList_AddText(fg_dl, dropdown_x + 3, dropdown_y + 1, text_color, current_mode_name)
+    draw_dropdown_icon(fg_dl, "algo", dropdown_x + 3, dropdown_y + 9, text_color)
+    reaper.ImGui_DrawList_AddText(fg_dl, dropdown_x + 14, dropdown_y + dropdown_text_oy, text_color, current_mode_name)
     reaper.ImGui_DrawList_AddTriangleFilled(fg_dl,
-      dropdown_x + expanded_w - 10, dropdown_y + 4,
-      dropdown_x + expanded_w - 4, dropdown_y + 4,
-      dropdown_x + expanded_w - 7, dropdown_y + dropdown_btn_height - 4,
+      dropdown_x + expanded_w - 10, dropdown_y + 5,
+      dropdown_x + expanded_w - 4, dropdown_y + 5,
+      dropdown_x + expanded_w - 7, dropdown_y + dropdown_btn_height - 5,
       arrow_color)
   else
     reaper.ImGui_DrawList_AddRectFilled(draw_list, dropdown_x, dropdown_y, dropdown_x + dropdown_width, dropdown_y + dropdown_btn_height, dropdown_bg, 2)
     reaper.ImGui_DrawList_AddRect(draw_list, dropdown_x, dropdown_y, dropdown_x + dropdown_width, dropdown_y + dropdown_btn_height, mouse_in_dropdown and 0x666666FF or 0x00000000, 2)
-    reaper.ImGui_DrawList_AddText(draw_list, dropdown_x + 3, dropdown_y + 1, text_color, algo_display_name)
+    draw_dropdown_icon(draw_list, "algo", dropdown_x + 3, dropdown_y + 9, text_color)
+    reaper.ImGui_DrawList_AddText(draw_list, dropdown_x + 14, dropdown_y + dropdown_text_oy, text_color, algo_display_name)
     reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-      dropdown_x + dropdown_width - 10, dropdown_y + 4,
-      dropdown_x + dropdown_width - 4, dropdown_y + 4,
-      dropdown_x + dropdown_width - 7, dropdown_y + dropdown_btn_height - 4,
+      dropdown_x + dropdown_width - 10, dropdown_y + 5,
+      dropdown_x + dropdown_width - 4, dropdown_y + 5,
+      dropdown_x + dropdown_width - 7, dropdown_y + dropdown_btn_height - 5,
       arrow_color)
   end
 
@@ -775,7 +800,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       local item_text_color = (mode.value == current_mode or
         (current_mode >= 0 and mode.value >= 0 and (mode.value >> 16) == (current_mode >> 16)))
         and config.COLOR_MARKER or config.COLOR_INFO_BAR_TEXT
-      reaper.ImGui_DrawList_AddText(menu_dl, dropdown_x + 4, item_y + 2, item_text_color, mode.name)
+      reaper.ImGui_DrawList_AddText(menu_dl, dropdown_x + 4, item_y + math.floor((menu_item_height - text_height) / 2), item_text_color, mode.name)
 
       if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_item then
         if take then
@@ -901,8 +926,8 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     local has_mode_dropdown = (mode_group and #mode_group > 0) or (cache and cache.presets)
     if has_mode_dropdown then
       local use_presets = cache.presets and not (mode_group and #mode_group > 0)
-      local mode_dd_y = warp_btn_y + btn_height + 4 + dropdown_height
-      local mode_dd_height = dropdown_btn_height + 6
+      local mode_dd_y = warp_btn_y + btn_height + 3 + dropdown_height
+      local mode_dd_height = dropdown_btn_height + 4
 
       -- Current mode name
       local default_label = is_project_default and "Project default" or "Default"
@@ -972,7 +997,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
       -- Truncation + hover expansion
       local mode_tw = reaper.ImGui_CalcTextSize(ctx, current_mode_atom)
-      local mode_max_tw = dropdown_width - 15
+      local mode_max_tw = dropdown_width - 26
       local mode_dn = current_mode_atom
       local mode_trunc = mode_tw > mode_max_tw
 
@@ -985,23 +1010,25 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       end
 
       if mode_trunc and mouse_in_mode_dd then
-        local ew = math.max(dropdown_width, mode_tw + 15)
+        local ew = math.max(dropdown_width, mode_tw + 26)
         local fg_dl = reaper.ImGui_GetForegroundDrawList(ctx)
         reaper.ImGui_DrawList_AddRectFilled(fg_dl, dropdown_x, mode_dd_y, dropdown_x + ew, mode_dd_y + dropdown_btn_height, mode_bg, 2)
         reaper.ImGui_DrawList_AddRect(fg_dl, dropdown_x, mode_dd_y, dropdown_x + ew, mode_dd_y + dropdown_btn_height, 0x666666FF, 2)
-        reaper.ImGui_DrawList_AddText(fg_dl, dropdown_x + 3, mode_dd_y + 1, mode_tc, current_mode_atom)
+        draw_dropdown_icon(fg_dl, "preset", dropdown_x + 3, mode_dd_y + 9, mode_tc)
+        reaper.ImGui_DrawList_AddText(fg_dl, dropdown_x + 14, mode_dd_y + dropdown_text_oy, mode_tc, current_mode_atom)
         reaper.ImGui_DrawList_AddTriangleFilled(fg_dl,
-          dropdown_x + ew - 10, mode_dd_y + 4,
-          dropdown_x + ew - 4, mode_dd_y + 4,
-          dropdown_x + ew - 7, mode_dd_y + dropdown_btn_height - 4, mode_ac)
+          dropdown_x + ew - 10, mode_dd_y + 5,
+          dropdown_x + ew - 4, mode_dd_y + 5,
+          dropdown_x + ew - 7, mode_dd_y + dropdown_btn_height - 5, mode_ac)
       else
         reaper.ImGui_DrawList_AddRectFilled(draw_list, dropdown_x, mode_dd_y, dropdown_x + dropdown_width, mode_dd_y + dropdown_btn_height, mode_bg, 2)
         reaper.ImGui_DrawList_AddRect(draw_list, dropdown_x, mode_dd_y, dropdown_x + dropdown_width, mode_dd_y + dropdown_btn_height, mouse_in_mode_dd and 0x666666FF or 0x00000000, 2)
-        reaper.ImGui_DrawList_AddText(draw_list, dropdown_x + 3, mode_dd_y + 1, mode_tc, mode_dn)
+        draw_dropdown_icon(draw_list, "preset", dropdown_x + 3, mode_dd_y + 9, mode_tc)
+        reaper.ImGui_DrawList_AddText(draw_list, dropdown_x + 14, mode_dd_y + dropdown_text_oy, mode_tc, mode_dn)
         reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-          dropdown_x + dropdown_width - 10, mode_dd_y + 4,
-          dropdown_x + dropdown_width - 4, mode_dd_y + 4,
-          dropdown_x + dropdown_width - 7, mode_dd_y + dropdown_btn_height - 4, mode_ac)
+          dropdown_x + dropdown_width - 10, mode_dd_y + 5,
+          dropdown_x + dropdown_width - 4, mode_dd_y + 5,
+          dropdown_x + dropdown_width - 7, mode_dd_y + dropdown_btn_height - 5, mode_ac)
       end
 
       if mouse_in_mode_dd and dropdown_enabled and not state.warp_mode_dropdown_open
@@ -1137,7 +1164,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
             local is_current = item.name == current_mode_atom
             local item_tc = is_current and config.COLOR_MARKER or config.COLOR_INFO_BAR_TEXT
-            reaper.ImGui_DrawList_AddText(menu_dl, dropdown_x + 4, iy + 2, item_tc, item.name)
+            reaper.ImGui_DrawList_AddText(menu_dl, dropdown_x + 4, iy + math.floor((menu_item_height - text_height) / 2), item_tc, item.name)
 
             if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_item and take then
               if use_presets then
@@ -1233,8 +1260,8 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
     -- ===== FLAGS DROPDOWN (checkable options) =====
     if #flag_groups > 0 then
-      local flags_dd_y = warp_btn_y + btn_height + 4 + dropdown_height
-      local flags_dd_height = dropdown_btn_height + 6
+      local flags_dd_y = warp_btn_y + btn_height + 3 + dropdown_height
+      local flags_dd_height = dropdown_btn_height + 4
 
       -- Build flags label from active flag atoms
       local active_flag_names = {}
@@ -1261,7 +1288,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
       -- Truncation + hover expansion
       local fl_tw = reaper.ImGui_CalcTextSize(ctx, flags_label)
-      local fl_max_tw = dropdown_width - 15
+      local fl_max_tw = dropdown_width - 26
       local fl_dn = flags_label
       local fl_trunc = fl_tw > fl_max_tw
 
@@ -1274,23 +1301,25 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       end
 
       if fl_trunc and mouse_in_flags_dd then
-        local ew = math.max(dropdown_width, fl_tw + 15)
+        local ew = math.max(dropdown_width, fl_tw + 26)
         local fg_dl = reaper.ImGui_GetForegroundDrawList(ctx)
         reaper.ImGui_DrawList_AddRectFilled(fg_dl, dropdown_x, flags_dd_y, dropdown_x + ew, flags_dd_y + dropdown_btn_height, fl_bg, 2)
         reaper.ImGui_DrawList_AddRect(fg_dl, dropdown_x, flags_dd_y, dropdown_x + ew, flags_dd_y + dropdown_btn_height, 0x666666FF, 2)
-        reaper.ImGui_DrawList_AddText(fg_dl, dropdown_x + 3, flags_dd_y + 1, fl_tc, flags_label)
+        draw_dropdown_icon(fg_dl, "options", dropdown_x + 3, flags_dd_y + 9, fl_tc)
+        reaper.ImGui_DrawList_AddText(fg_dl, dropdown_x + 14, flags_dd_y + dropdown_text_oy, fl_tc, flags_label)
         reaper.ImGui_DrawList_AddTriangleFilled(fg_dl,
-          dropdown_x + ew - 10, flags_dd_y + 4,
-          dropdown_x + ew - 4, flags_dd_y + 4,
-          dropdown_x + ew - 7, flags_dd_y + dropdown_btn_height - 4, fl_ac)
+          dropdown_x + ew - 10, flags_dd_y + 5,
+          dropdown_x + ew - 4, flags_dd_y + 5,
+          dropdown_x + ew - 7, flags_dd_y + dropdown_btn_height - 5, fl_ac)
       else
         reaper.ImGui_DrawList_AddRectFilled(draw_list, dropdown_x, flags_dd_y, dropdown_x + dropdown_width, flags_dd_y + dropdown_btn_height, fl_bg, 2)
         reaper.ImGui_DrawList_AddRect(draw_list, dropdown_x, flags_dd_y, dropdown_x + dropdown_width, flags_dd_y + dropdown_btn_height, mouse_in_flags_dd and 0x666666FF or 0x00000000, 2)
-        reaper.ImGui_DrawList_AddText(draw_list, dropdown_x + 3, flags_dd_y + 1, fl_tc, fl_dn)
+        draw_dropdown_icon(draw_list, "options", dropdown_x + 3, flags_dd_y + 9, fl_tc)
+        reaper.ImGui_DrawList_AddText(draw_list, dropdown_x + 14, flags_dd_y + dropdown_text_oy, fl_tc, fl_dn)
         reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
-          dropdown_x + dropdown_width - 10, flags_dd_y + 4,
-          dropdown_x + dropdown_width - 4, flags_dd_y + 4,
-          dropdown_x + dropdown_width - 7, flags_dd_y + dropdown_btn_height - 4, fl_ac)
+          dropdown_x + dropdown_width - 10, flags_dd_y + 5,
+          dropdown_x + dropdown_width - 4, flags_dd_y + 5,
+          dropdown_x + dropdown_width - 7, flags_dd_y + dropdown_btn_height - 5, fl_ac)
       end
 
       if mouse_in_flags_dd and dropdown_enabled and not state.warp_submode_dropdown_open
@@ -1417,10 +1446,11 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
               local check_text = is_active and "v" or "  "
               local flag_text_color = is_active and config.COLOR_MARKER or config.COLOR_INFO_BAR_TEXT
 
+              local flag_text_oy = math.floor((item_h - text_height) / 2)
               reaper.ImGui_DrawList_AddText(menu_dl,
-                dropdown_x + 4, iy + 2, flag_text_color, check_text)
+                dropdown_x + 4, iy + flag_text_oy, flag_text_color, check_text)
               reaper.ImGui_DrawList_AddText(menu_dl,
-                dropdown_x + check_pad, iy + 2, flag_text_color, atom)
+                dropdown_x + check_pad, iy + flag_text_oy, flag_text_color, atom)
 
               if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_item and take then
                 local new_atoms = {}
@@ -1514,7 +1544,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     end
   end
 
-  warp_end_y = warp_btn_y + btn_height + 4 + dropdown_height
+  warp_end_y = warp_btn_y + btn_height + 3 + dropdown_height
   else
     -- When warp hidden, ensure dropdown state is clean
     state.warp_dropdown_open = false
@@ -1527,7 +1557,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   local cursor_x = left_col_x
   local cursor_y = warp_end_y
   local col1_end, overflowed
-  local gap = 6
+  local gap = 3
 
   local function try_overflow(h)
     if not overflowed and col2_x and cursor_y + h > panel_bottom then
@@ -1544,7 +1574,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   local clear_btn_y = cursor_y
   local clear_btn_x = cursor_x + btn_padding
   local clear_btn_width = warp_btn_width
-  local clear_btn_height = 20
+  local clear_btn_height = 18
 
   local mouse_in_clear = mouse_x >= clear_btn_x and mouse_x <= clear_btn_x + clear_btn_width
                          and mouse_y >= clear_btn_y and mouse_y <= clear_btn_y + clear_btn_height
@@ -1578,7 +1608,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   end
 
   last_bottom = clear_btn_y + clear_btn_height
-  cursor_y = last_bottom + 4
+  cursor_y = last_bottom + 3
   end -- if show_warp (clear button)
 
   if show_buttons then
@@ -1588,12 +1618,14 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   local stretch_btn_width = math.floor((warp_btn_width - gap) / 2)
   local x2_btn_x = cursor_x + btn_padding
   local half_btn_x = x2_btn_x + stretch_btn_width + gap
-  local stretch_btn_height = 20
+  local stretch_btn_height = 18
 
   local mouse_in_x2 = mouse_x >= x2_btn_x and mouse_x <= x2_btn_x + stretch_btn_width
                        and mouse_y >= stretch_row_y and mouse_y <= stretch_row_y + stretch_btn_height
+                       and not any_dropdown_menu_open
   local mouse_in_half = mouse_x >= half_btn_x and mouse_x <= half_btn_x + stretch_btn_width
                         and mouse_y >= stretch_row_y and mouse_y <= stretch_row_y + stretch_btn_height
+                        and not any_dropdown_menu_open
 
   local x2_bg = mouse_in_x2 and COLOR_BTN_HOVER or COLOR_BTN_OFF
   local half_bg = mouse_in_half and COLOR_BTN_HOVER or COLOR_BTN_OFF
@@ -1658,24 +1690,25 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     end
   end
 
-  -- Second row: Reverse and Edit
-  cursor_y = stretch_row_y + stretch_btn_height + 4
-  try_overflow(btn_height)
+  -- Second row: Reverse and Edit (same sizes as x2 / /2)
+  cursor_y = stretch_row_y + stretch_btn_height + 3
+  try_overflow(stretch_btn_height)
   local row2_y = cursor_y
-  local rev_btn_width = 60
-  local edit_btn_width = config.LEFT_COLUMN_WIDTH - (btn_padding * 2) - rev_btn_width - gap
+  local rev_btn_width = stretch_btn_width
+  local edit_btn_width = stretch_btn_width
 
   -- REVERSE button
   local rev_btn_x = cursor_x + btn_padding
 
   local mouse_in_rev = mouse_x >= rev_btn_x and mouse_x <= rev_btn_x + rev_btn_width
-                       and mouse_y >= row2_y and mouse_y <= row2_y + btn_height
+                       and mouse_y >= row2_y and mouse_y <= row2_y + stretch_btn_height
+                       and not any_dropdown_menu_open
 
   local rev_bg_color = mouse_in_rev and COLOR_BTN_HOVER or COLOR_BTN_OFF
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, rev_btn_x, row2_y, rev_btn_x + rev_btn_width, row2_y + btn_height, rev_bg_color, 3)
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, rev_btn_x, row2_y, rev_btn_x + rev_btn_width, row2_y + stretch_btn_height, rev_bg_color, 3)
   local rev_text_w = reaper.ImGui_CalcTextSize(ctx, "Reverse")
   local rev_text_x = rev_btn_x + (rev_btn_width - rev_text_w) / 2
-  local rev_text_y = row2_y + (btn_height - text_height) / 2
+  local rev_text_y = row2_y + (stretch_btn_height - text_height) / 2
   reaper.ImGui_DrawList_AddText(draw_list, rev_text_x, rev_text_y, COLOR_BTN_TEXT, "Reverse")
 
   if mouse_in_rev and not any_dropdown_menu_open then
@@ -1692,13 +1725,14 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   local edit_btn_x = rev_btn_x + rev_btn_width + gap
 
   local mouse_in_edit = mouse_x >= edit_btn_x and mouse_x <= edit_btn_x + edit_btn_width
-                        and mouse_y >= row2_y and mouse_y <= row2_y + btn_height
+                        and mouse_y >= row2_y and mouse_y <= row2_y + stretch_btn_height
+                        and not any_dropdown_menu_open
 
   local edit_bg_color = mouse_in_edit and COLOR_BTN_HOVER or COLOR_BTN_OFF
-  reaper.ImGui_DrawList_AddRectFilled(draw_list, edit_btn_x, row2_y, edit_btn_x + edit_btn_width, row2_y + btn_height, edit_bg_color, 3)
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, edit_btn_x, row2_y, edit_btn_x + edit_btn_width, row2_y + stretch_btn_height, edit_bg_color, 3)
   local edit_text_w = reaper.ImGui_CalcTextSize(ctx, "Edit")
   local edit_text_x = edit_btn_x + (edit_btn_width - edit_text_w) / 2
-  local edit_text_y = row2_y + (btn_height - text_height) / 2
+  local edit_text_y = row2_y + (stretch_btn_height - text_height) / 2
   reaper.ImGui_DrawList_AddText(draw_list, edit_text_x, edit_text_y, COLOR_BTN_TEXT, "Edit")
 
   if mouse_in_edit and not any_dropdown_menu_open then
@@ -1712,7 +1746,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   end
 
   -- Third row: Loop toggle
-  cursor_y = row2_y + btn_height + 4
+  cursor_y = row2_y + stretch_btn_height + 3
   try_overflow(btn_height)
   local row3_y = cursor_y
   local loop_btn_width = config.LEFT_COLUMN_WIDTH - (btn_padding * 2)
@@ -1722,6 +1756,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
   local mouse_in_loop = mouse_x >= loop_btn_x and mouse_x <= loop_btn_x + loop_btn_width
                         and mouse_y >= row3_y and mouse_y <= row3_y + btn_height
+                        and not any_dropdown_menu_open
 
   local loop_bg_color = is_looped and 0x3A5A3AFF
     or mouse_in_loop and COLOR_BTN_HOVER

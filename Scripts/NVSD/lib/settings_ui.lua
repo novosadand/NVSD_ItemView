@@ -53,7 +53,7 @@ local EDITABLE_SHORTCUTS = {
   {section = "View & Zoom"},
   {name = "reset_zoom",        label = "Reset zoom to fit"},
   {name = "scroll_hpan",       label = "Scroll pan (horizontal)"},
-  {name = "scroll_vzoom",      label = "Scroll zoom (vertical)"},
+  {name = "scroll_vzoom",      label = "Waveform zoom (scroll)"},
   {name = "scroll_zoom",       label = "Scroll zoom (horizontal)"},
   {name = "toggle_auto_fit",   label = "Toggle Autozoom"},
   {name = "unzoom_all",        label = "Zoom out to full source"},

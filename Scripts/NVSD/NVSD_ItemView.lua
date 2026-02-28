@@ -2737,7 +2737,7 @@ local function loop()
               -- Draw FX in column 2 (if active) or below buttons in column 1
               if layout.show_fx then
               if c2x then
-                local fy = c2b and (c2b + 6) or (left_col_y + 10)
+                local fy = c2b and (c2b + 3) or (left_col_y + 10)
                 local tb = controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
                   c2x + 8, fy, config.LEFT_COLUMN_WIDTH - 16, take, config, state, drawing)
                 local at = tb + 4
@@ -2746,7 +2746,7 @@ local function loop()
                   (left_col_y + panel_height - 4) - at, take, config, state, drawing)
               else
                 local tb = controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
-                  left_col_x + 8, c1b + 6, config.LEFT_COLUMN_WIDTH - 16,
+                  left_col_x + 8, c1b + 3, config.LEFT_COLUMN_WIDTH - 16,
                   take, config, state, drawing)
                 local at = tb + 4
                 controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
@@ -6975,7 +6975,7 @@ local function loop()
               state.needs_fx_col = layout.show_fx and (left_col_y + panel_height - 14 - c1b) < 50
               if layout.show_fx then
               if c2x then
-                local fy = c2b and (c2b + 6) or (left_col_y + 10)
+                local fy = c2b and (c2b + 3) or (left_col_y + 10)
                 local tb = controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
                   c2x + 8, fy, config.LEFT_COLUMN_WIDTH - 16, take, config, state, drawing)
                 local at = tb + 4
@@ -6984,7 +6984,7 @@ local function loop()
                   (left_col_y + panel_height - 4) - at, take, config, state, drawing)
               else
                 local tb = controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
-                  left_col_x + 8, c1b + 6, config.LEFT_COLUMN_WIDTH - 16,
+                  left_col_x + 8, c1b + 3, config.LEFT_COLUMN_WIDTH - 16,
                   take, config, state, drawing)
                 local at = tb + 4
                 controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
