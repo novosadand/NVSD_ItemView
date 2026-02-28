@@ -683,9 +683,9 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
       cue_bg = mouse_in_cue and config.COLOR_BTN_HOVER or config.COLOR_GRID_BAR
     end
     reaper.ImGui_DrawList_AddRectFilled(draw_list, cue_btn_x, cue_btn_y, cue_btn_x + cue_btn_w, cue_btn_y + cue_btn_h, cue_bg, 3)
-    local cue_text_w = reaper.ImGui_CalcTextSize(ctx, cue_label)
+    local cue_text_w, cue_text_h = reaper.ImGui_CalcTextSize(ctx, cue_label)
     local cue_text_x = cue_btn_x + (cue_btn_w - cue_text_w) / 2
-    local cue_text_y = cue_btn_y + (cue_btn_h - 12) / 2
+    local cue_text_y = cue_btn_y + math.floor((cue_btn_h - cue_text_h) / 2)
     local cue_text_color = cue_active and config.COLOR_BTN_TEXT or config.COLOR_INFO_BAR_TEXT
     reaper.ImGui_DrawList_AddText(draw_list, cue_text_x, cue_text_y, cue_text_color, cue_label)
 
@@ -800,8 +800,9 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
     end
   end
   if grid_label == "" then grid_label = "1/8" end
-  grid_label = grid_label .. " \xE2\x96\xBC"  -- ▼
-  local grid_text_w = reaper.ImGui_CalcTextSize(ctx, grid_label)
+  local grid_arrow = " \xE2\x96\xBC"  -- ▼
+  local grid_full_label = grid_label .. grid_arrow
+  local grid_text_w = reaper.ImGui_CalcTextSize(ctx, grid_full_label)
   local grid_btn_w = grid_text_w + (has_toolbar and 16 or 10)
   local grid_btn_x = zoom_btn_x - grid_btn_w - 4
   local grid_btn_y = y + math.floor((height - grid_btn_h) / 2)
@@ -811,12 +812,14 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
 
   if not midi_mode then
   local grid_popup_open = reaper.ImGui_IsPopupOpen(ctx, "grid_dropdown_menu")
-  local grid_text_tw, grid_text_th = reaper.ImGui_CalcTextSize(ctx, grid_label)
+  local grid_text_tw, grid_text_th = reaper.ImGui_CalcTextSize(ctx, grid_full_label)
   local grid_tx = grid_btn_x + (grid_btn_w - grid_text_tw) / 2
   local grid_ty = grid_btn_y + (grid_btn_h - grid_text_th) / 2
   -- No button background — just text. Subtle highlight on hover/open.
   local grid_tc = (mouse_in_grid_btn or grid_popup_open) and config.COLOR_BTN_TEXT or config.COLOR_INFO_BAR_TEXT
+  local grid_label_w = reaper.ImGui_CalcTextSize(ctx, grid_label)
   reaper.ImGui_DrawList_AddText(draw_list, grid_tx, grid_ty, grid_tc, grid_label)
+  reaper.ImGui_DrawList_AddText(draw_list, grid_tx + grid_label_w, grid_ty + 1, grid_tc, grid_arrow)
 
   if mouse_in_grid_btn then
     drawing.tooltip(ctx, "grid_btn", "Grid settings")
@@ -1046,11 +1049,11 @@ function drawing.draw_info_bar(draw_list, ctx, x, y, width, height, source, file
           local bg = (mouse_in and not state.tb_drag_active) and config.COLOR_BTN_HOVER or config.COLOR_GRID_BAR
           if is_dragging then bg = 0x40404059 end
           reaper.ImGui_DrawList_AddRectFilled(draw_list, tb_x, tb_btn_y, tb_x + btn_w, tb_btn_y + tb_btn_h, bg, 3)
-          local btn_text_w = reaper.ImGui_CalcTextSize(ctx, btn.label)
+          local btn_text_w, btn_text_h = reaper.ImGui_CalcTextSize(ctx, btn.label)
           local text_color = mouse_in and config.COLOR_BTN_TEXT or config.COLOR_INFO_BAR_TEXT
           if is_dragging then text_color = 0xBBBBBB59 end
           reaper.ImGui_DrawList_AddText(draw_list, tb_x + (btn_w - btn_text_w) / 2,
-              tb_btn_y + (tb_btn_h - 12) / 2, text_color, btn.label)
+              tb_btn_y + math.floor((tb_btn_h - btn_text_h) / 2), text_color, btn.label)
         end
 
         if mouse_in and not state.tb_drag_active and not reaper.ImGui_IsPopupOpen(ctx, "", reaper.ImGui_PopupFlags_AnyPopup()) then
@@ -2993,7 +2996,8 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
 
   local btn_bg = mouse_in_btn and 0x505050FF or 0x353535FF
   reaper.ImGui_DrawList_AddRectFilled(draw_list, btn_x, btn_y, btn_x + btn_w, btn_y + btn_h, btn_bg, 2)
-  reaper.ImGui_DrawList_AddText(draw_list, btn_x + 4, btn_y + 1, 0xCCCCCCFF, label)
+  local _, label_text_h = reaper.ImGui_CalcTextSize(ctx, label)
+  reaper.ImGui_DrawList_AddText(draw_list, btn_x + 4, btn_y + math.floor((btn_h - label_text_h) / 2), 0xCCCCCCFF, label)
 
   -- Triangle arrow pointing UP (menu opens upward)
   local arrow_color = 0xAAAAAAFF
@@ -3476,7 +3480,8 @@ function drawing.draw_envelope_dropdown(draw_list, ctx, x, y, height,
     else
       text_color = (item_name == state.envelope_type and state.envelopes_visible) and 0x4A90D9FF or 0xCCCCCCFF
     end
-    reaper.ImGui_DrawList_AddText(draw_list, menu_x + 4, item_y + 2, text_color, item_name)
+    local _, item_text_h = reaper.ImGui_CalcTextSize(ctx, item_name)
+    reaper.ImGui_DrawList_AddText(draw_list, menu_x + 4, item_y + math.floor((menu_item_height - item_text_h) / 2), text_color, item_name)
 
     if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_item then
       if item_name == "Hide" then

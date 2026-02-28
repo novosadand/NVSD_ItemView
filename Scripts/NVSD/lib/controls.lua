@@ -396,7 +396,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   local btn_margin = 10
   local btn_padding = 8
   local row_y = left_col_y + 10
-  local text_height = 13
+  local _, text_height = reaper.ImGui_CalcTextSize(ctx, "W")
 
   local COLOR_BTN_ON = config.COLOR_BTN_ON
   local COLOR_BTN_OFF = config.COLOR_BTN_OFF
@@ -1908,7 +1908,7 @@ function controls.draw_quantize_panel(ctx, draw_list, mouse_x, mouse_y,
   local amt_label = "Amount"
   local amt_lw = reaper.ImGui_CalcTextSize(ctx, amt_label)
   reaper.ImGui_DrawList_AddText(draw_list, px + (pw - amt_lw) / 2, cy, amt_tc, amt_label)
-  cy = cy + 16
+  cy = cy + 20
 
   -- Amount knob (same angle mapping as pan knob: 0%=full left, 100%=full right)
   local knob_r = config.QUANTIZE_KNOB_RADIUS
@@ -2536,7 +2536,7 @@ function controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
   local gap = 4
   local right_btn_width = toolbar_width - left_btn_width - gap
   local rounding = 3
-  local text_height = 13
+  local _, text_height = reaper.ImGui_CalcTextSize(ctx, "W")
 
   local COLOR_BTN_ON = config.COLOR_BTN_ON
   local COLOR_BTN_OFF = config.COLOR_BTN_OFF
