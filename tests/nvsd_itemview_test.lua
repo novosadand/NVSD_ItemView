@@ -1283,42 +1283,80 @@ end
 
 function TestNVSDItemView:test_find_next_region_from_sound()
   local peaks = make_sausage_peaks()
-  lu.assertEquals(utils.find_next_region(peaks, 2), 7)
+  lu.assertEquals(utils.find_next_region(peaks, 2, 1), 7)
 end
 
 function TestNVSDItemView:test_find_next_region_from_silence()
   local peaks = make_sausage_peaks()
-  lu.assertEquals(utils.find_next_region(peaks, 5), 7)
+  lu.assertEquals(utils.find_next_region(peaks, 5, 1), 7)
 end
 
 function TestNVSDItemView:test_find_next_region_at_end()
   local peaks = make_sausage_peaks()
-  lu.assertNil(utils.find_next_region(peaks, 8))
+  lu.assertNil(utils.find_next_region(peaks, 8, 1))
 end
 
 function TestNVSDItemView:test_find_next_region_from_last_silence()
   local peaks = make_sausage_peaks()
-  lu.assertNil(utils.find_next_region(peaks, 10))
+  lu.assertNil(utils.find_next_region(peaks, 10, 1))
 end
 
 function TestNVSDItemView:test_find_prev_region_from_sound_middle()
   local peaks = make_sausage_peaks()
-  lu.assertEquals(utils.find_prev_region(peaks, 8), 7)
+  lu.assertEquals(utils.find_prev_region(peaks, 8, 1), 7)
 end
 
 function TestNVSDItemView:test_find_prev_region_from_silence()
   local peaks = make_sausage_peaks()
-  lu.assertEquals(utils.find_prev_region(peaks, 5), 1)
+  lu.assertEquals(utils.find_prev_region(peaks, 5, 1), 1)
 end
 
 function TestNVSDItemView:test_find_prev_region_from_first_region()
   local peaks = make_sausage_peaks()
-  lu.assertNil(utils.find_prev_region(peaks, 1))
+  lu.assertNil(utils.find_prev_region(peaks, 1, 1))
 end
 
 function TestNVSDItemView:test_find_prev_region_from_region_start()
   local peaks = make_sausage_peaks()
-  lu.assertEquals(utils.find_prev_region(peaks, 7), 1)
+  lu.assertEquals(utils.find_prev_region(peaks, 7, 1), 1)
+end
+
+-- Test min_width filtering skips narrow noise blips
+-- Fixture: sound(1-10), silence(11-15), blip(16-17), silence(18-22), sound(23-32)
+local function make_blip_peaks()
+  local mins, maxs = {}, {}
+  for i = 1, 32 do
+    if (i >= 1 and i <= 10) or (i >= 16 and i <= 17) or (i >= 23 and i <= 32) then
+      mins[i] = -0.5; maxs[i] = 0.5
+    else
+      mins[i] = 0; maxs[i] = 0
+    end
+  end
+  return {mins = mins, maxs = maxs, count = 32, channels = 1}
+end
+
+function TestNVSDItemView:test_find_next_region_skips_blip()
+  local peaks = make_blip_peaks()
+  -- From region 1 (col 5), next should skip the 2-col blip at 16-17 and land on col 23
+  lu.assertEquals(utils.find_next_region(peaks, 5, 5), 23)
+end
+
+function TestNVSDItemView:test_find_next_region_from_silence_skips_blip()
+  local peaks = make_blip_peaks()
+  -- From silence (col 12), should skip blip at 16-17 and land on col 23
+  lu.assertEquals(utils.find_next_region(peaks, 12, 5), 23)
+end
+
+function TestNVSDItemView:test_find_prev_region_skips_blip()
+  local peaks = make_blip_peaks()
+  -- From region 2 start (col 23), prev should skip blip at 16-17 and land on col 1
+  lu.assertEquals(utils.find_prev_region(peaks, 23, 5), 1)
+end
+
+function TestNVSDItemView:test_find_prev_region_from_silence_skips_blip()
+  local peaks = make_blip_peaks()
+  -- From silence after blip (col 20), should skip blip at 16-17 and land on col 1
+  lu.assertEquals(utils.find_prev_region(peaks, 20, 5), 1)
 end
 
 function TestNVSDItemView:test_find_nearest_sound_in_sound()

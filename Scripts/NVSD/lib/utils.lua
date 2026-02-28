@@ -1317,52 +1317,103 @@ function utils.is_column_silent(peaks, col)
   return true
 end
 
+--- Measure width of the sound region starting at col (how many non-silent columns).
+local function region_width(peaks, col)
+  local n = peaks.count
+  local w = 0
+  local i = col
+  while i <= n and not utils.is_column_silent(peaks, i) do
+    w = w + 1
+    i = i + 1
+  end
+  return w
+end
+
 --- Find the start column of the next sound region after a silence gap.
-function utils.find_next_region(peaks, col)
+--- min_width: skip regions narrower than this (filters peak noise blips).
+function utils.find_next_region(peaks, col, min_width)
+  min_width = min_width or 5
   local n = peaks.count
   if col >= n then return nil end
 
   local i = col
+  -- If in silence, scan forward to first non-silent
   if utils.is_column_silent(peaks, i) then
-    -- Already in silence — find end of this gap
     while i <= n and utils.is_column_silent(peaks, i) do i = i + 1 end
-    return i <= n and i or nil
+    if i > n then return nil end
+    -- Check width — if too narrow, skip and keep searching
+    if region_width(peaks, i) >= min_width then return i end
+    -- Fall through: treat narrow blip as part of silence, skip past it
+  else
+    -- In sound — skip past current sound region
+    while i <= n and not utils.is_column_silent(peaks, i) do i = i + 1 end
   end
 
-  -- In sound — skip past current sound, then past silence gap
-  while i <= n and not utils.is_column_silent(peaks, i) do i = i + 1 end
-  while i <= n and utils.is_column_silent(peaks, i) do i = i + 1 end
-  return i <= n and i or nil
+  -- Now scan forward: skip silence, check region width, repeat
+  while i <= n do
+    -- Skip silence
+    while i <= n and utils.is_column_silent(peaks, i) do i = i + 1 end
+    if i > n then return nil end
+    -- Skip narrow blips
+    local w = region_width(peaks, i)
+    if w >= min_width then return i end
+    i = i + w  -- jump past this narrow blip
+  end
+  return nil
 end
 
 --- Find the start column of the current or previous sound region.
-function utils.find_prev_region(peaks, col)
+--- min_width: skip regions narrower than this (filters peak noise blips).
+function utils.find_prev_region(peaks, col, min_width)
+  min_width = min_width or 5
   if col <= 1 then return nil end
 
   local i = col
-  -- If in silence, walk backward into previous sound region
+  -- If in silence or narrow blip, walk backward into a real sound region
   if utils.is_column_silent(peaks, i) then
     while i > 1 and utils.is_column_silent(peaks, i - 1) do i = i - 1 end
     if i <= 1 then return nil end
     i = i - 1  -- step into previous sound region
   end
 
-  -- Now in sound. Walk backward to find start of this sound region.
+  -- Now in sound. Walk backward to find start of this region.
   while i > 1 and not utils.is_column_silent(peaks, i - 1) do i = i - 1 end
+  local start = i
 
-  -- If this is the same position we started from (we're at start of our region), go to previous
-  if i == col then
-    -- We're at the start of our region. Go backward past the silence to previous region.
-    local j = i - 1
-    if j < 1 then return nil end
-    while j > 0 and utils.is_column_silent(peaks, j) do j = j - 1 end
-    if j < 1 then return nil end
-    -- j is now in previous sound region. Find its start.
-    while j > 1 and not utils.is_column_silent(peaks, j - 1) do j = j - 1 end
-    return j
+  -- Check if this region (or the one we started in) is wide enough
+  if region_width(peaks, start) >= min_width then
+    -- If start == col, we're at the start of our own region — go to previous
+    if start == col then
+      -- Walk backward past silence to find previous region
+      local j = start - 1
+      while j >= 1 do
+        -- Skip silence
+        while j >= 1 and utils.is_column_silent(peaks, j) do j = j - 1 end
+        if j < 1 then return nil end
+        -- Find start of this sound region
+        while j > 1 and not utils.is_column_silent(peaks, j - 1) do j = j - 1 end
+        if region_width(peaks, j) >= min_width then return j end
+        -- Too narrow, keep going backward
+        j = j - 1
+      end
+      return nil
+    end
+    return start
   end
 
-  return i
+  -- Region was too narrow — keep scanning backward for a real region
+  local j = start - 1
+  while j >= 1 do
+    -- Skip silence
+    while j >= 1 and utils.is_column_silent(peaks, j) do j = j - 1 end
+    if j < 1 then return nil end
+    -- Find start of this sound region
+    while j > 1 and not utils.is_column_silent(peaks, j - 1) do j = j - 1 end
+    if region_width(peaks, j) >= min_width then return j end
+    -- Too narrow, keep going backward
+    j = j - 1
+  end
+  return nil
 end
 
 --- Find nearest non-silent column, biased forward (toward next onset).
