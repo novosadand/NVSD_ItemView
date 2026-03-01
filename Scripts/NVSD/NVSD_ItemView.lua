@@ -968,6 +968,9 @@ local function loop()
         -- Get the root source and calculate total offset through section sources
         local source = take_source
         local section_offset = 0
+        state.loop_bar_has_section = false
+        state.loop_bar_section_start = 0
+        state.loop_bar_section_length = 0
 
         if source then
           local parent = reaper.GetMediaSourceParent(source)
@@ -975,6 +978,12 @@ local function loop()
             local retval, sect_offs, sect_len, is_reversed = reaper.PCM_Source_GetSectionInfo(source)
             if retval then
               section_offset = section_offset + (sect_offs or 0)
+              -- Capture innermost section info for loop bar
+              if not state.loop_bar_has_section then
+                state.loop_bar_has_section = true
+                state.loop_bar_section_start = sect_offs or 0
+                state.loop_bar_section_length = sect_len or 0
+              end
             end
             source = parent
             parent = reaper.GetMediaSourceParent(source)
@@ -988,6 +997,11 @@ local function loop()
           local source_length = reaper.GetMediaSourceLength(source)
 
           local start_offset = section_offset + take_offset
+          state.section_offset = section_offset
+          -- When loop is ON: decouple section_offset from view (prevents drift on bracket edits)
+          -- When loop is OFF: use absolute offset (section_offset + take_offset) so non-looped
+          -- branches position the waveform correctly even if a section chunk persists
+          state.view_start_offset = state.is_loop_src and take_offset or start_offset
 
           -- During warp marker drag: freeze item properties to prevent REAPER's
           -- internal recalculations from shifting the view frame-to-frame
@@ -996,6 +1010,7 @@ local function loop()
             item_position = state.warp_drag_start_item_position
             item_length = state.warp_drag_start_item_length
             start_offset = state.warp_drag_start_start_offset
+            state.view_start_offset = state.warp_drag_start_view_start_offset or (start_offset - section_offset)
           end
 
           if source_length <= 0 then
@@ -1276,6 +1291,8 @@ local function loop()
           local envelope_bar_height = config.ENVELOPE_BAR_HEIGHT
           local warp_bar_height = (state.warp_mode and layout.show_warp) and config.WARP_BAR_HEIGHT or 0
           state.is_loop_src = item and reaper.GetMediaItemInfo_Value(item, "B_LOOPSRC") == 1
+          state.loop_bar_source_length = source_length
+          state.loop_bar_height = state.is_loop_src and config.LOOP_BAR_HEIGHT or 0
           state.toolbar_buttons = settings.current.toolbar_buttons or {}
           state.info_bar_height = #state.toolbar_buttons > 0
               and config.INFO_BAR_HEIGHT_TOOLBAR
@@ -1294,8 +1311,8 @@ local function loop()
           end
 
           state.scrollbar_h = layout.show_scrollbar and config.SCROLLBAR_HEIGHT or 0
-          local waveform_height = math.max(50, avail_h - config.WAVEFORM_MARGIN_V - state.info_bar_height - config.RULER_HEIGHT - warp_bar_height - config.TIME_RULER_HEIGHT - envelope_bar_height - state.scrollbar_h - state.strip_h)
-          local panel_height = state.strip_h + state.info_bar_height + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height + state.scrollbar_h
+          local waveform_height = math.max(50, avail_h - config.WAVEFORM_MARGIN_V - state.info_bar_height - config.RULER_HEIGHT - state.loop_bar_height - warp_bar_height - config.TIME_RULER_HEIGHT - envelope_bar_height - state.scrollbar_h - state.strip_h)
+          local panel_height = state.strip_h + state.info_bar_height + config.RULER_HEIGHT + state.loop_bar_height + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height + state.scrollbar_h
 
           local two_col_panel = panel_height < 270
           local effective_panel_width = two_col_panel
@@ -1326,14 +1343,15 @@ local function loop()
           local wave_x = cursor_x + total_left_width + config.WAVEFORM_MARGIN_LEFT + pitch_gutter
           local info_bar_y = cursor_y + state.strip_h + config.WAVEFORM_MARGIN_V
           local ruler_y = info_bar_y + state.info_bar_height
-          local warp_bar_y = ruler_y + config.RULER_HEIGHT
+          state.loop_bar_y = ruler_y + config.RULER_HEIGHT
+          local warp_bar_y = state.loop_bar_y + state.loop_bar_height
           local wave_y = warp_bar_y + warp_bar_height
           local time_ruler_y = wave_y + waveform_height
           local envelope_bar_y = time_ruler_y + config.TIME_RULER_HEIGHT
           state.scrollbar_y = envelope_bar_y + envelope_bar_height
 
           -- Reserve the full area
-          local total_height = state.strip_h + config.WAVEFORM_MARGIN_V + state.info_bar_height + config.RULER_HEIGHT + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height + state.scrollbar_h
+          local total_height = state.strip_h + config.WAVEFORM_MARGIN_V + state.info_bar_height + config.RULER_HEIGHT + state.loop_bar_height + warp_bar_height + waveform_height + config.TIME_RULER_HEIGHT + envelope_bar_height + state.scrollbar_h
           reaper.ImGui_InvisibleButton(ctx, "waveform_area", avail_w, math.max(avail_h, total_height))
 
           local mouse_x, mouse_y = reaper.ImGui_GetMousePos(ctx)
@@ -1348,9 +1366,11 @@ local function loop()
 
           -- Detect looped item: requires loop ON.  Non-looped items extended
           -- past source boundary just show silence, not wrapped audio.
+          -- When section exists, the item loops the section portion, not the full source.
+          state._lb_effective_len = state.loop_bar_has_section and state.loop_bar_section_length or source_length
           local is_looped_item = source_length > 0 and state.is_loop_src and (
-              source_item_length > source_length
-              or start_offset + source_item_length > source_length + 0.01
+              source_item_length > state._lb_effective_len
+              or state.view_start_offset + source_item_length > state._lb_effective_len + 0.01
           )
 
           -- Warped view: only switch to pos-space when there are 2+ stretch markers
@@ -1418,7 +1438,7 @@ local function loop()
             -- During active drag: drag state is the authority for unwrapped offset
             -- (warp mode drag_current is in pos-time, not source-time)
             state.unwrapped_start_offset = state.drag_current_start
-            state.prev_raw_start_offset = start_offset
+            state.prev_raw_start_offset = state.view_start_offset
           elseif is_looped_item then
             -- Initialize or re-validate wrap tracking
             local needs_init = state.unwrapped_start_offset == nil
@@ -1434,18 +1454,18 @@ local function loop()
               -- unwrap it so the view range [unwrapped, unwrapped + item_length] includes
               -- the full original source [0, source_length]. Normalize to (-source_length, 0]
               -- so the original source is always visible in the view.
-              local initial = start_offset
+              local initial = state.view_start_offset
               if source_length > 0 then
-                initial = start_offset % source_length
+                initial = state.view_start_offset % source_length
                 if initial > 1e-9 then initial = initial - source_length end
               end
               state.unwrapped_start_offset = initial
-              state.prev_raw_start_offset = start_offset
+              state.prev_raw_start_offset = state.view_start_offset
             end
 
-            -- Detect wraps: if start_offset jumped by ~source_length, it wrapped
+            -- Detect wraps: if view_start_offset jumped by ~source_length, it wrapped
             if state.prev_raw_start_offset ~= nil then
-              local delta = start_offset - state.prev_raw_start_offset
+              local delta = state.view_start_offset - state.prev_raw_start_offset
               if delta > source_length * 0.5 then
                 -- Wrapped upward (extending left past 0): actual change was negative
                 delta = delta - source_length
@@ -1459,7 +1479,7 @@ local function loop()
                 state.post_drag_ext_end = state.post_drag_ext_end + delta
               end
             end
-            state.prev_raw_start_offset = start_offset
+            state.prev_raw_start_offset = state.view_start_offset
           else
             -- Not looped: reset tracking (but preserve if post-drag ext is set,
             -- since snapping to source boundary can make source_item_length == source_length
@@ -1531,7 +1551,7 @@ local function loop()
             -- Also check start_offset for alt-drag/slide undo detection (slide doesn't change length)
             local expected_length = pde - pds
             local offset_changed = state.post_drag_start_offset ~= nil
-                and math.abs(start_offset - state.post_drag_start_offset) > 0.001
+                and math.abs(state.view_start_offset - state.post_drag_start_offset) > 0.001
             if not offset_changed and math.abs(source_item_length - expected_length) < 0.001 then
               if pds < 0 or pde > source_length then
                 ext_start = math.min(pds, 0)
@@ -1546,12 +1566,13 @@ local function loop()
               state.post_drag_ext_end = nil
               state.post_drag_start_offset = nil
               if is_looped_item then
-                ext_start = state.unwrapped_start_offset
-                ext_end = state.unwrapped_start_offset + source_item_length
+                local uw = (state.unwrapped_start_offset or state.view_start_offset) + state.section_offset
+                ext_start = uw
+                ext_end = uw + source_item_length
                 ext_length = source_item_length
               else
                 -- Wrap accumulated D_STARTOFFS for non-looped display
-                local so = start_offset
+                local so = state.view_start_offset
                 if source_length > 0 and state.is_loop_src and so >= source_length then so = so % source_length end
                 ext_start = math.min(so, 0)
                 ext_end = math.max(so + source_item_length, source_length)
@@ -1559,12 +1580,13 @@ local function loop()
               end
             end
           elseif is_looped_item then
-            ext_start = state.unwrapped_start_offset
-            ext_end = state.unwrapped_start_offset + source_item_length
+            local uw = (state.unwrapped_start_offset or state.view_start_offset) + state.section_offset
+            ext_start = uw
+            ext_end = uw + source_item_length
             ext_length = source_item_length
           else
             -- Wrap accumulated D_STARTOFFS for non-looped display
-            local so = start_offset
+            local so = state.view_start_offset
             if source_length > 0 and state.is_loop_src and so >= source_length then so = so % source_length end
             ext_start = math.min(so, 0)
             ext_end = math.max(so + source_item_length, source_length)
@@ -1679,9 +1701,9 @@ local function loop()
               if state.post_drag_ext_start ~= nil then
                 target_start = state.post_drag_ext_start
                 target_end = state.post_drag_ext_end
-              elseif state.unwrapped_start_offset ~= nil then
-                target_start = state.unwrapped_start_offset
-                target_end = state.unwrapped_start_offset + source_item_length
+              elseif is_looped_item then
+                target_start = view_offset
+                target_end = view_offset + source_item_length
               else
                 local so = start_offset
                 if source_length > 0 and state.is_loop_src and so >= source_length then so = so % source_length end
@@ -2054,8 +2076,8 @@ local function loop()
               -- Safety net: when Loop is OFF and item extends past source, always use
               -- clipped peaks even if ext bounds haven't caught up yet (race with REAPER)
               or (not state.is_loop_src and source_length > 0 and (
-                  start_offset < -0.0001
-                  or start_offset + source_item_length > source_length + 0.0001
+                  state.view_start_offset < -0.0001
+                  or state.view_start_offset + source_item_length > source_length + 0.0001
                   or view_start + view_length > source_length + 0.0001)))
 
           -- Retry incomplete peaks (e.g. peak file still building for new files).
@@ -2137,10 +2159,10 @@ local function loop()
             view_offset = state.post_drag_ext_start
             view_item_length = state.post_drag_ext_end - state.post_drag_ext_start
           elseif is_looped_item then
-            view_offset = state.unwrapped_start_offset or start_offset
+            view_offset = (state.unwrapped_start_offset or state.view_start_offset) + state.section_offset
             view_item_length = source_item_length
           else
-            local so = start_offset
+            local so = state.view_start_offset
             if source_length > 0 and state.is_loop_src and so >= source_length then so = so % source_length end
             view_offset = so
             view_item_length = source_item_length
@@ -2281,12 +2303,11 @@ local function loop()
             render_start = state.post_drag_ext_start
             render_end = state.post_drag_ext_end
           elseif is_looped_item then
-            -- Markers at item boundaries in virtual time
             render_start = ext_start
             render_end = ext_end
           else
             -- Wrap accumulated D_STARTOFFS for non-looped display
-            local so = start_offset
+            local so = state.view_start_offset
             if source_length > 0 and state.is_loop_src and so >= source_length then so = so % source_length end
             render_start = so
             render_end = so + source_item_length
@@ -2296,15 +2317,146 @@ local function loop()
           start_px = actual_start_px
           end_px = actual_end_px
 
-          -- Draw loop boundary lines on waveform (before ruler so lines are under)
-          if state.is_loop_src then
-            drawing.draw_loop_boundaries(draw_list, wave_x, wave_y, waveform_width, waveform_height,
-              source_length, view_start, view_length, time_to_px, config)
+          -- Draw vertical guide lines from loop bar brackets down through waveform
+          if state.is_loop_src and state._lb_start ~= nil and state._lb_end ~= nil then
+            local lb_left_px = time_to_px(state._lb_start)
+            local lb_right_px = time_to_px(state._lb_end)
+            if lb_left_px >= wave_x and lb_left_px <= wave_x + waveform_width then
+              reaper.ImGui_DrawList_AddLine(draw_list, lb_left_px, wave_y, lb_left_px, wave_y + waveform_height, config.COLOR_LOOP_REGION, 1)
+            end
+            if lb_right_px >= wave_x and lb_right_px <= wave_x + waveform_width then
+              reaper.ImGui_DrawList_AddLine(draw_list, lb_right_px, wave_y, lb_right_px, wave_y + waveform_height, config.COLOR_LOOP_REGION, 1)
+            end
           end
 
           -- Draw ruler (ticks and labels, on top of waveform)
           drawing.draw_ruler_and_grid(draw_list, wave_x, ruler_y, wave_y, waveform_width, config.RULER_HEIGHT, waveform_height,
             grid_view_start, view_length, item_position, grid_offset, grid_playrate, config, utils)
+
+          -- Draw loop bar (only when loop source is enabled)
+          if state.is_loop_src and state.loop_bar_height > 0 then
+            state._lb_start = state.loop_bar_has_section and state.loop_bar_section_start or 0
+            state._lb_end = state.loop_bar_has_section and (state.loop_bar_section_start + state.loop_bar_section_length) or source_length
+            -- During drag, override the dragged marker position
+            if state.loop_bar_dragging_marker == 1 and state.loop_bar_drag_activated then
+              state._lb_start = state.loop_bar_drag_current
+            elseif state.loop_bar_dragging_marker == 2 and state.loop_bar_drag_activated then
+              state._lb_end = state.loop_bar_drag_current
+            end
+            drawing.draw_loop_bar(draw_list, wave_x, state.loop_bar_y, waveform_width, state.loop_bar_height,
+              state._lb_start, state._lb_end, view_start, view_length,
+              state.loop_bar_hovered_marker, state.loop_bar_dragging_marker, config)
+
+            -- Loop bar hit-test and drag logic
+            state._lb_mouse_in_bar = reaper_is_active
+                and mouse_x >= wave_x and mouse_x <= wave_x + waveform_width
+                and mouse_y >= state.loop_bar_y and mouse_y <= state.loop_bar_y + state.loop_bar_height
+
+            -- Hover detection (only when not dragging something else)
+            if state._lb_mouse_in_bar and not state.any_drag_active() then
+              state._lb_left_px = wave_x + ((state._lb_start - view_start) / view_length) * waveform_width
+              state._lb_right_px = wave_x + ((state._lb_end - view_start) / view_length) * waveform_width
+              state._lb_dist_left = math.abs(mouse_x - state._lb_left_px)
+              state._lb_dist_right = math.abs(mouse_x - state._lb_right_px)
+              if state._lb_dist_left <= config.LOOP_BAR_MARKER_HIT_RADIUS and state._lb_dist_left <= state._lb_dist_right then
+                state.loop_bar_hovered_marker = 1
+              elseif state._lb_dist_right <= config.LOOP_BAR_MARKER_HIT_RADIUS then
+                state.loop_bar_hovered_marker = 2
+              else
+                state.loop_bar_hovered_marker = 0
+              end
+            elseif state.loop_bar_dragging_marker == 0 then
+              state.loop_bar_hovered_marker = 0
+            end
+
+            -- Tooltips
+            if state.loop_bar_hovered_marker == 1 and state.loop_bar_dragging_marker == 0 then
+              drawing.tooltip(ctx, "loop_bar_left", string.format("Loop start: %.3fs", state._lb_start))
+            elseif state.loop_bar_hovered_marker == 2 and state.loop_bar_dragging_marker == 0 then
+              drawing.tooltip(ctx, "loop_bar_right", string.format("Loop end: %.3fs", state._lb_end))
+            end
+
+            -- Drag start
+            if state.loop_bar_hovered_marker ~= 0 and reaper.ImGui_IsMouseClicked(ctx, 0) then
+              state.loop_bar_dragging_marker = state.loop_bar_hovered_marker
+              state.loop_bar_drag_start_mouse_x = mouse_x
+              state.loop_bar_drag_activated = false
+              state.loop_bar_drag_start_value = (state.loop_bar_dragging_marker == 1) and state._lb_start or state._lb_end
+              state.loop_bar_drag_current = state.loop_bar_drag_start_value
+            end
+
+            -- Drag move
+            if state.loop_bar_dragging_marker ~= 0 and reaper.ImGui_IsMouseDown(ctx, 0) then
+              if not state.loop_bar_drag_activated then
+                if math.abs(mouse_x - state.loop_bar_drag_start_mouse_x) > 4 then
+                  state.loop_bar_drag_activated = true
+                  if not state.undo_block_open then
+                    reaper.Undo_BeginBlock()
+                    state.undo_block_open = "loop_bar"
+                  end
+                end
+              end
+              if state.loop_bar_drag_activated then
+                -- Convert mouse position to source time
+                state._lb_drag_t = view_start + ((mouse_x - wave_x) / waveform_width) * view_length
+                -- Clamp to valid range
+                if state.loop_bar_dragging_marker == 1 then
+                  -- Left marker: clamp to [0, right_end - 0.01]
+                  state._lb_drag_t = math.max(0, math.min(state._lb_drag_t, state._lb_end - 0.01))
+                  state.loop_bar_drag_current = state._lb_drag_t
+                else
+                  -- Right marker: clamp to [left_start + 0.01, source_length]
+                  state._lb_drag_t = math.max(state._lb_start + 0.01, math.min(state._lb_drag_t, source_length))
+                  state.loop_bar_drag_current = state._lb_drag_t
+                end
+              end
+            end
+
+            -- Drag end
+            if state.loop_bar_dragging_marker ~= 0 and not reaper.ImGui_IsMouseDown(ctx, 0) then
+              if state.loop_bar_drag_activated then
+                -- Compute final section start and length
+                state._lb_final_start = state._lb_start
+                state._lb_final_end = state._lb_end
+                if state.loop_bar_dragging_marker == 1 then
+                  state._lb_final_start = state.loop_bar_drag_current
+                else
+                  state._lb_final_end = state.loop_bar_drag_current
+                end
+                state._lb_final_length = state._lb_final_end - state._lb_final_start
+
+                -- If markers span the full source, remove section instead
+                if state._lb_final_start < 0.001 and math.abs(state._lb_final_end - source_length) < 0.001 then
+                  if state.loop_bar_has_section then
+                    utils.remove_item_section(item)
+                    reaper.UpdateItemInProject(item)
+                    reaper.UpdateArrange()
+                    state.invalidate_view_peaks()
+                    state.unwrapped_start_offset = nil
+                    state.prev_raw_start_offset = nil
+                    state.post_drag_ext_start = nil
+                    state.post_drag_ext_end = nil
+                  end
+                elseif state._lb_final_length > 0.001 then
+                  utils.set_item_section(item, state._lb_final_start, state._lb_final_length)
+                  reaper.UpdateItemInProject(item)
+                  reaper.UpdateArrange()
+                  state.invalidate_view_peaks()
+                  state.unwrapped_start_offset = nil
+                  state.prev_raw_start_offset = nil
+                  state.post_drag_ext_start = nil
+                  state.post_drag_ext_end = nil
+                end
+
+                if state.undo_block_open == "loop_bar" then
+                  reaper.Undo_EndBlock("NVSD_ItemView: Set loop region", -1)
+                  state.undo_block_open = nil
+                end
+              end
+              state.loop_bar_dragging_marker = 0
+              state.loop_bar_drag_activated = false
+            end
+          end
 
           -- Draw warp bar (only when WARP mode is active and warp section visible)
           state.warp_marker_hovered_idx = -1
@@ -2689,8 +2841,6 @@ local function loop()
                 end
               elseif state.dragging_start or state.dragging_end then
                 env_time_offset = state.drag_current_start or start_offset
-              elseif state.unwrapped_start_offset ~= nil then
-                env_time_offset = state.unwrapped_start_offset
               else
                 env_time_offset = view_offset
               end
@@ -3789,6 +3939,7 @@ local function loop()
               state.warp_drag_start_item_position = item_position
               state.warp_drag_start_item_length = item_length
               state.warp_drag_start_start_offset = start_offset
+              state.warp_drag_start_view_start_offset = state.view_start_offset
               -- Multi-select: Ctrl+click toggle, Shift+click range, plain click replace
               if ctrl_held then
                 if state.warp_marker_selected[sm.idx] then
@@ -3864,6 +4015,7 @@ local function loop()
                     state.warp_drag_start_item_position = item_position
                     state.warp_drag_start_item_length = item_length
                     state.warp_drag_start_start_offset = start_offset
+                    state.warp_drag_start_view_start_offset = state.view_start_offset
                     state.warp_marker_selected = {[sm.idx] = true}
                     break
                   end
@@ -4219,14 +4371,9 @@ local function loop()
               and not state.is_ruler_dragging and not state.is_panning
               and not (ctrl_held and state.envelopes_visible) then
             if near_start then
-              -- Compute drag_offset from post_drag_ext BEFORE clearing it (handles the case
-              -- where snap_to_source_boundary made source_item_length == source_length exactly,
-              -- causing is_looped_item to be false even though the item was just extended)
               local drag_offset
               if state.post_drag_ext_start ~= nil then
                 drag_offset = state.post_drag_ext_start
-              elseif is_looped_item then
-                drag_offset = state.unwrapped_start_offset or start_offset
               else
                 drag_offset = view_offset
               end
@@ -4279,8 +4426,6 @@ local function loop()
               local drag_offset
               if state.post_drag_ext_start ~= nil then
                 drag_offset = state.post_drag_ext_start
-              elseif is_looped_item then
-                drag_offset = state.unwrapped_start_offset or start_offset
               else
                 drag_offset = view_offset
               end
@@ -4630,8 +4775,6 @@ local function loop()
             local env_offset
             if state.dragging_start or state.dragging_end then
               env_offset = state.drag_current_start or start_offset
-            elseif state.unwrapped_start_offset ~= nil then
-              env_offset = state.unwrapped_start_offset
             else
               env_offset = view_offset
             end
@@ -5835,7 +5978,7 @@ local function loop()
                 end
                 state.drag_start_stretch_markers = nil
               end
-              state.post_drag_start_offset = start_offset  -- for undo detection
+              state.post_drag_start_offset = state.view_start_offset  -- for undo detection
 
               -- Envelope points are now shifted in realtime during drag, no batch shift needed
               local old_item_length = state.drag_start_length * state.drag_start_playrate
@@ -6039,7 +6182,7 @@ local function loop()
               else
                 -- Non-warp mode (original logic)
                 -- Use unwrapped offset when available (px_to_time returns unwrapped/extended coords)
-                local effective_start = state.unwrapped_start_offset ~= nil and state.unwrapped_start_offset or view_offset
+                local effective_start = view_offset
                 local current_end = effective_start + source_item_length
 
                 if set_start then

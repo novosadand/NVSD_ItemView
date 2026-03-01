@@ -132,6 +132,18 @@ state._stab_prev_warped = nil      -- Previous frame's is_warped_view (for coord
 state._view_src_start = nil        -- View start in source-space (invariant across coordinate systems)
 state._view_src_end = nil          -- View end in source-space (invariant across coordinate systems)
 
+-- Loop bar (Section-backed loop brace)
+state.loop_bar_has_section = false     -- whether take source has a section wrapper
+state.loop_bar_section_start = 0       -- section STARTPOS in root source time (seconds)
+state.loop_bar_section_length = 0      -- section LENGTH in root source time (seconds)
+state.loop_bar_source_length = 0       -- root source file length (seconds)
+state.loop_bar_hovered_marker = 0      -- 0=none, 1=left, 2=right
+state.loop_bar_dragging_marker = 0     -- 0=none, 1=left, 2=right
+state.loop_bar_drag_start_mouse_x = 0  -- mouse X at drag start
+state.loop_bar_drag_start_value = 0    -- marker source-time at drag start
+state.loop_bar_drag_activated = false  -- true once mouse moves past threshold
+state.loop_bar_drag_current = 0        -- current marker position during drag (source time)
+
 -- Mouse tracking
 state.was_mouse_down = false
 
@@ -554,6 +566,8 @@ function state.reset_all_drags()
   state.wf_zoom_dragging = false
   state.sb_thumb_dragging = false
   state.sb_zoom_handle_dragging = false
+  state.loop_bar_dragging_marker = 0
+  state.loop_bar_drag_activated = false
 end
 
 -- Stop any active audio preview (CF_Preview)
@@ -585,6 +599,7 @@ function state.any_drag_active()
       or state.slope_dragging
       or state.wf_zoom_dragging
       or state.sb_thumb_dragging or state.sb_zoom_handle_dragging
+      or state.loop_bar_dragging_marker ~= 0
       or state.is_any_control_dragging()
 end
 

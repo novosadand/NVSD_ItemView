@@ -47,6 +47,17 @@ config.COLOR_WARP_BAR_BORDER = 0x333333FF
 -- Loop boundary marker color (vertical line at source_length intervals)
 config.COLOR_LOOP_REGION = 0xFFAA3360
 
+-- Loop bar (Ableton-style loop brace below ruler)
+config.LOOP_BAR_HEIGHT = 14
+config.COLOR_LOOP_BAR_BG = 0x1A1A1AFF          -- dark background (matches waveform bg)
+config.COLOR_LOOP_BAR_REGION = 0xDD6633CC       -- orange-pink loop region fill
+config.COLOR_LOOP_BAR_REGION_HOVER = 0xEE7744DD -- brighter on marker hover
+config.COLOR_LOOP_BAR_MARKER = 0xFFAA33FF       -- triangle marker color (warm orange)
+config.COLOR_LOOP_BAR_MARKER_HOVER = 0xFFCC66FF -- marker hover color
+config.COLOR_LOOP_BAR_MARKER_DRAG = 0xFFDD88FF  -- marker during drag
+config.COLOR_LOOP_BAR_DIM = 0x00000088          -- dim overlay outside loop region
+config.LOOP_BAR_MARKER_HIT_RADIUS = 8          -- px hit detection for markers
+
 -- Horizontal scrollbar
 config.SCROLLBAR_HEIGHT = 16
 config.SCROLLBAR_ARROW_WIDTH = 16

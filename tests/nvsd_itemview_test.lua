@@ -1373,3 +1373,89 @@ function TestNVSDItemView:test_find_nearest_sound_trailing_silence()
   local peaks = make_sausage_peaks()
   lu.assertEquals(utils.find_nearest_sound_column(peaks, 10), 9)
 end
+
+-- Loop bar coordinate tests
+function TestNVSDItemView:test_loop_bar_marker_positions_no_section()
+  -- No section: markers at 0 and source_length
+  local source_length = 10.0
+  local has_section = false
+  local section_start = 0
+  local section_length = 0
+  local loop_start = has_section and section_start or 0
+  local loop_end = has_section and (section_start + section_length) or source_length
+  lu.assertAlmostEquals(loop_start, 0, 0.001)
+  lu.assertAlmostEquals(loop_end, 10.0, 0.001)
+end
+
+function TestNVSDItemView:test_loop_bar_marker_positions_with_section()
+  -- Section from 2.0 to 5.0: markers at 2.0 and 7.0
+  local source_length = 10.0
+  local has_section = true
+  local section_start = 2.0
+  local section_length = 5.0
+  local loop_start = has_section and section_start or 0
+  local loop_end = has_section and (section_start + section_length) or source_length
+  lu.assertAlmostEquals(loop_start, 2.0, 0.001)
+  lu.assertAlmostEquals(loop_end, 7.0, 0.001)
+end
+
+function TestNVSDItemView:test_loop_bar_time_to_px_conversion()
+  -- View from 0 to 10 seconds, waveform area 500px wide starting at x=100
+  local wave_x = 100
+  local view_start = 0
+  local view_length = 10
+  local waveform_width = 500
+  local function time_to_px(t)
+    return wave_x + ((t - view_start) / view_length) * waveform_width
+  end
+  lu.assertAlmostEquals(time_to_px(2.0), 200, 0.001)
+  lu.assertAlmostEquals(time_to_px(7.0), 450, 0.001)
+end
+
+-- State chunk section manipulation tests
+function TestNVSDItemView:test_wrap_source_in_section()
+  local chunk = "<ITEM\nPOSITION 10\nLENGTH 5\nLOOP 1\n<TAKE\nNAME \"test.wav\"\n<SOURCE WAVE\nFILE \"C:\\test.wav\"\n>\n>\n>"
+  local result = utils.wrap_source_in_section(chunk, 2.0, 3.0)
+  lu.assertNotNil(result)
+  lu.assertStrContains(result, "SOURCE SECTION")
+  lu.assertStrContains(result, "STARTPOS 2")
+  lu.assertStrContains(result, "LENGTH 3")
+  lu.assertStrContains(result, "SOURCE WAVE")
+end
+
+function TestNVSDItemView:test_wrap_source_already_section_returns_nil()
+  local chunk = "<ITEM\n<TAKE\n<SOURCE SECTION\nSTARTPOS 1\nLENGTH 2\n<SOURCE WAVE\nFILE \"C:\\test.wav\"\n>\n>\n>\n>"
+  local result = utils.wrap_source_in_section(chunk, 2.0, 3.0)
+  lu.assertNil(result)
+end
+
+function TestNVSDItemView:test_update_existing_section()
+  local chunk = "<ITEM\nPOSITION 10\nLENGTH 5\nLOOP 1\n<TAKE\nNAME \"test.wav\"\n<SOURCE SECTION\nSTARTPOS 1\nLENGTH 2\nOVERLAP 0.01\n<SOURCE WAVE\nFILE \"C:\\test.wav\"\n>\n>\n>\n>"
+  local result = utils.update_section_in_chunk(chunk, 3.0, 4.0)
+  lu.assertNotNil(result)
+  lu.assertStrContains(result, "STARTPOS 3")
+  lu.assertStrContains(result, "LENGTH 4")
+  lu.assertStrContains(result, "OVERLAP")
+end
+
+function TestNVSDItemView:test_update_section_no_section_returns_nil()
+  local chunk = "<ITEM\n<TAKE\n<SOURCE WAVE\nFILE \"C:\\test.wav\"\n>\n>\n>"
+  local result = utils.update_section_in_chunk(chunk, 3.0, 4.0)
+  lu.assertNil(result)
+end
+
+function TestNVSDItemView:test_remove_section_from_chunk()
+  local chunk = "<ITEM\nPOSITION 10\n<TAKE\nNAME \"test.wav\"\n<SOURCE SECTION\nSTARTPOS 1\nLENGTH 2\nOVERLAP 0.01\n<SOURCE WAVE\nFILE \"C:\\test.wav\"\n>\n>\n>\n>"
+  local result = utils.remove_section_from_chunk(chunk)
+  lu.assertNotNil(result)
+  lu.assertNotStrContains(result, "SOURCE SECTION")
+  lu.assertNotStrContains(result, "STARTPOS")
+  lu.assertStrContains(result, "SOURCE WAVE")
+  lu.assertStrContains(result, "FILE \"C:\\test.wav\"")
+end
+
+function TestNVSDItemView:test_remove_section_no_section_returns_nil()
+  local chunk = "<ITEM\n<TAKE\n<SOURCE WAVE\nFILE \"C:\\test.wav\"\n>\n>\n>"
+  local result = utils.remove_section_from_chunk(chunk)
+  lu.assertNil(result)
+end

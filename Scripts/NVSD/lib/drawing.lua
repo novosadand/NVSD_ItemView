@@ -4169,6 +4169,81 @@ function drawing.draw_warp_bar(draw_list, x, y, width, height, config)
   reaper.ImGui_DrawList_AddLine(draw_list, x, y + height, x + width, y + height, config.COLOR_WARP_BAR_BORDER, 1)
 end
 
+-- Draw loop bar with triangle markers and colored region (Ableton-style loop brace)
+-- Parameters:
+--   draw_list: ImGui draw list
+--   x, y, width, height: bar geometry
+--   loop_start, loop_end: loop region boundaries in source time (seconds)
+--   view_start, view_length: current view range in source time
+--   hovered_marker: 0=none, 1=left, 2=right
+--   dragging_marker: 0=none, 1=left, 2=right
+--   config: config table
+function drawing.draw_loop_bar(draw_list, x, y, width, height, loop_start, loop_end,
+                                view_start, view_length, hovered_marker, dragging_marker, config)
+  -- Background
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, x + width, y + height, config.COLOR_LOOP_BAR_BG)
+
+  -- Convert source time to pixel positions
+  local function t_to_px(t)
+    return x + ((t - view_start) / view_length) * width
+  end
+
+  local left_px = math.max(x, t_to_px(loop_start))
+  local right_px = math.min(x + width, t_to_px(loop_end))
+
+  -- Dim regions outside the loop
+  if left_px > x then
+    reaper.ImGui_DrawList_AddRectFilled(draw_list, x, y, left_px, y + height, config.COLOR_LOOP_BAR_DIM)
+  end
+  if right_px < x + width then
+    reaper.ImGui_DrawList_AddRectFilled(draw_list, right_px, y, x + width, y + height, config.COLOR_LOOP_BAR_DIM)
+  end
+
+  -- Loop region fill (between markers)
+  if right_px > left_px then
+    local region_color = (hovered_marker ~= 0 or dragging_marker ~= 0)
+        and config.COLOR_LOOP_BAR_REGION_HOVER
+        or config.COLOR_LOOP_BAR_REGION
+    reaper.ImGui_DrawList_AddRectFilled(draw_list, left_px, y, right_px, y + height, region_color)
+  end
+
+  -- Triangle markers
+  local tri_h = math.min(8, height - 2)
+  local tri_w = 6
+  local tri_cy = y + height / 2
+
+  -- Left marker (right-pointing triangle)
+  if left_px >= x and left_px <= x + width then
+    local lcolor = (dragging_marker == 1) and config.COLOR_LOOP_BAR_MARKER_DRAG
+        or (hovered_marker == 1) and config.COLOR_LOOP_BAR_MARKER_HOVER
+        or config.COLOR_LOOP_BAR_MARKER
+    reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
+      left_px, tri_cy - tri_h / 2,
+      left_px, tri_cy + tri_h / 2,
+      left_px + tri_w, tri_cy,
+      lcolor)
+    -- Vertical line
+    reaper.ImGui_DrawList_AddLine(draw_list, left_px, y, left_px, y + height, lcolor, 1)
+  end
+
+  -- Right marker (left-pointing triangle)
+  if right_px >= x and right_px <= x + width then
+    local rcolor = (dragging_marker == 2) and config.COLOR_LOOP_BAR_MARKER_DRAG
+        or (hovered_marker == 2) and config.COLOR_LOOP_BAR_MARKER_HOVER
+        or config.COLOR_LOOP_BAR_MARKER
+    reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
+      right_px, tri_cy - tri_h / 2,
+      right_px, tri_cy + tri_h / 2,
+      right_px - tri_w, tri_cy,
+      rcolor)
+    -- Vertical line
+    reaper.ImGui_DrawList_AddLine(draw_list, right_px, y, right_px, y + height, rcolor, 1)
+  end
+
+  -- Bottom border
+  reaper.ImGui_DrawList_AddLine(draw_list, x, y + height, x + width, y + height, config.COLOR_WARP_BAR_BORDER, 1)
+end
+
 -- Draw vertical loop boundary lines on the waveform
 function drawing.draw_loop_boundaries(draw_list, wave_x, wave_y, waveform_width, waveform_height,
                                        source_length, view_start, view_length, time_to_px, config)
@@ -4177,6 +4252,23 @@ function drawing.draw_loop_boundaries(draw_list, wave_x, wave_y, waveform_width,
   local first_boundary = math.ceil(view_start / source_length) * source_length
 
   for boundary = first_boundary, view_end, source_length do
+    if boundary > view_start and boundary < view_end then
+      local px = time_to_px(boundary)
+      if px >= wave_x and px <= wave_x + waveform_width then
+        reaper.ImGui_DrawList_AddLine(draw_list, px, wave_y, px, wave_y + waveform_height, config.COLOR_LOOP_REGION, 1)
+      end
+    end
+  end
+end
+
+-- Draw loop boundary lines for section mode (boundaries at section repeat points)
+function drawing.draw_loop_boundaries_section(draw_list, wave_x, wave_y, waveform_width, waveform_height,
+                                               section_start, section_length, view_start, view_length, time_to_px, config)
+  if section_length <= 0 then return end
+  local view_end = view_start + view_length
+  local first_k = math.ceil((view_start - section_start) / section_length)
+  for k = first_k, first_k + math.ceil(view_length / section_length) + 1 do
+    local boundary = section_start + k * section_length
     if boundary > view_start and boundary < view_end then
       local px = time_to_px(boundary)
       if px >= wave_x and px <= wave_x + waveform_width then

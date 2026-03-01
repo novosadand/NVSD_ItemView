@@ -1762,7 +1762,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     or mouse_in_loop and COLOR_BTN_HOVER
     or COLOR_BTN_OFF
   reaper.ImGui_DrawList_AddRectFilled(draw_list, loop_btn_x, row3_y, loop_btn_x + loop_btn_width, row3_y + btn_height, loop_bg_color, 3)
-  local loop_label = is_looped and "Loop ON" or "Loop"
+  local loop_label = is_looped and (state.loop_bar_has_section and "Loop §" or "Loop ON") or "Loop"
   local loop_text_w = reaper.ImGui_CalcTextSize(ctx, loop_label)
   local loop_text_x = loop_btn_x + (loop_btn_width - loop_text_w) / 2
   local loop_text_y = row3_y + (btn_height - text_height) / 2
@@ -1770,17 +1770,29 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
   reaper.ImGui_DrawList_AddText(draw_list, loop_text_x, loop_text_y, loop_text_color, loop_label)
 
   if mouse_in_loop and not any_dropdown_menu_open then
-    drawing.tooltip(ctx, "loop_btn", "Toggle loop source")
+    drawing.tooltip(ctx, "loop_btn", is_looped and state.loop_bar_has_section
+        and "Toggle loop source (Alt: remove section)"
+        or "Toggle loop source")
   end
 
   if not state.midi_item_mode and reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_loop and not any_dropdown_menu_open then
     if item then
+      local alt_held = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt())
       reaper.Undo_BeginBlock()
-      local new_val = is_looped and 0 or 1
-      reaper.SetMediaItemInfo_Value(item, "B_LOOPSRC", new_val)
-      reaper.UpdateItemInProject(item)
-      reaper.UpdateArrange()
-      reaper.Undo_EndBlock("NVSD_ItemView: Toggle loop source", -1)
+      if alt_held and is_looped and state.loop_bar_has_section then
+        -- Alt+click: remove section (keep loop on)
+        utils.remove_item_section(item)
+        reaper.UpdateItemInProject(item)
+        reaper.UpdateArrange()
+        state.invalidate_view_peaks()
+        reaper.Undo_EndBlock("NVSD_ItemView: Remove loop section", -1)
+      else
+        local new_val = is_looped and 0 or 1
+        reaper.SetMediaItemInfo_Value(item, "B_LOOPSRC", new_val)
+        reaper.UpdateItemInProject(item)
+        reaper.UpdateArrange()
+        reaper.Undo_EndBlock("NVSD_ItemView: Toggle loop source", -1)
+      end
     end
   end
 

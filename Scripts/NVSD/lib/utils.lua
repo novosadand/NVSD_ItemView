@@ -1430,4 +1430,137 @@ function utils.find_nearest_sound_column(peaks, col)
   return col  -- all silent, return original
 end
 
+-- ========================================================================
+-- State chunk section manipulation (SOURCE SECTION wrap/update/remove)
+-- ========================================================================
+
+-- Wrap the first <SOURCE ...> block in a chunk inside a <SOURCE SECTION> wrapper.
+-- Returns the modified chunk string, or nil if no source block found or already a section.
+function utils.wrap_source_in_section(chunk, start_pos, length)
+  -- Find the first <SOURCE that is NOT already a SECTION
+  local src_start = chunk:find("<SOURCE ")
+  if not src_start then return nil end
+  -- Check if it's already a section
+  local line_end = chunk:find("\n", src_start) or #chunk
+  local src_line = chunk:sub(src_start, line_end)
+  if src_line:find("SECTION") then return nil end
+
+  -- Find the matching closing > for this source block
+  local depth = 0
+  local src_close = nil
+  for i = src_start, #chunk do
+    local c = chunk:sub(i, i)
+    if c == "<" then depth = depth + 1
+    elseif c == ">" then
+      depth = depth - 1
+      if depth == 0 then src_close = i; break end
+    end
+  end
+  if not src_close then return nil end
+
+  -- Extract the original source block
+  local original_source = chunk:sub(src_start, src_close)
+
+  -- Build section wrapper
+  local section_block = "<SOURCE SECTION\nSTARTPOS " .. string.format("%.14g", start_pos)
+      .. "\nLENGTH " .. string.format("%.14g", length)
+      .. "\nOVERLAP 0.01\n" .. original_source .. "\n>"
+
+  -- Replace in chunk
+  return chunk:sub(1, src_start - 1) .. section_block .. chunk:sub(src_close + 1)
+end
+
+-- Update STARTPOS and LENGTH in an existing <SOURCE SECTION> block.
+-- Returns the modified chunk string, or nil if no section found.
+function utils.update_section_in_chunk(chunk, start_pos, length)
+  if not chunk:find("SOURCE SECTION") then return nil end
+
+  -- Replace STARTPOS value
+  local result = chunk:gsub("(STARTPOS%s+)[%d%.%-eE%+]+", "%1" .. string.format("%.14g", start_pos), 1)
+  -- Replace LENGTH value (only the one inside SOURCE SECTION, not the item LENGTH)
+  -- Find SOURCE SECTION position, then replace LENGTH after it
+  local section_pos = result:find("SOURCE SECTION")
+  if not section_pos then return nil end
+  local before = result:sub(1, section_pos - 1)
+  local after = result:sub(section_pos)
+  after = after:gsub("(LENGTH%s+)[%d%.%-eE%+]+", "%1" .. string.format("%.14g", length), 1)
+  return before .. after
+end
+
+-- Remove the <SOURCE SECTION> wrapper, leaving the inner source block.
+-- Returns the modified chunk string, or nil if no section found.
+function utils.remove_section_from_chunk(chunk)
+  -- Find <SOURCE SECTION
+  local section_start = chunk:find("<SOURCE SECTION")
+  if not section_start then return nil end
+
+  -- Find the inner <SOURCE block (first one after SECTION header)
+  local inner_start = chunk:find("<SOURCE ", section_start + 15)
+  if not inner_start then return nil end
+
+  -- Find the inner source's closing >
+  local depth = 0
+  local inner_close = nil
+  for i = inner_start, #chunk do
+    local c = chunk:sub(i, i)
+    if c == "<" then depth = depth + 1
+    elseif c == ">" then
+      depth = depth - 1
+      if depth == 0 then inner_close = i; break end
+    end
+  end
+  if not inner_close then return nil end
+
+  -- Find the section's closing > (one level up from inner)
+  local section_close = nil
+  for i = inner_close + 1, #chunk do
+    local c = chunk:sub(i, i)
+    if c == "<" then depth = depth + 1
+    elseif c == ">" then
+      if depth > 0 then depth = depth - 1
+      else section_close = i; break end
+    end
+  end
+  if not section_close then return nil end
+
+  -- Extract inner source and replace the whole section block
+  local inner_source = chunk:sub(inner_start, inner_close)
+  return chunk:sub(1, section_start - 1) .. inner_source .. chunk:sub(section_close + 1)
+end
+
+-- High-level: set or update section on an item. Creates section if needed.
+-- Requires reaper API (GetItemStateChunk, SetItemStateChunk) -- only works inside REAPER.
+function utils.set_item_section(item, start_pos, length)
+  local retval, chunk = reaper.GetItemStateChunk(item, "", false)
+  if not retval then return false end
+
+  local has_section = chunk:find("SOURCE SECTION") ~= nil
+  local result
+  if has_section then
+    result = utils.update_section_in_chunk(chunk, start_pos, length)
+  else
+    result = utils.wrap_source_in_section(chunk, start_pos, length)
+  end
+
+  if result then
+    reaper.SetItemStateChunk(item, result, false)
+    return true
+  end
+  return false
+end
+
+-- High-level: remove section from an item (restore full source).
+-- Requires reaper API -- only works inside REAPER.
+function utils.remove_item_section(item)
+  local retval, chunk = reaper.GetItemStateChunk(item, "", false)
+  if not retval then return false end
+
+  local result = utils.remove_section_from_chunk(chunk)
+  if result then
+    reaper.SetItemStateChunk(item, result, false)
+    return true
+  end
+  return false
+end
+
 return utils
