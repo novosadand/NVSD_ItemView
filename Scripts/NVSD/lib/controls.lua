@@ -1971,7 +1971,7 @@ function controls.draw_quantize_panel(ctx, draw_list, mouse_x, mouse_y,
   local in_knob = warp_on and knob_dist <= knob_r + 8
 
   drawing.draw_knob(draw_list, knob_cx, knob_cy, knob_r, amt_angle,
-      in_knob, state.is_dragging("quantize_amount"), nil, nil, config)
+      in_knob, state.is_dragging("quantize_amount"), nil, nil, config, true)
 
   -- Amount percentage text below knob
   local pct_text = tostring(amount) .. " %"

@@ -2213,6 +2213,7 @@ local DEFAULTS_ITEMS = {
   {key = "auto_show_envelopes", label = "Auto-show envelopes",   tip = "Show envelope overlay when an item has volume, pitch, or pan envelopes"},
   {key = "show_tooltips",       label = "Show tooltips",         tip = "Show hover tooltips on controls and UI elements"},
   {key = "snap_click_to_sound", label = "Snap click to sound", tip = "When clicking in a silent gap, snap cursor to nearest sound onset"},
+  {key = "clip_view", label = "Clip view (loop)", tip = "When loop is on, clamp waveform view to original source length (Ableton-style)"},
 }
 
 -- Layout items: which UI panels can be hidden

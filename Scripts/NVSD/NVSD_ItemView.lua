@@ -990,6 +990,20 @@ local function loop()
           end
         end
 
+        -- If markers were replicated, check if we need to restore originals:
+        -- (a) take changed (different item selected) — discard stale state
+        -- (b) section removed externally (undo, Alt+click) — restore originals
+        if state._lb_saved_markers then
+          if take ~= state._lb_saved_markers_take then
+            state._lb_saved_markers = nil
+            state._lb_saved_markers_take = nil
+          elseif not state.loop_bar_has_section then
+            utils.restore_section_markers(take, state._lb_saved_markers)
+            state._lb_saved_markers = nil
+            state._lb_saved_markers_take = nil
+          end
+        end
+
         if source and reaper.ValidatePtr(source, "PCM_source*") then
           local item_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
           local item_position = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
@@ -997,6 +1011,16 @@ local function loop()
           local source_length = reaper.GetMediaSourceLength(source)
 
           local start_offset = section_offset + take_offset
+          -- Auto-compensate unwrapped_start_offset when section_offset changes
+          -- (bracket drag, undo, or any external edit). Preserves uw = unwrapped + section_offset.
+          if state._prev_section_offset ~= nil and state.unwrapped_start_offset ~= nil then
+            state._lb_sec_delta = section_offset - state._prev_section_offset
+            if math.abs(state._lb_sec_delta) > 0.001 then
+              state.unwrapped_start_offset = state.unwrapped_start_offset - state._lb_sec_delta
+              state.prev_raw_start_offset = nil  -- force delta tracking re-sync
+            end
+          end
+          state._prev_section_offset = section_offset
           state.section_offset = section_offset
           -- When loop is ON: decouple section_offset from view (prevents drift on bracket edits)
           -- When loop is OFF: use absolute offset (section_offset + take_offset) so non-looped
@@ -1373,6 +1397,9 @@ local function loop()
               or state.view_start_offset + source_item_length > state._lb_effective_len + 0.01
           )
 
+          -- Clip view: clamp to source length when loop is on (Ableton-style)
+          state.clip_view_active = settings.current.defaults.clip_view and state.is_loop_src
+
           -- Warped view: only switch to pos-space when there are 2+ stretch markers
           -- (actual non-linear warping). With 0-1 markers the mapping is linear,
           -- so source-space coordinates work identically and avoid a visual jump.
@@ -1440,38 +1467,40 @@ local function loop()
             state.unwrapped_start_offset = state.drag_current_start
             state.prev_raw_start_offset = state.view_start_offset
           elseif is_looped_item then
-            -- Initialize or re-validate wrap tracking
+            -- Initialize or re-validate wrap tracking.
+            -- D_STARTOFFS wraps at section_length when a section exists, not source_length.
+            local wrap_len = state._lb_effective_len
             local needs_init = state.unwrapped_start_offset == nil
-            -- Sanity check: if existing unwrapped range doesn't include [0, source_length], re-init
-            if not needs_init and source_length > 0 then
+            -- Sanity check: if existing unwrapped range doesn't include midpoint of wrap range, re-init
+            if not needs_init and wrap_len > 0 then
               local uw_end = state.unwrapped_start_offset + source_item_length
-              if state.unwrapped_start_offset > source_length * 0.5 or uw_end < source_length * 0.5 then
+              if state.unwrapped_start_offset > wrap_len * 0.5 or uw_end < wrap_len * 0.5 then
                 needs_init = true
               end
             end
             if needs_init then
-              -- REAPER stores D_STARTOFFS wrapped to [0, source_length). We need to
+              -- REAPER stores D_STARTOFFS wrapped to [0, wrap_len). We need to
               -- unwrap it so the view range [unwrapped, unwrapped + item_length] includes
-              -- the full original source [0, source_length]. Normalize to (-source_length, 0]
+              -- the wrap boundary. Normalize to (-wrap_len, 0]
               -- so the original source is always visible in the view.
               local initial = state.view_start_offset
-              if source_length > 0 then
-                initial = state.view_start_offset % source_length
-                if initial > 1e-9 then initial = initial - source_length end
+              if wrap_len > 0 then
+                initial = state.view_start_offset % wrap_len
+                if initial > 1e-9 then initial = initial - wrap_len end
               end
               state.unwrapped_start_offset = initial
               state.prev_raw_start_offset = state.view_start_offset
             end
 
-            -- Detect wraps: if view_start_offset jumped by ~source_length, it wrapped
+            -- Detect wraps: if view_start_offset jumped by ~wrap_len, it wrapped.
             if state.prev_raw_start_offset ~= nil then
               local delta = state.view_start_offset - state.prev_raw_start_offset
-              if delta > source_length * 0.5 then
+              if delta > wrap_len * 0.5 then
                 -- Wrapped upward (extending left past 0): actual change was negative
-                delta = delta - source_length
-              elseif delta < -source_length * 0.5 then
+                delta = delta - wrap_len
+              elseif delta < -wrap_len * 0.5 then
                 -- Wrapped downward: actual change was positive
-                delta = delta + source_length
+                delta = delta + wrap_len
               end
               state.unwrapped_start_offset = state.unwrapped_start_offset + delta
               if state.post_drag_ext_start ~= nil then
@@ -1529,6 +1558,8 @@ local function loop()
               ext_end = math.max(src_end_pos, item_length)
             end
             ext_length = ext_end - ext_start
+          elseif state.clip_view_active then
+            ext_start = 0; ext_end = source_length; ext_length = source_length
           elseif (state.dragging_start or state.dragging_end) then
             -- During drag (including pre-activation): compute ext from drag state
             -- Always include [0, source_length] so dragging a marker inward doesn't shrink the view
@@ -1698,7 +1729,10 @@ local function loop()
             end
             if not target_start and source_item_length > 0 then
               -- Use unwrapped coordinates to match ext_start/ext_end coordinate space
-              if state.post_drag_ext_start ~= nil then
+              if state.clip_view_active then
+                target_start = 0
+                target_end = source_length
+              elseif state.post_drag_ext_start ~= nil then
                 target_start = state.post_drag_ext_start
                 target_end = state.post_drag_ext_end
               elseif is_looped_item then
@@ -1856,14 +1890,44 @@ local function loop()
               sel_start = utils.warp_pos_to_src(state.warp_map, sel_start, playrate)
               sel_end = utils.warp_pos_to_src(state.warp_map, sel_end, playrate)
             end
+            -- Restore original markers before quantize (undo replication)
+            if state._lb_saved_markers and take then
+              utils.restore_section_markers(take, state._lb_saved_markers)
+              state._lb_saved_markers = nil
+              state._lb_saved_markers_take = nil
+            end
             reaper.Undo_BeginBlock()
+            -- Save loop bracket pos-time positions before quantize so we can
+            -- restore them after the warp map changes (quantize moves markers).
+            local saved_lb_start, saved_lb_end
+            if state.loop_bar_has_section and is_warped_view and state.warp_map then
+              saved_lb_start = utils.warp_src_to_pos(state.warp_map, state.loop_bar_section_start, playrate)
+              saved_lb_end = utils.warp_src_to_pos(state.warp_map, state.loop_bar_section_start + state.loop_bar_section_length, playrate)
+            end
+            -- Step 1: Add immovable boundary anchors at source start/end (Ableton-style).
+            -- These pin the audio edges so quantized transients can't shift them.
+            if not has_sel then
+              local sm_before = reaper.GetTakeNumStretchMarkers(take)
+              local has_start_anchor, has_end_anchor = false, false
+              for i = 0, sm_before - 1 do
+                local _, _, sp = reaper.GetTakeStretchMarker(take, i)
+                if sp < 0.005 then has_start_anchor = true end
+                if sp > source_length - 0.005 then has_end_anchor = true end
+              end
+              if not has_start_anchor then
+                reaper.SetTakeStretchMarker(take, -1, 0, 0)
+              end
+              if not has_end_anchor then
+                reaper.SetTakeStretchMarker(take, -1, source_length / playrate, source_length)
+              end
+            end
+            -- Step 2: Add markers at detected transients
             local n = 0
             if not has_sel and state.transients and #state.transients > 0 then
               n = utils.add_markers_at_transients(take, state.transients, sel_start, sel_end,
                   is_warped_view and state.warp_map or nil, playrate)
             end
-            -- Build snap function from current grid + quantize settings
-            -- Approximate view length from ext_length/zoom (view_start/view_length locals not yet computed)
+            -- Step 3: Quantize (boundary anchors are skipped, pos clamped to >= 0)
             local approx_vlen = ext_length / math.max(1, state.zoom_level)
             local vl_qn_start = reaper.TimeMap2_timeToQN(0, item_position)
             local vl_qn_end = reaper.TimeMap2_timeToQN(0, item_position + approx_vlen)
@@ -1871,14 +1935,33 @@ local function loop()
               settings.current.quantize, settings.current.grid, config,
               vl_qn_end - vl_qn_start, waveform_width)
             local q = utils.quantize_warp_markers_ex(take, snap_fn, settings.current.quantize.amount, sel_start, sel_end,
-                has_sel and state.warp_marker_selected or nil)
+                has_sel and state.warp_marker_selected or nil, source_length)
+            -- Step 4: Restore loop bracket positions under the new warp map.
+            -- Quantize moved stretch markers, so the same source-time section now
+            -- maps to different pos-time. Re-set the section start so brackets
+            -- stay on the same grid lines.
+            state.warp_markers = utils.get_stretch_markers(take)
+            if saved_lb_start then
+              local new_map = utils.build_warp_map(state.warp_markers)
+              if new_map and #new_map >= 2 then
+                local new_src_s = utils.warp_pos_to_src(new_map, saved_lb_start, playrate)
+                local new_src_e = utils.warp_pos_to_src(new_map, saved_lb_end, playrate)
+                local new_src_len = new_src_e - new_src_s
+                utils.set_item_section(item, new_src_s, new_src_len)
+                -- Replicate markers for the restored section
+                state._lb_saved_markers = utils.replicate_markers_for_section(
+                    take, new_map, new_src_s, new_src_len, playrate, item_length)
+                if state._lb_saved_markers then
+                  state._lb_saved_markers_take = take
+                end
+              end
+            end
             reaper.UpdateItemInProject(item)
             reaper.UpdateArrange()
             local undo_text = has_sel
                 and ("NVSD_ItemView: Quantize selected warp markers (" .. q .. " snapped)")
                 or ("NVSD_ItemView: Quantize warp markers (+" .. n .. " new, " .. q .. " snapped)")
             reaper.Undo_EndBlock(undo_text, -1)
-            state.warp_markers = utils.get_stretch_markers(take)
             -- Defer selection remap to next frame (current frame still uses old warp map)
             if sel_start then
               state._pending_sel_src_start = sel_start
@@ -2014,6 +2097,11 @@ local function loop()
               and state.slope_drag_start_view_length then
             view_length = state.slope_drag_start_view_length
             view_start = state.slope_drag_start_view_start
+            view_end = view_start + view_length
+          elseif state.loop_bar_dragging_marker ~= 0 and state.loop_bar_drag_activated
+              and state._lb_drag_view_length then
+            view_length = state._lb_drag_view_length
+            view_start = state._lb_drag_view_start
             view_end = view_start + view_length
           else
             view_length = ext_length / state.zoom_level
@@ -2152,6 +2240,9 @@ local function loop()
             -- In warped view, the item fills [0, item_length] in pos-space
             view_offset = 0
             view_item_length = item_length
+          elseif state.clip_view_active then
+            view_offset = 0
+            view_item_length = source_length
           elseif (state.dragging_start or state.dragging_end) and state.drag_current_start ~= nil then
             view_offset = state.drag_current_start
             view_item_length = state.drag_current_end - state.drag_current_start
@@ -2295,6 +2386,10 @@ local function loop()
             -- In warped view, item fills [0, item_length] in pos-space
             render_start = 0
             render_end = item_length
+          elseif state.clip_view_active then
+            -- Clip view: markers hidden, show full source range
+            render_start = 0
+            render_end = source_length
           elseif state.dragging_start or state.dragging_end then
             render_start = state.drag_current_start
             render_end = state.drag_current_end
@@ -2333,15 +2428,85 @@ local function loop()
           drawing.draw_ruler_and_grid(draw_list, wave_x, ruler_y, wave_y, waveform_width, config.RULER_HEIGHT, waveform_height,
             grid_view_start, view_length, item_position, grid_offset, grid_playrate, config, utils)
 
+          -- Helper: find nearest source boundary if within threshold
+          -- Always active: full threshold when snap on, weaker (40%) when snap off
+          local function snap_to_source_boundary(t, src_len, threshold_time)
+            local effective_threshold = state.env_snap_enabled and threshold_time or (threshold_time * 0.4)
+            local nearest_boundary = math.floor(t / src_len + 0.5) * src_len
+            if math.abs(t - nearest_boundary) <= effective_threshold then
+              return nearest_boundary
+            end
+            return t
+          end
+
+          -- Helper: snap source time to finest visible grid subdivision
+          -- snap_offset: override start_offset for snapping (use drag_start_offset during marker drags)
+          local function snap_to_grid_if_enabled(source_t, snap_offset, item_pos_override, pos_time_mode)
+            if not state.env_snap_enabled then return source_t end
+
+            local offset = snap_offset or start_offset
+            local pos = item_pos_override or item_position
+            local project_t
+            if pos_time_mode then
+              project_t = pos + source_t  -- pos-time: already in arrange seconds
+            else
+              project_t = utils.source_to_project_time(source_t, pos, offset, playrate)
+            end
+
+            -- Compute effective grid division in QN (same as grid drawing)
+            local grid = settings.current.grid
+            local p_start = utils.source_to_project_time(view_start, item_position, start_offset, playrate)
+            local p_end = utils.source_to_project_time(view_start + view_length, item_position, start_offset, playrate)
+            local vlqn = reaper.TimeMap2_timeToQN(0, p_end) - reaper.TimeMap2_timeToQN(0, p_start)
+            local division_qn = utils.get_effective_grid_qn(grid, config, vlqn, waveform_width)
+
+            -- Snap in QN space with triplet support (matches grid display exactly)
+            local snapped_project_t = utils.snap_to_division(project_t, division_qn, grid.triplet)
+            if pos_time_mode then
+              return snapped_project_t - pos
+            else
+              return utils.project_to_source_time(snapped_project_t, pos, offset, playrate)
+            end
+          end
+
+          -- Helper: snap with both grid and source boundary, pick closest to raw position
+          local function snap_best(raw_t, src_len, threshold_time, snap_offset, item_pos_override, pos_time_mode)
+            local grid_t = snap_to_grid_if_enabled(raw_t, snap_offset, item_pos_override, pos_time_mode)
+            local boundary_t = snap_to_source_boundary(raw_t, src_len, threshold_time)
+            -- If both snapped to different targets, pick the one closer to raw
+            if grid_t ~= raw_t and boundary_t ~= raw_t then
+              if math.abs(raw_t - grid_t) <= math.abs(raw_t - boundary_t) then
+                return grid_t
+              else
+                return boundary_t
+              end
+            end
+            -- Only one snapped, or neither
+            if boundary_t ~= raw_t then return boundary_t end
+            return grid_t
+          end
+
           -- Draw loop bar (only when loop source is enabled)
           if state.is_loop_src and state.loop_bar_height > 0 then
-            state._lb_start = state.loop_bar_has_section and state.loop_bar_section_start or 0
-            state._lb_end = state.loop_bar_has_section and (state.loop_bar_section_start + state.loop_bar_section_length) or source_length
+            -- In warp mode, bracket positions are in pos-time; otherwise source-time
+            state._lb_warp = is_warped_view and state.warp_map ~= nil
+            state._lb_max = state._lb_warp and item_length or source_length
+            if state._lb_warp and state.loop_bar_has_section then
+              state._lb_start = utils.warp_src_to_pos(state.warp_map, state.loop_bar_section_start, playrate)
+              state._lb_end = utils.warp_src_to_pos(state.warp_map, state.loop_bar_section_start + state.loop_bar_section_length, playrate)
+            else
+              state._lb_start = state.loop_bar_has_section and state.loop_bar_section_start or 0
+              state._lb_end = state.loop_bar_has_section and (state.loop_bar_section_start + state.loop_bar_section_length) or state._lb_max
+            end
             -- During drag, override the dragged marker position
             if state.loop_bar_dragging_marker == 1 and state.loop_bar_drag_activated then
               state._lb_start = state.loop_bar_drag_current
             elseif state.loop_bar_dragging_marker == 2 and state.loop_bar_drag_activated then
               state._lb_end = state.loop_bar_drag_current
+            elseif state.loop_bar_dragging_marker == 3 and state.loop_bar_drag_activated then
+              state._lb_body_delta = state.loop_bar_drag_current - state.loop_bar_drag_start_value
+              state._lb_start = state._lb_body_drag_start + state._lb_body_delta
+              state._lb_end = state._lb_body_drag_end + state._lb_body_delta
             end
             drawing.draw_loop_bar(draw_list, wave_x, state.loop_bar_y, waveform_width, state.loop_bar_height,
               state._lb_start, state._lb_end, view_start, view_length,
@@ -2362,6 +2527,8 @@ local function loop()
                 state.loop_bar_hovered_marker = 1
               elseif state._lb_dist_right <= config.LOOP_BAR_MARKER_HIT_RADIUS then
                 state.loop_bar_hovered_marker = 2
+              elseif mouse_x > state._lb_left_px and mouse_x < state._lb_right_px then
+                state.loop_bar_hovered_marker = 3  -- body (between brackets)
               else
                 state.loop_bar_hovered_marker = 0
               end
@@ -2378,10 +2545,25 @@ local function loop()
 
             -- Drag start
             if state.loop_bar_hovered_marker ~= 0 and reaper.ImGui_IsMouseClicked(ctx, 0) then
+              -- Restore original markers before drag so warp map is correct
+              if state._lb_saved_markers and state._lb_warp and take then
+                utils.restore_section_markers(take, state._lb_saved_markers)
+                state._lb_saved_markers = nil
+                state._lb_saved_markers_take = nil
+                state.warp_markers = utils.get_stretch_markers(take)
+                state.warp_map = utils.build_warp_map(state.warp_markers)
+              end
               state.loop_bar_dragging_marker = state.loop_bar_hovered_marker
               state.loop_bar_drag_start_mouse_x = mouse_x
               state.loop_bar_drag_activated = false
-              state.loop_bar_drag_start_value = (state.loop_bar_dragging_marker == 1) and state._lb_start or state._lb_end
+              if state.loop_bar_dragging_marker == 3 then
+                -- Body drag: track mouse position in source time, save both bracket positions
+                state.loop_bar_drag_start_value = view_start + ((mouse_x - wave_x) / waveform_width) * view_length
+                state._lb_body_drag_start = state._lb_start
+                state._lb_body_drag_end = state._lb_end
+              else
+                state.loop_bar_drag_start_value = (state.loop_bar_dragging_marker == 1) and state._lb_start or state._lb_end
+              end
               state.loop_bar_drag_current = state.loop_bar_drag_start_value
             end
 
@@ -2390,6 +2572,11 @@ local function loop()
               if not state.loop_bar_drag_activated then
                 if math.abs(mouse_x - state.loop_bar_drag_start_mouse_x) > 4 then
                   state.loop_bar_drag_activated = true
+                  -- Freeze view coordinates and grid offset to prevent shifts
+                  -- from section_offset changes during real-time updates
+                  state._lb_drag_view_start = view_start
+                  state._lb_drag_view_length = view_length
+                  state._lb_drag_grid_offset = view_offset
                   if not state.undo_block_open then
                     reaper.Undo_BeginBlock()
                     state.undo_block_open = "loop_bar"
@@ -2399,15 +2586,67 @@ local function loop()
               if state.loop_bar_drag_activated then
                 -- Convert mouse position to source time
                 state._lb_drag_t = view_start + ((mouse_x - wave_x) / waveform_width) * view_length
-                -- Clamp to valid range
+                state._lb_snap_thresh = (config.SNAP_THRESHOLD_PX / waveform_width) * view_length
+                -- Snap to grid + source edges, then clamp
+                -- In warp mode: use pos_time_mode for grid snap, item_length for boundaries
+                state._lb_ptm = state._lb_warp or nil
+                state._lb_snap_pos = state._lb_warp and item_position or nil
                 if state.loop_bar_dragging_marker == 1 then
-                  -- Left marker: clamp to [0, right_end - 0.01]
+                  state._lb_drag_t = snap_best(state._lb_drag_t, state._lb_max, state._lb_snap_thresh, state._lb_warp and 0 or state._lb_drag_grid_offset, state._lb_snap_pos, state._lb_ptm)
                   state._lb_drag_t = math.max(0, math.min(state._lb_drag_t, state._lb_end - 0.01))
                   state.loop_bar_drag_current = state._lb_drag_t
-                else
-                  -- Right marker: clamp to [left_start + 0.01, source_length]
-                  state._lb_drag_t = math.max(state._lb_start + 0.01, math.min(state._lb_drag_t, source_length))
+                elseif state.loop_bar_dragging_marker == 2 then
+                  state._lb_drag_t = snap_best(state._lb_drag_t, state._lb_max, state._lb_snap_thresh, state._lb_warp and 0 or state._lb_drag_grid_offset, state._lb_snap_pos, state._lb_ptm)
+                  state._lb_drag_t = math.max(state._lb_start + 0.01, math.min(state._lb_drag_t, state._lb_max))
                   state.loop_bar_drag_current = state._lb_drag_t
+                elseif state.loop_bar_dragging_marker == 3 then
+                  state._lb_body_delta = state._lb_drag_t - state.loop_bar_drag_start_value
+                  state._lb_body_new_start = snap_best(state._lb_body_drag_start + state._lb_body_delta, state._lb_max, state._lb_snap_thresh, state._lb_warp and 0 or state._lb_drag_grid_offset, state._lb_snap_pos, state._lb_ptm)
+                  state._lb_body_delta = state._lb_body_new_start - state._lb_body_drag_start
+                  state._lb_body_new_end = state._lb_body_drag_end + state._lb_body_delta
+                  -- Clamp: shift delta so both stay within [0, _lb_max]
+                  if state._lb_body_new_start < 0 then
+                    state._lb_body_delta = state._lb_body_delta - state._lb_body_new_start
+                  elseif state._lb_body_new_end > state._lb_max then
+                    state._lb_body_delta = state._lb_body_delta - (state._lb_body_new_end - state._lb_max)
+                  end
+                  state.loop_bar_drag_current = state.loop_bar_drag_start_value + state._lb_body_delta
+                end
+                -- Real-time update: apply section to REAPER so timeline reflects bracket position.
+                -- In warp mode: convert both bracket endpoints (pos-time) to source-time
+                -- for REAPER's SOURCE SECTION which expects source-time coordinates.
+                if state._lb_warp then
+                  state._lb_src_s = utils.warp_pos_to_src(state.warp_map, state._lb_start, playrate)
+                  state._lb_src_e = utils.warp_pos_to_src(state.warp_map, state._lb_end, playrate)
+                  state._lb_rt_len = state._lb_src_e - state._lb_src_s  -- source-time duration
+                  if state._lb_start < 0.001 and math.abs(state._lb_end - item_length) < 0.001 then
+                    if state.loop_bar_has_section then
+                      utils.remove_item_section(item)
+                      reaper.UpdateItemInProject(item)
+                      reaper.UpdateArrange()
+                      state.invalidate_view_peaks()
+                    end
+                  elseif state._lb_rt_len > 0.001 then
+                    utils.set_item_section(item, state._lb_src_s, state._lb_rt_len)
+                    reaper.UpdateItemInProject(item)
+                    reaper.UpdateArrange()
+                    state.invalidate_view_peaks()
+                  end
+                else
+                  state._lb_rt_len = state._lb_end - state._lb_start
+                  if state._lb_start < 0.001 and math.abs(state._lb_end - source_length) < 0.001 then
+                    if state.loop_bar_has_section then
+                      utils.remove_item_section(item)
+                      reaper.UpdateItemInProject(item)
+                      reaper.UpdateArrange()
+                      state.invalidate_view_peaks()
+                    end
+                  elseif state._lb_rt_len > 0.001 then
+                    utils.set_item_section(item, state._lb_start, state._lb_rt_len)
+                    reaper.UpdateItemInProject(item)
+                    reaper.UpdateArrange()
+                    state.invalidate_view_peaks()
+                  end
                 end
               end
             end
@@ -2415,39 +2654,20 @@ local function loop()
             -- Drag end
             if state.loop_bar_dragging_marker ~= 0 and not reaper.ImGui_IsMouseDown(ctx, 0) then
               if state.loop_bar_drag_activated then
-                -- Compute final section start and length
-                state._lb_final_start = state._lb_start
-                state._lb_final_end = state._lb_end
-                if state.loop_bar_dragging_marker == 1 then
-                  state._lb_final_start = state.loop_bar_drag_current
-                else
-                  state._lb_final_end = state.loop_bar_drag_current
-                end
-                state._lb_final_length = state._lb_final_end - state._lb_final_start
-
-                -- If markers span the full source, remove section instead
-                if state._lb_final_start < 0.001 and math.abs(state._lb_final_end - source_length) < 0.001 then
-                  if state.loop_bar_has_section then
-                    utils.remove_item_section(item)
+                -- Replicate warp markers for section loops (warp mode only).
+                -- Ensures every loop cycle has identical stretch marker timing.
+                if state._lb_warp and state.warp_map
+                    and not (state._lb_start < 0.001 and math.abs(state._lb_end - item_length) < 0.001) then
+                  state._lb_saved_markers = utils.replicate_markers_for_section(
+                      take, state.warp_map, state._lb_src_s, state._lb_rt_len,
+                      playrate, item_length)
+                  if state._lb_saved_markers then
+                    state._lb_saved_markers_take = take
                     reaper.UpdateItemInProject(item)
                     reaper.UpdateArrange()
-                    state.invalidate_view_peaks()
-                    state.unwrapped_start_offset = nil
-                    state.prev_raw_start_offset = nil
-                    state.post_drag_ext_start = nil
-                    state.post_drag_ext_end = nil
                   end
-                elseif state._lb_final_length > 0.001 then
-                  utils.set_item_section(item, state._lb_final_start, state._lb_final_length)
-                  reaper.UpdateItemInProject(item)
-                  reaper.UpdateArrange()
-                  state.invalidate_view_peaks()
-                  state.unwrapped_start_offset = nil
-                  state.prev_raw_start_offset = nil
-                  state.post_drag_ext_start = nil
-                  state.post_drag_ext_end = nil
                 end
-
+                -- Close the undo block.
                 if state.undo_block_open == "loop_bar" then
                   reaper.Undo_EndBlock("NVSD_ItemView: Set loop region", -1)
                   state.undo_block_open = nil
@@ -2455,7 +2675,13 @@ local function loop()
               end
               state.loop_bar_dragging_marker = 0
               state.loop_bar_drag_activated = false
+              state._lb_drag_view_start = nil
+              state._lb_drag_view_length = nil
+              state._lb_drag_grid_offset = nil
             end
+          else
+            -- Reset stale loop bar hover state when loop bar is not shown
+            state.loop_bar_hovered_marker = 0
           end
 
           -- Draw warp bar (only when WARP mode is active and warp section visible)
@@ -2744,64 +2970,6 @@ local function loop()
               waveform_width, state.scrollbar_h,
               mouse_x, mouse_y, view_start, view_length,
               ext_start, ext_length, state, config)
-          end
-
-          -- Helper: find nearest source boundary if within threshold
-          -- Always active: full threshold when snap on, weaker (40%) when snap off
-          local function snap_to_source_boundary(t, src_len, threshold_time)
-            local effective_threshold = state.env_snap_enabled and threshold_time or (threshold_time * 0.4)
-            local nearest_boundary = math.floor(t / src_len + 0.5) * src_len
-            if math.abs(t - nearest_boundary) <= effective_threshold then
-              return nearest_boundary
-            end
-            return t
-          end
-
-          -- Helper: snap source time to finest visible grid subdivision
-          -- snap_offset: override start_offset for snapping (use drag_start_offset during marker drags)
-          local function snap_to_grid_if_enabled(source_t, snap_offset, item_pos_override, pos_time_mode)
-            if not state.env_snap_enabled then return source_t end
-
-            local offset = snap_offset or start_offset
-            local pos = item_pos_override or item_position
-            local project_t
-            if pos_time_mode then
-              project_t = pos + source_t  -- pos-time: already in arrange seconds
-            else
-              project_t = utils.source_to_project_time(source_t, pos, offset, playrate)
-            end
-
-            -- Compute effective grid division in QN (same as grid drawing)
-            local grid = settings.current.grid
-            local p_start = utils.source_to_project_time(view_start, item_position, start_offset, playrate)
-            local p_end = utils.source_to_project_time(view_start + view_length, item_position, start_offset, playrate)
-            local vlqn = reaper.TimeMap2_timeToQN(0, p_end) - reaper.TimeMap2_timeToQN(0, p_start)
-            local division_qn = utils.get_effective_grid_qn(grid, config, vlqn, waveform_width)
-
-            -- Snap in QN space with triplet support (matches grid display exactly)
-            local snapped_project_t = utils.snap_to_division(project_t, division_qn, grid.triplet)
-            if pos_time_mode then
-              return snapped_project_t - pos
-            else
-              return utils.project_to_source_time(snapped_project_t, pos, offset, playrate)
-            end
-          end
-
-          -- Helper: snap with both grid and source boundary, pick closest to raw position
-          local function snap_best(raw_t, src_len, threshold_time, snap_offset, item_pos_override)
-            local grid_t = snap_to_grid_if_enabled(raw_t, snap_offset, item_pos_override)
-            local boundary_t = snap_to_source_boundary(raw_t, src_len, threshold_time)
-            -- If both snapped to different targets, pick the one closer to raw
-            if grid_t ~= raw_t and boundary_t ~= raw_t then
-              if math.abs(raw_t - grid_t) <= math.abs(raw_t - boundary_t) then
-                return grid_t
-              else
-                return boundary_t
-              end
-            end
-            -- Only one snapped, or neither
-            if boundary_t ~= raw_t then return boundary_t end
-            return grid_t
           end
 
           -- Selection now persists across sample/envelope tabs
@@ -3131,8 +3299,8 @@ local function loop()
               and mouse_x >= wave_x - config.PITCH_LABEL_WIDTH and mouse_x < wave_x
               and mouse_y >= wave_y and mouse_y <= wave_y + waveform_height
 
-          local near_start = reaper_is_active and utils.is_near_marker(mouse_x, start_marker_x, config.MARKER_WIDTH)
-          local near_end = reaper_is_active and utils.is_near_marker(mouse_x, end_marker_x, config.MARKER_WIDTH)
+          local near_start = reaper_is_active and not state.clip_view_active and utils.is_near_marker(mouse_x, start_marker_x, config.MARKER_WIDTH)
+          local near_end = reaper_is_active and not state.clip_view_active and utils.is_near_marker(mouse_x, end_marker_x, config.MARKER_WIDTH)
 
           -- Fade handle positions (in source time, then to px)
           local fade_in_source_len = fade_in_len * playrate
@@ -3336,6 +3504,16 @@ local function loop()
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeNS())
           elseif mouse_in_warp_bar and state.transient_hovered_idx > 0 then
             reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
+          -- Loop bar bracket cursors
+          elseif state.loop_bar_dragging_marker == 1 or state.loop_bar_dragging_marker == 2 then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
+          elseif state.loop_bar_dragging_marker == 3 then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
+          elseif (state.loop_bar_hovered_marker == 1 or state.loop_bar_hovered_marker == 2)
+              and state.loop_bar_dragging_marker == 0 then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_ResizeEW())
+          elseif state.loop_bar_hovered_marker == 3 and state.loop_bar_dragging_marker == 0 then
+            reaper.ImGui_SetMouseCursor(ctx, reaper.ImGui_MouseCursor_Hand())
           -- Fade grabs use Hand cursor to distinguish from marker's ResizeEW
           elseif state.env_freehand_drawing then
             -- Freehand drawing active: show crosshair cursor
@@ -3508,7 +3686,7 @@ local function loop()
               if sm then
                 local slope_pct = string.format("%.0f%%", (sm.slope or 0) * 100)
                 drawing.tooltip(ctx, "slope_" .. state.slope_hovered_segment,
-                    "Slope: " .. slope_pct .. "\nDrag vertical: adjust\nDbl-click: reset")
+                    "Slope: " .. slope_pct .. "\nDrag: adjust timing\nShift+drag: pure slope\nDbl-click: reset")
               end
             -- Pitch gutter tooltip
             elseif mouse_in_pitch_gutter then
@@ -3636,6 +3814,8 @@ local function loop()
                 if reaper.ImGui_MenuItem(ctx, "Clear all warp markers") then
                   reaper.Undo_BeginBlock()
                   reaper.DeleteTakeStretchMarkers(take, 0, reaper.GetTakeNumStretchMarkers(take))
+                  state._lb_saved_markers = nil
+                  state._lb_saved_markers_take = nil
                   reaper.UpdateArrange()
                   reaper.UpdateItemInProject(item)
                   reaper.Undo_EndBlock("NVSD_ItemView: Clear all stretch markers", -1)
@@ -5970,8 +6150,10 @@ local function loop()
                 state.drag_start_src_pos_start = nil
                 state.drag_start_src_pos_end = nil
               else
-                state.post_drag_ext_start = state.drag_current_start
-                state.post_drag_ext_end = state.drag_current_end
+                if not state.clip_view_active then
+                  state.post_drag_ext_start = state.drag_current_start
+                  state.post_drag_ext_end = state.drag_current_end
+                end
                 -- Mark item dirty if stretch markers were shifted
                 if state.drag_start_stretch_markers then
                   reaper.UpdateItemInProject(item)
@@ -6011,6 +6193,8 @@ local function loop()
                 undo_msg = state.dragging_start and "NVSD_ItemView: Adjust item start" or "NVSD_ItemView: Adjust item end"
               end
               reaper.Undo_OnStateChangeEx(undo_msg, -1, -1)
+              -- Prevent false wrap detection on undo (undo delta can exceed wrap threshold)
+              state.prev_raw_start_offset = nil
             elseif (state.dragging_start or state.dragging_end) and not state.marker_drag_activated
                 and not state.dragging_zone then
               -- Click on marker without dragging: place preview cursor at marker position
@@ -6892,12 +7076,14 @@ local function loop()
             drawing.draw_cue_markers(ctx, draw_list, state.cached_cue_markers, wave_x, wave_y, waveform_width, waveform_height, view_start, view_length, source_length, is_extended_view, config, mouse_x, mouse_y, state, item)
           end
 
-          -- Draw markers on top
-          if start_marker_x >= wave_x - config.MARKER_WIDTH and start_marker_x <= wave_x + waveform_width + config.MARKER_WIDTH then
-            drawing.draw_marker(draw_list, start_marker_x, wave_y, waveform_height, true, near_start, state.dragging_start, config)
-          end
-          if end_marker_x >= wave_x - config.MARKER_WIDTH and end_marker_x <= wave_x + waveform_width + config.MARKER_WIDTH then
-            drawing.draw_marker(draw_list, end_marker_x, wave_y, waveform_height, false, near_end, state.dragging_end, config)
+          -- Draw markers on top (hidden in clip view — loop bar brackets are the UI)
+          if not state.clip_view_active then
+            if start_marker_x >= wave_x - config.MARKER_WIDTH and start_marker_x <= wave_x + waveform_width + config.MARKER_WIDTH then
+              drawing.draw_marker(draw_list, start_marker_x, wave_y, waveform_height, true, near_start, state.dragging_start, config)
+            end
+            if end_marker_x >= wave_x - config.MARKER_WIDTH and end_marker_x <= wave_x + waveform_width + config.MARKER_WIDTH then
+              drawing.draw_marker(draw_list, end_marker_x, wave_y, waveform_height, false, near_end, state.dragging_end, config)
+            end
           end
 
           -- (No fade handle squares - REAPER-style grab from waveform corners)
@@ -6935,13 +7121,27 @@ local function loop()
             state.preview_start_requested = false
             if state.preview_active then
               -- Stop preview
-              if state.preview_handle then
-                reaper.CF_Preview_Stop(state.preview_handle)
-                state.preview_handle = nil
+              state.stop_preview()
+            elseif is_warped_view and state.warp_map and reaper.GetTakeNumStretchMarkers(take) > 0 then
+              -- Warp mode with stretch markers: use REAPER transport so audio
+              -- plays through the warp engine (CF_Preview can't apply stretch markers)
+              local pos = state.preview_cursor_pos or 0
+              state._preview_pre_cursor = reaper.GetCursorPosition()
+              -- Solo the item's track so only this track is heard
+              state._preview_track = reaper.GetMediaItemTrack(item)
+              if state._preview_track then
+                state._preview_track_solo = reaper.GetMediaTrackInfo_Value(state._preview_track, "I_SOLO")
+                reaper.SetMediaTrackInfo_Value(state._preview_track, "I_SOLO", 2)  -- solo in place
               end
-              state.preview_active = false
+              -- pos is in take/pos-time; project_pos = item_position + pos
+              reaper.SetEditCurPos(item_position + pos, false, false)
+              reaper.OnPlayButton()
+              state._preview_transport_mode = true
+              state.preview_active = true
+              state.preview_item = item
+              state.preview_virtual_start = pos
             else
-              -- Start preview from cursor position (or item start if no cursor set)
+              -- Non-warp: use CF_Preview (direct source playback)
               local pos = state.preview_cursor_pos or view_offset
               -- Convert to source-time for CF_Preview
               local source_pos = pos
@@ -6959,24 +7159,12 @@ local function loop()
                 -- To seek to source second X: D_POSITION = X / playrate
                 reaper.CF_Preview_SetValue(handle, "D_POSITION", source_pos / playrate)
                 reaper.CF_Preview_SetValue(handle, "D_VOLUME", item_vol)
-                -- Match take's playrate and pitch so preview sounds like
-                -- actual REAPER playback
                 local take_d_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH")
                 if playrate ~= 1 then
                   reaper.CF_Preview_SetValue(handle, "D_PLAYRATE", playrate)
                 end
-                if state.warp_mode then
-                  -- Warp: pitch-preserving stretch + manual pitch offset
-                  reaper.CF_Preview_SetValue(handle, "B_PPITCH", 1)
-                  if take_d_pitch ~= 0 then
-                    reaper.CF_Preview_SetValue(handle, "D_PITCH", take_d_pitch)
-                  end
-                else
-                  -- Non-warp: varispeed only (D_PLAYRATE handles speed+pitch)
-                  -- Explicitly disable pitch preservation and ignore D_PITCH
-                  -- (may contain stale value from previous warp session)
-                  reaper.CF_Preview_SetValue(handle, "B_PPITCH", 0)
-                end
+                -- Non-warp: varispeed only (D_PLAYRATE handles speed+pitch)
+                reaper.CF_Preview_SetValue(handle, "B_PPITCH", 0)
                 -- Loop when playing in a looped/extended item so preview crosses source boundaries
                 local needs_loop = is_extended_view
                 reaper.CF_Preview_SetValue(handle, "B_LOOP", needs_loop and 1 or 0)
@@ -6997,44 +7185,57 @@ local function loop()
           end
 
           -- Audio preview: poll position and auto-stop at end
-          if state.preview_active and state.preview_handle then
+          if state.preview_active and state._preview_transport_mode then
+            -- Transport-based preview (warp mode)
+            if item ~= state.preview_item then
+              state.stop_preview()
+            else
+              state._pt_play_state = reaper.GetPlayState()
+              if (state._pt_play_state & 1) == 0 then
+                -- Transport stopped externally (user pressed stop, reached end, etc.)
+                state.stop_preview()
+              else
+                -- Play position is project time; convert to take/pos-time
+                state._pt_play_pos = reaper.GetPlayPosition()
+                state._pt_virtual_pos = state._pt_play_pos - item_position
+                -- Draw playhead at constant speed (transport handles warp internally)
+                state._pt_px = time_to_px(state._pt_virtual_pos)
+                if state._pt_px >= wave_x and state._pt_px <= wave_x + waveform_width then
+                  drawing.draw_preview_playhead(draw_list, state._pt_px, wave_y, waveform_height)
+                end
+                -- Auto-stop at item end
+                state._pt_stop = is_extended_view and ext_end or item_length
+                if state._pt_virtual_pos >= state._pt_stop then
+                  state.stop_preview()
+                end
+              end
+            end
+          elseif state.preview_active and state.preview_handle then
+            -- CF_Preview-based preview (non-warp)
             if item ~= state.preview_item then
               state.stop_preview()
             else
               local retval, pos = reaper.CF_Preview_GetValue(state.preview_handle, "D_POSITION")
               if retval then
-                -- Compute virtual playhead position in view coordinates
                 local virtual_pos
-                -- D_POSITION returns output-time; convert to source-time: pos * playrate
-                local source_pos_from_preview = pos * playrate
-                if is_warped_view and state.warp_map then
-                  -- Warp mode: convert source-time to pos-time for view
-                  virtual_pos = utils.warp_src_to_pos(state.warp_map, source_pos_from_preview, playrate)
-                elseif state.preview_virtual_start and state.preview_start_realtime then
-                  -- Non-warp: estimate from elapsed time (smoother than polling)
+                if state.preview_virtual_start and state.preview_start_realtime then
+                  -- Estimate from elapsed time (smoother than polling)
                   local elapsed = reaper.time_precise() - state.preview_start_realtime
                   local rate = state.preview_playrate or 1
                   virtual_pos = state.preview_virtual_start + elapsed * rate
                 else
-                  virtual_pos = source_pos_from_preview
+                  virtual_pos = pos * playrate
                 end
-                -- Draw moving preview playhead
                 local preview_px = time_to_px(virtual_pos)
                 if preview_px >= wave_x and preview_px <= wave_x + waveform_width then
                   drawing.draw_preview_playhead(draw_list, preview_px, wave_y, waveform_height)
                 end
                 -- Auto-stop: past item extent
-                local stop_pos
-                if is_warped_view then
-                  stop_pos = is_extended_view and ext_end or item_length
-                else
-                  stop_pos = is_extended_view and ext_end or source_length
-                end
+                local stop_pos = is_extended_view and ext_end or source_length
                 if virtual_pos >= stop_pos then
                   state.stop_preview()
                 end
               else
-                -- Handle became invalid (preview ended)
                 pcall(reaper.CF_Preview_Stop, state.preview_handle)
                 state.preview_handle = nil
                 state.preview_active = false

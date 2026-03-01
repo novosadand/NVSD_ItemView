@@ -137,8 +137,8 @@ state.loop_bar_has_section = false     -- whether take source has a section wrap
 state.loop_bar_section_start = 0       -- section STARTPOS in root source time (seconds)
 state.loop_bar_section_length = 0      -- section LENGTH in root source time (seconds)
 state.loop_bar_source_length = 0       -- root source file length (seconds)
-state.loop_bar_hovered_marker = 0      -- 0=none, 1=left, 2=right
-state.loop_bar_dragging_marker = 0     -- 0=none, 1=left, 2=right
+state.loop_bar_hovered_marker = 0      -- 0=none, 1=left, 2=right, 3=body
+state.loop_bar_dragging_marker = 0     -- 0=none, 1=left, 2=right, 3=body
 state.loop_bar_drag_start_mouse_x = 0  -- mouse X at drag start
 state.loop_bar_drag_start_value = 0    -- marker source-time at drag start
 state.loop_bar_drag_activated = false  -- true once mouse moves past threshold
@@ -573,7 +573,20 @@ end
 -- Stop any active audio preview (CF_Preview)
 function state.stop_preview()
   if not state.preview_active then return end
-  if state.preview_handle then
+  if state._preview_transport_mode then
+    -- Transport-based preview (warp mode): stop transport, restore cursor + solo
+    reaper.Main_OnCommand(1016, 0)  -- Transport: Stop
+    if state._preview_track then
+      reaper.SetMediaTrackInfo_Value(state._preview_track, "I_SOLO", state._preview_track_solo or 0)
+      state._preview_track = nil
+      state._preview_track_solo = nil
+    end
+    if state._preview_pre_cursor then
+      reaper.SetEditCurPos(state._preview_pre_cursor, false, false)
+    end
+    state._preview_transport_mode = nil
+    state._preview_pre_cursor = nil
+  elseif state.preview_handle then
     reaper.CF_Preview_Stop(state.preview_handle)
     state.preview_handle = nil
   end

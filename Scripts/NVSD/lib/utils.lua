@@ -1085,7 +1085,7 @@ end
 -- Quantize all existing stretch markers using a custom snap function and amount.
 -- snap_fn(project_time) -> snapped_time
 -- amount: 0-100 (0 = no change, 100 = full snap)
-function utils.quantize_warp_markers_ex(take, snap_fn, amount, range_start, range_end, selected_set)
+function utils.quantize_warp_markers_ex(take, snap_fn, amount, range_start, range_end, selected_set, src_length)
   local item = reaper.GetMediaItemTake_Item(take)
   local item_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
   local sm_count = reaper.GetTakeNumStretchMarkers(take)
@@ -1095,6 +1095,8 @@ function utils.quantize_warp_markers_ex(take, snap_fn, amount, range_start, rang
   for i = 0, sm_count - 1 do
     if selected_set and not selected_set[i] then goto continue end
     local _, pos, srcpos = reaper.GetTakeStretchMarker(take, i)
+    -- Skip boundary anchors (immovable markers at source start/end)
+    if src_length and (srcpos < 0.005 or srcpos > src_length - 0.005) then goto continue end
     -- Skip markers outside the optional range (srcpos is in source time)
     if (not range_start or srcpos >= range_start - 0.001)
         and (not range_end or srcpos <= range_end + 0.001) then
@@ -1102,6 +1104,7 @@ function utils.quantize_warp_markers_ex(take, snap_fn, amount, range_start, rang
       local snapped_time = snap_fn(project_time)
       local snapped_pos = snapped_time - item_pos
       local new_pos = pos + (snapped_pos - pos) * frac
+      new_pos = math.max(0, new_pos)  -- never go before item start
       if math.abs(new_pos - pos) > 0.0001 then
         reaper.SetTakeStretchMarker(take, i, new_pos, srcpos)
         moved = moved + 1
@@ -1561,6 +1564,91 @@ function utils.remove_item_section(item)
     return true
   end
   return false
+end
+
+-- Replicate stretch markers for each SOURCE SECTION loop cycle.
+-- When a warped item has a SOURCE SECTION, only cycle-0 markers exist.
+-- Subsequent loop cycles lack markers, causing irregular timing.
+-- This replicates cycle-0 markers across all cycles for consistent loops.
+-- Returns saved original markers for later restoration, or nil if no change.
+function utils.replicate_markers_for_section(take, warp_map, section_src_start, section_src_len, playrate, item_length)
+  if not take or not warp_map or #warp_map < 2 then return nil end
+  if section_src_len < 0.001 or item_length < 0.001 then return nil end
+
+  local originals = utils.get_stretch_markers(take)
+  if #originals == 0 then return nil end
+
+  -- Cycle boundaries in pos-time
+  local cycle_pos_start = utils.warp_src_to_pos(warp_map, section_src_start, playrate)
+  local cycle_pos_end = utils.warp_src_to_pos(warp_map, section_src_start + section_src_len, playrate)
+  local cycle_pos_len = cycle_pos_end - cycle_pos_start
+  if cycle_pos_len < 0.001 then return nil end
+
+  -- Collect cycle-0 markers (srcpos within section range)
+  local cycle0 = {}
+  for _, sm in ipairs(originals) do
+    if sm.srcpos >= section_src_start - 0.0005
+        and sm.srcpos <= section_src_start + section_src_len + 0.0005 then
+      cycle0[#cycle0 + 1] = { pos = sm.pos, srcpos = sm.srcpos, slope = sm.slope or 0 }
+    end
+  end
+
+  -- Add boundary anchors at cycle edges if missing
+  local has_start, has_end = false, false
+  for _, cm in ipairs(cycle0) do
+    if math.abs(cm.srcpos - section_src_start) < 0.005 then has_start = true end
+    if math.abs(cm.srcpos - (section_src_start + section_src_len)) < 0.005 then has_end = true end
+  end
+  if not has_start then
+    cycle0[#cycle0 + 1] = { pos = cycle_pos_start, srcpos = section_src_start, slope = 0 }
+  end
+  if not has_end then
+    cycle0[#cycle0 + 1] = { pos = cycle_pos_end, srcpos = section_src_start + section_src_len, slope = 0 }
+  end
+
+  if #cycle0 == 0 then return originals end
+
+  local num_cycles = math.ceil(item_length / cycle_pos_len)
+  if num_cycles < 1 then num_cycles = 1 end
+
+  -- Remove all current markers
+  local count = reaper.GetTakeNumStretchMarkers(take)
+  if count > 0 then
+    reaper.DeleteTakeStretchMarkers(take, 0, count)
+  end
+
+  -- Add replicated markers for each cycle
+  for i = 0, num_cycles - 1 do
+    local pos_off = i * cycle_pos_len
+    local src_off = i * section_src_len
+    for _, cm in ipairs(cycle0) do
+      local np = cm.pos + pos_off
+      local ns = cm.srcpos + src_off
+      if np >= -0.001 and np <= item_length + 0.001 then
+        local idx = reaper.SetTakeStretchMarker(take, -1, np, ns)
+        if idx >= 0 and math.abs(cm.slope) > 0.001 then
+          reaper.SetTakeStretchMarkerSlope(take, idx, cm.slope)
+        end
+      end
+    end
+  end
+
+  return originals
+end
+
+-- Restore original stretch markers (undo replication).
+function utils.restore_section_markers(take, saved_markers)
+  if not take or not saved_markers then return end
+  local count = reaper.GetTakeNumStretchMarkers(take)
+  if count > 0 then
+    reaper.DeleteTakeStretchMarkers(take, 0, count)
+  end
+  for _, sm in ipairs(saved_markers) do
+    local idx = reaper.SetTakeStretchMarker(take, -1, sm.pos, sm.srcpos)
+    if idx >= 0 and math.abs(sm.slope or 0) > 0.001 then
+      reaper.SetTakeStretchMarkerSlope(take, idx, sm.slope)
+    end
+  end
 end
 
 return utils

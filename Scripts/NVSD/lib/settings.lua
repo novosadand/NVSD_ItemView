@@ -688,6 +688,7 @@ settings.DEFAULT_DEFAULTS = {
   auto_fit_markers = "off",
   show_tooltips = true,
   snap_click_to_sound = false,
+  clip_view = false,
 }
 
 -- Default layout visibility (which UI panels are shown)

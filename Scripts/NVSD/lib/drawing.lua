@@ -2838,7 +2838,7 @@ function drawing.draw_cue_markers(ctx, draw_list, markers, wave_x, wave_y, wavef
 end
 
 -- Draw a knob
-function drawing.draw_knob(draw_list, cx, cy, radius, angle, is_hovered, is_active, label, unit_text, config)
+function drawing.draw_knob(draw_list, cx, cy, radius, angle, is_hovered, is_active, label, unit_text, config, unipolar)
   local COLOR_KNOB_BG = config and config.COLOR_BTN_OFF or 0x303030FF
   local COLOR_KNOB_BORDER = is_active and (config and config.COLOR_MARKER_HOVER or 0x6AB0F9FF) or (is_hovered and (config and config.COLOR_RULER_TEXT or 0x888888FF) or (config and config.COLOR_RULER_TICK or 0x555555FF))
   local COLOR_KNOB_POINTER = config and config.COLOR_BTN_TEXT or 0xFFFFFFFF
@@ -2865,32 +2865,40 @@ function drawing.draw_knob(draw_list, cx, cy, radius, angle, is_hovered, is_acti
     reaper.ImGui_DrawList_AddLine(draw_list, x1, y1, x2, y2, COLOR_KNOB_ARC_BG, 3)
   end
 
-  if math.abs(angle - center_angle) > 0.01 then
+  -- Unipolar: arc fills from min_angle (7 o'clock) clockwise to current angle
+  -- Bipolar: arc fills from center_angle (12 o'clock) to current angle
+  if unipolar then
+    -- Normalize angle into [min_angle, min_angle + sweep] range to avoid drawing through bottom gap
+    local draw_angle = angle
+    while draw_angle < min_angle do draw_angle = draw_angle + 2 * math.pi end
+    if draw_angle - min_angle > 0.01 then
+      for i = 0, arc_segments - 1 do
+        local a1 = min_angle + (draw_angle - min_angle) * (i / arc_segments)
+        local a2 = min_angle + (draw_angle - min_angle) * ((i + 1) / arc_segments)
+        local x1 = cx + math.cos(a1) * arc_radius
+        local y1 = cy + math.sin(a1) * arc_radius
+        local x2 = cx + math.cos(a2) * arc_radius
+        local y2 = cy + math.sin(a2) * arc_radius
+        reaper.ImGui_DrawList_AddLine(draw_list, x1, y1, x2, y2, COLOR_KNOB_ARC, 3)
+      end
+    end
+  elseif math.abs(angle - center_angle) > 0.01 then
     local arc_start, arc_end
     if angle > center_angle then
       arc_start = center_angle
       arc_end = angle
-      for i = 0, arc_segments - 1 do
-        local a1 = arc_start + (arc_end - arc_start) * (i / arc_segments)
-        local a2 = arc_start + (arc_end - arc_start) * ((i + 1) / arc_segments)
-        local x1 = cx + math.cos(a1) * arc_radius
-        local y1 = cy + math.sin(a1) * arc_radius
-        local x2 = cx + math.cos(a2) * arc_radius
-        local y2 = cy + math.sin(a2) * arc_radius
-        reaper.ImGui_DrawList_AddLine(draw_list, x1, y1, x2, y2, COLOR_KNOB_ARC, 3)
-      end
     else
       arc_start = angle
       arc_end = center_angle
-      for i = 0, arc_segments - 1 do
-        local a1 = arc_start + (arc_end - arc_start) * (i / arc_segments)
-        local a2 = arc_start + (arc_end - arc_start) * ((i + 1) / arc_segments)
-        local x1 = cx + math.cos(a1) * arc_radius
-        local y1 = cy + math.sin(a1) * arc_radius
-        local x2 = cx + math.cos(a2) * arc_radius
-        local y2 = cy + math.sin(a2) * arc_radius
-        reaper.ImGui_DrawList_AddLine(draw_list, x1, y1, x2, y2, COLOR_KNOB_ARC, 3)
-      end
+    end
+    for i = 0, arc_segments - 1 do
+      local a1 = arc_start + (arc_end - arc_start) * (i / arc_segments)
+      local a2 = arc_start + (arc_end - arc_start) * ((i + 1) / arc_segments)
+      local x1 = cx + math.cos(a1) * arc_radius
+      local y1 = cy + math.sin(a1) * arc_radius
+      local x2 = cx + math.cos(a2) * arc_radius
+      local y2 = cy + math.sin(a2) * arc_radius
+      reaper.ImGui_DrawList_AddLine(draw_list, x1, y1, x2, y2, COLOR_KNOB_ARC, 3)
     end
   end
 
@@ -3236,6 +3244,42 @@ function drawing.draw_envelope_bar(draw_list, ctx, x, y, width, height,
       end
     end
     drawing.tooltip(ctx, "auto_fit_btn", fit_tip)
+  end
+
+  -- Clip view toggle button (only when loop is on)
+  if state.is_loop_src then
+    local clip_btn_w = 22
+    local clip_gap = 3
+    local clip_btn_x = fit_btn_x + fit_btn_w + clip_gap
+    local clip_btn_y = btn_y
+    local clip_btn_h = btn_h
+    local mouse_in_clip = mouse_x >= clip_btn_x and mouse_x <= clip_btn_x + clip_btn_w
+                          and mouse_y >= clip_btn_y and mouse_y <= clip_btn_y + clip_btn_h
+    local clip_on = settings and settings.current.defaults.clip_view
+    local clip_bg = clip_on and config.COLOR_BTN_ON or (mouse_in_clip and 0x505050FF or 0x303030FF)
+    local clip_border = clip_on and config.COLOR_BTN_ON or 0x555555FF
+    reaper.ImGui_DrawList_AddRectFilled(draw_list, clip_btn_x, clip_btn_y,
+        clip_btn_x + clip_btn_w, clip_btn_y + clip_btn_h, clip_bg, 2)
+    reaper.ImGui_DrawList_AddRect(draw_list, clip_btn_x, clip_btn_y,
+        clip_btn_x + clip_btn_w, clip_btn_y + clip_btn_h, clip_border, 2)
+
+    -- Draw clip icon: loop-one symbol (circular arrow with "1")
+    local ccx = clip_btn_x + clip_btn_w / 2
+    local ccy = clip_btn_y + clip_btn_h / 2
+    local clip_color = clip_on and 0x202020FF or 0xCCCCCCFF
+    -- Simple "C" shape for clip/cycle
+    reaper.ImGui_DrawList_PathArcTo(draw_list, ccx, ccy, 4, 0.5, 5.2)
+    reaper.ImGui_DrawList_PathStroke(draw_list, clip_color, 0, 1.5)
+    -- Arrowhead at end of arc
+    reaper.ImGui_DrawList_AddTriangleFilled(draw_list,
+        ccx + 5, ccy - 2, ccx + 5, ccy + 2, ccx + 2, ccy, clip_color)
+
+    if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_clip then
+      settings.toggle_default(state, "clip_view")
+    end
+    if mouse_in_clip then
+      drawing.tooltip(ctx, "clip_view_btn", "Clip view: clamp zoom to source length (Ableton-style)")
+    end
   end
 
 end
