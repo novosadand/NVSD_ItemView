@@ -392,6 +392,12 @@ end
 
 -- Draw WARP/Reverse/Edit buttons in the left column
 function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x, left_col_y, item, take, config, state, utils, drawing, settings, panel_height, col2_x)
+  -- Suppress hover on all panel buttons while a control drag (gain/pan/pitch/bpm) is active.
+  -- The drag handler still works because it uses state.get_drag_delta (cursor-locked).
+  if state.is_any_control_dragging() then
+    mouse_x, mouse_y = -9999, -9999
+  end
+
   local btn_height = 18
   local btn_margin = 10
   local btn_padding = 8
@@ -1745,15 +1751,17 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     end
   end
 
-  -- Third row: Loop toggle
+  -- Third row: Loop toggle + BPM field (split like x2/÷2)
   cursor_y = row2_y + stretch_btn_height + 3
   try_overflow(btn_height)
   local row3_y = cursor_y
-  local loop_btn_width = config.LEFT_COLUMN_WIDTH - (btn_padding * 2)
+  local loop_btn_width = stretch_btn_width  -- half-width, same as x2/÷2
   local loop_btn_x = cursor_x + btn_padding
+  local bpm_btn_x = loop_btn_x + stretch_btn_width + gap
 
   local is_looped = item and reaper.GetMediaItemInfo_Value(item, "B_LOOPSRC") == 1
 
+  -- Loop button (left half)
   local mouse_in_loop = mouse_x >= loop_btn_x and mouse_x <= loop_btn_x + loop_btn_width
                         and mouse_y >= row3_y and mouse_y <= row3_y + btn_height
                         and not any_dropdown_menu_open
@@ -1762,7 +1770,7 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     or mouse_in_loop and COLOR_BTN_HOVER
     or COLOR_BTN_OFF
   reaper.ImGui_DrawList_AddRectFilled(draw_list, loop_btn_x, row3_y, loop_btn_x + loop_btn_width, row3_y + btn_height, loop_bg_color, 3)
-  local loop_label = is_looped and (state.loop_bar_has_section and "Loop §" or "Loop ON") or "Loop"
+  local loop_label = "Loop"
   local loop_text_w = reaper.ImGui_CalcTextSize(ctx, loop_label)
   local loop_text_x = loop_btn_x + (loop_btn_width - loop_text_w) / 2
   local loop_text_y = row3_y + (btn_height - text_height) / 2
@@ -1781,6 +1789,12 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
       reaper.Undo_BeginBlock()
       if alt_held and is_looped and state.loop_bar_has_section then
         -- Alt+click: remove section (keep loop on)
+        -- Restore original markers before removing section (undo replicated ones)
+        if state._lb_saved_markers and take then
+          utils.restore_section_markers(take, state._lb_saved_markers)
+          state._lb_saved_markers = nil
+          state._lb_saved_markers_take = nil
+        end
         utils.remove_item_section(item)
         reaper.UpdateItemInProject(item)
         reaper.UpdateArrange()
@@ -1796,6 +1810,134 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     end
   end
 
+  -- BPM field (right half)
+  local bpm_enabled = state.warp_mode and item and take and not state.midi_item_mode
+  local item_pos = item and reaper.GetMediaItemInfo_Value(item, "D_POSITION") or 0
+  local project_bpm = utils.get_project_bpm(item_pos)
+  local cur_playrate = take and reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE") or 1.0
+  -- After quantize, D_PLAYRATE is reset to 1.0 but stretch markers encode the
+  -- rate change. Compute effective rate from the last marker's source coverage.
+  local effective_rate = cur_playrate
+  if take and cur_playrate == 1.0 then
+    local sm_count = reaper.GetTakeNumStretchMarkers(take)
+    if sm_count > 0 then
+      local _, _, end_srcpos = reaper.GetTakeStretchMarker(take, sm_count - 1)
+      local item_len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+      if end_srcpos > 0 and item_len > 0 and math.abs(end_srcpos / item_len - 1.0) > 0.01 then
+        effective_rate = end_srcpos / item_len
+      end
+    end
+  end
+  local bpm_value = utils.bpm_from_playrate(effective_rate, project_bpm)
+  local has_item = item and take
+
+  local mouse_in_bpm = mouse_x >= bpm_btn_x and mouse_x <= bpm_btn_x + stretch_btn_width
+                       and mouse_y >= row3_y and mouse_y <= row3_y + btn_height
+                       and not any_dropdown_menu_open
+
+  local bpm_bg = state.is_dragging("bpm") and 0x3A3A5AFF
+    or (bpm_enabled and mouse_in_bpm) and COLOR_BTN_HOVER
+    or COLOR_BTN_OFF
+  reaper.ImGui_DrawList_AddRectFilled(draw_list, bpm_btn_x, row3_y, bpm_btn_x + stretch_btn_width, row3_y + btn_height, bpm_bg, 3)
+
+  local bpm_text = has_item and string.format("%.2f", bpm_value) or "---"
+  local bpm_text_w = reaper.ImGui_CalcTextSize(ctx, bpm_text)
+  local bpm_text_x = bpm_btn_x + (stretch_btn_width - bpm_text_w) / 2
+  local bpm_text_y = row3_y + (btn_height - text_height) / 2
+  local bpm_text_color = bpm_enabled and 0xFFFFFFFF or 0x888888FF
+
+  if state.editing_label == "bpm" then
+    -- Inline edit mode: InputText active
+    local confirmed, input = controls.editable_label(ctx, draw_list,
+        bpm_text_x, bpm_text_y, bpm_text, bpm_text_w, 14,
+        bpm_text_color, COLOR_BTN_HOVER,
+        mouse_x, mouse_y, state, drawing,
+        "bpm_field", "Item BPM\nDrag to adjust, double-click to type\nAlt+click to reset",
+        "bpm", string.format("%.2f", bpm_value), stretch_btn_width - 4)
+    if confirmed and bpm_enabled then
+      local val = tonumber(input)
+      if val then
+        val = utils.clamp_bpm(val)
+        local new_pr = utils.playrate_from_bpm(val, project_bpm)
+        reaper.Undo_BeginBlock()
+        utils.set_item_rate(take, item, new_pr)
+        reaper.UpdateItemInProject(item)
+        reaper.UpdateArrange()
+        state.pending_cache_invalidation = 3
+        reaper.Undo_EndBlock("NVSD_ItemView: Set BPM to " .. string.format("%.2f", val), -1)
+      end
+    end
+  elseif bpm_enabled and not state.midi_item_mode and not state.is_dragging("bpm") then
+    -- Normal mode: draw text + handle interactions
+    reaper.ImGui_DrawList_AddText(draw_list, bpm_text_x, bpm_text_y, bpm_text_color, bpm_text)
+
+    if mouse_in_bpm then
+      drawing.tooltip(ctx, "bpm_field", "Item BPM\nDrag to adjust, double-click to type\nAlt+click to reset")
+
+      if reaper.ImGui_IsMouseDoubleClicked(ctx, 0) then
+        -- Double-click: enter inline text edit
+        state.editing_label = "bpm"
+        state.editing_label_text = string.format("%.2f", bpm_value)
+        state.editing_label_focus = true
+      elseif reaper.ImGui_IsMouseClicked(ctx, 0) then
+        if reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Mod_Alt()) then
+          -- Alt+click: reset to project BPM (playrate 1.0)
+          reaper.Undo_BeginBlock()
+          utils.set_item_rate(take, item, 1.0)
+          reaper.UpdateItemInProject(item)
+          reaper.UpdateArrange()
+          state.pending_cache_invalidation = 3
+          reaper.Undo_EndBlock("NVSD_ItemView: Reset BPM", -1)
+        else
+          -- Single click: start drag
+          state.start_drag("bpm", mouse_y, bpm_value, true)
+        end
+      end
+    end
+  else
+    -- Disabled or dragging: just draw static text
+    reaper.ImGui_DrawList_AddText(draw_list, bpm_text_x, bpm_text_y, bpm_text_color, bpm_text)
+    if not bpm_enabled and mouse_in_bpm and not state.is_dragging("bpm") then
+      drawing.tooltip(ctx, "bpm_field", "Item BPM (enable WARP to adjust)")
+    end
+  end
+
+  -- BPM drag in progress
+  if state.is_dragging("bpm") and reaper.ImGui_IsMouseDown(ctx, 0) then
+    local delta = state.get_drag_delta(ctx, "bpm", mouse_y, bpm_value, 0.1)
+    local raw_bpm = state.drag_controls.bpm.start_value + delta
+    -- Whole numbers normally, fractional with Ctrl (fine mode)
+    if not state.drag_controls.bpm.fine_held then
+      raw_bpm = math.floor(raw_bpm + 0.5)
+    end
+    local new_bpm = utils.clamp_bpm(raw_bpm)
+    -- Rebase at bounds to prevent dead zones (same pattern as gain/pitch)
+    if raw_bpm > 999 then
+      state.drag_controls.bpm.start_value = 999
+      state.drag_cumulative_delta_y = 0
+      state.cursor_lock_zero_frames = 0
+      state.drag_controls.bpm.start_y = mouse_y
+    elseif raw_bpm < 10 then
+      state.drag_controls.bpm.start_value = 10
+      state.drag_cumulative_delta_y = 0
+      state.cursor_lock_zero_frames = 0
+      state.drag_controls.bpm.start_y = mouse_y
+    end
+    local new_playrate = utils.playrate_from_bpm(new_bpm, project_bpm)
+    utils.set_item_rate(take, item, new_playrate)
+    reaper.UpdateItemInProject(item)
+  end
+
+  if reaper.ImGui_IsMouseReleased(ctx, 0) and state.is_dragging("bpm") then
+    state.end_drag("bpm")
+    if state.undo_block_open == "bpm" then
+      reaper.Undo_OnStateChangeEx("NVSD_ItemView: Adjust BPM", -1, -1)
+      state.undo_block_open = nil
+    end
+    state.pending_cache_invalidation = 3
+    reaper.UpdateArrange()
+  end
+
   last_bottom = row3_y + btn_height
   end -- if show_buttons
 
@@ -1804,6 +1946,7 @@ end
 
 -- Draw two tabs spanning the full column width, split in half
 function controls.draw_panel_tabs(ctx, draw_list, mouse_x, mouse_y, left_col_x, tab_y, config, state, drawing)
+  if state.is_any_control_dragging() then mouse_x, mouse_y = -9999, -9999 end
   local col_w = config.LEFT_COLUMN_WIDTH - 2  -- match column bg width
   local tab_h = config.TAB_HEIGHT
   local half_w = math.floor(col_w / 2)
@@ -1868,6 +2011,7 @@ end
 -- Draw the quantize panel (replaces button panel when quantize tab is active)
 function controls.draw_quantize_panel(ctx, draw_list, mouse_x, mouse_y,
                                        left_col_x, panel_y, config, state, utils, drawing, settings)
+  if state.is_any_control_dragging() then mouse_x, mouse_y = -9999, -9999 end
   local pad = 8
   local col_w = config.LEFT_COLUMN_WIDTH
   local px = left_col_x + pad
@@ -1875,6 +2019,7 @@ function controls.draw_quantize_panel(ctx, draw_list, mouse_x, mouse_y,
   local cy = panel_y
   local warp_on = state.warp_mode
   local DIM = 0x555555FF  -- greyed out text/color
+  local _, text_height = reaper.ImGui_CalcTextSize(ctx, "W")
   local grid = settings.current.grid
   local quant = settings.current.quantize
 
@@ -1894,7 +2039,7 @@ function controls.draw_quantize_panel(ctx, draw_list, mouse_x, mouse_y,
   local gbl = "Grid"
   local gbw = reaper.ImGui_CalcTextSize(ctx, gbl)
   local gbtc = is_grid_sel and (warp_on and config.COLOR_BTN_TEXT or 0x999999FF) or (warp_on and config.COLOR_INFO_BAR_TEXT or DIM)
-  reaper.ImGui_DrawList_AddText(draw_list, px + (pw - gbw) / 2, cy + 1, gbtc, gbl)
+  reaper.ImGui_DrawList_AddText(draw_list, px + (pw - gbw) / 2, cy + (btn_h - text_height) / 2, gbtc, gbl)
   if not state.midi_item_mode and in_grid_btn and reaper.ImGui_IsMouseClicked(ctx, 0) then
     settings.current.quantize.grid = "grid"
     settings.save_quantize("grid")
@@ -1919,7 +2064,7 @@ function controls.draw_quantize_panel(ctx, draw_list, mouse_x, mouse_y,
     reaper.ImGui_DrawList_AddRectFilled(draw_list, bx, by, bx + half_w, by + btn_h, bbg, 3)
     local lbl_w = reaper.ImGui_CalcTextSize(ctx, label)
     local ltc = is_sel and (warp_on and config.COLOR_BTN_TEXT or 0x999999FF) or (warp_on and config.COLOR_INFO_BAR_TEXT or DIM)
-    reaper.ImGui_DrawList_AddText(draw_list, bx + (half_w - lbl_w) / 2, by + 1, ltc, label)
+    reaper.ImGui_DrawList_AddText(draw_list, bx + (half_w - lbl_w) / 2, by + (btn_h - text_height) / 2, ltc, label)
     if not state.midi_item_mode and in_btn and reaper.ImGui_IsMouseClicked(ctx, 0) then
       settings.current.quantize.grid = btn_ids[i]
       settings.save_quantize("grid")
@@ -1963,8 +2108,13 @@ function controls.draw_quantize_panel(ctx, draw_list, mouse_x, mouse_y,
   local knob_cy = cy + knob_r + 4
   local amount = quant.amount or 100
   -- Map 0-100 to -1..+1 (same as pan), then use pan_to_angle
-  local amt_pan = (amount / 50) - 1  -- 0%=-1, 50%=0, 100%=+1
-  local amt_angle = utils.pan_to_angle(amt_pan)
+  local amt_angle
+  if amount <= 0 then
+    amt_angle = 2 * math.pi / 3  -- exactly min_angle, no colored arc
+  else
+    local amt_pan = (amount / 50) - 1  -- 0%=-1, 50%=0, 100%=+1
+    amt_angle = utils.pan_to_angle(amt_pan)
+  end
   local knob_dx = mouse_x - knob_cx
   local knob_dy = mouse_y - knob_cy
   local knob_dist = math.sqrt(knob_dx * knob_dx + knob_dy * knob_dy)
@@ -2037,7 +2187,7 @@ function controls.draw_quantize_panel(ctx, draw_list, mouse_x, mouse_y,
   local apply_lbl = "Apply"
   local apply_lw = reaper.ImGui_CalcTextSize(ctx, apply_lbl)
   local apply_tc = warp_on and (in_apply and config.COLOR_BTN_TEXT or config.COLOR_INFO_BAR_TEXT) or DIM
-  reaper.ImGui_DrawList_AddText(draw_list, apply_x + (apply_w - apply_lw) / 2, cy + 2, apply_tc, apply_lbl)
+  reaper.ImGui_DrawList_AddText(draw_list, apply_x + (apply_w - apply_lw) / 2, cy + (apply_h - text_height) / 2, apply_tc, apply_lbl)
 
   -- Store apply click for main loop to handle (needs take/item context)
   state.quantize_apply_clicked = not state.midi_item_mode and in_apply and reaper.ImGui_IsMouseClicked(ctx, 0)
@@ -2578,6 +2728,7 @@ end
 function controls.draw_fx_toolbar(ctx, draw_list, mouse_x, mouse_y,
                                    toolbar_x, toolbar_y, toolbar_width,
                                    take, config, state, drawing)
+  if state.is_any_control_dragging() then mouse_x, mouse_y = -9999, -9999 end
   local btn_height = 20
   local add_btn_width = 20
   local bypass_btn_width = 20
@@ -2784,6 +2935,7 @@ end
 function controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
                                 fx_x, fx_y, fx_width, fx_height,
                                 take, config, state, drawing)
+  if state.is_any_control_dragging() then mouse_x, mouse_y = -9999, -9999 end
   -- Always draw the beveled box background
   local BOX_FILL = config.COLOR_WAVEFORM_BG
   local BOX_BORDER = config.COLOR_CENTERLINE
@@ -2797,6 +2949,7 @@ function controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
   if #entries == 0 then return 0 end
 
   local row_height = 20
+  local _, fx_text_h = reaper.ImGui_CalcTextSize(ctx, "W")
   local bypass_size = 14
   local bypass_margin = 4
   local text_x_offset = bypass_size + bypass_margin * 2
@@ -2903,7 +3056,7 @@ function controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
       end
 
       local text_x = fx_x + text_x_offset + inner_pad
-      local text_y = row_y + (row_height - 13) / 2
+      local text_y = row_y + (row_height - fx_text_h) / 2
       local max_text_w = content_width - text_x_offset - inner_pad * 2 - 4
 
       -- Truncate text to fit
@@ -3017,7 +3170,7 @@ function controls.draw_fx_list(ctx, draw_list, mouse_x, mouse_y,
         end
 
         local float_text_x = fx_x + text_x_offset + inner_pad
-        local float_text_y = float_y + (row_height - 13) / 2
+        local float_text_y = float_y + (row_height - fx_text_h) / 2
         reaper.ImGui_DrawList_AddText(draw_list, float_text_x, float_text_y, config.COLOR_BTN_TEXT, drag_entry.name)
       end
 

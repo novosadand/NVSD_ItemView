@@ -451,6 +451,7 @@ state.drag_controls = {
   semitones = { active = false, start_y = 0, start_value = 0 },
   cents = { active = false, start_y = 0, start_value = 0 },
   quantize_amount = { active = false, start_y = 0, start_value = 0, fine_held = false },
+  bpm = { active = false, start_y = 0, start_value = 0, fine_held = false },
 }
 
 -- Start a drag operation
@@ -495,6 +496,7 @@ function state.is_any_control_dragging()
       or state.drag_controls.pitch.active
       or state.drag_controls.semitones.active or state.drag_controls.cents.active
       or state.drag_controls.quantize_amount.active
+      or state.drag_controls.bpm.active
 end
 
 -- Get drag delta (in pixels), handling shift modifier for fine control
@@ -568,6 +570,10 @@ function state.reset_all_drags()
   state.sb_zoom_handle_dragging = false
   state.loop_bar_dragging_marker = 0
   state.loop_bar_drag_activated = false
+  -- Reset control drags (bpm etc.) in case of focus loss mid-drag
+  for _, ctrl in pairs(state.drag_controls) do
+    ctrl.active = false
+  end
 end
 
 -- Stop any active audio preview (CF_Preview)

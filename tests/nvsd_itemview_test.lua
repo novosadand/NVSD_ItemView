@@ -1459,3 +1459,78 @@ function TestNVSDItemView:test_remove_section_no_section_returns_nil()
   local result = utils.remove_section_from_chunk(chunk)
   lu.assertNil(result)
 end
+
+-- === BPM Field Tests ===
+
+function TestNVSDItemView:test_bpm_from_playrate()
+  -- BPM = project_bpm / playrate (original content tempo)
+  -- playrate 1.0 at project 120 -> content is 120 BPM
+  lu.assertAlmostEquals(utils.bpm_from_playrate(1.0, 120), 120, 0.01)
+  -- playrate 2.0 at project 120 -> content is 60 BPM (sped up 2x to match project)
+  lu.assertAlmostEquals(utils.bpm_from_playrate(2.0, 120), 60, 0.01)
+  -- playrate 0.5 at project 120 -> content is 240 BPM (slowed 0.5x to match project)
+  lu.assertAlmostEquals(utils.bpm_from_playrate(0.5, 120), 240, 0.01)
+  -- playrate 145/120 at project 145 -> content is 120 BPM
+  lu.assertAlmostEquals(utils.bpm_from_playrate(145/120, 145), 120, 0.01)
+end
+
+function TestNVSDItemView:test_bpm_to_playrate()
+  -- playrate = project_bpm / desired_bpm
+  -- 120 BPM content at project 120 -> playrate 1.0 (no change needed)
+  lu.assertAlmostEquals(utils.playrate_from_bpm(120, 120), 1.0, 0.001)
+  -- 60 BPM content at project 120 -> playrate 2.0 (speed up 2x)
+  lu.assertAlmostEquals(utils.playrate_from_bpm(60, 120), 2.0, 0.001)
+  -- 240 BPM content at project 120 -> playrate 0.5 (slow down)
+  lu.assertAlmostEquals(utils.playrate_from_bpm(240, 120), 0.5, 0.001)
+  -- 120 BPM content at project 145 -> playrate 145/120 ≈ 1.208 (speed up)
+  lu.assertAlmostEquals(utils.playrate_from_bpm(120, 145), 145/120, 0.001)
+end
+
+function TestNVSDItemView:test_bpm_clamp()
+  -- Clamp below minimum
+  lu.assertEquals(utils.clamp_bpm(5), 10)
+  lu.assertEquals(utils.clamp_bpm(-1), 10)
+  -- Clamp above maximum
+  lu.assertEquals(utils.clamp_bpm(1200), 999)
+  -- Within range (no clamp)
+  lu.assertEquals(utils.clamp_bpm(120), 120)
+  lu.assertEquals(utils.clamp_bpm(10), 10)
+  lu.assertEquals(utils.clamp_bpm(999), 999)
+end
+
+function TestNVSDItemView:test_bpm_default_reset()
+  -- Reset = playrate 1.0 -> BPM should equal project BPM
+  local project_bpm = 128
+  local reset_playrate = 1.0
+  lu.assertAlmostEquals(utils.bpm_from_playrate(reset_playrate, project_bpm), project_bpm, 0.01)
+end
+
+function TestNVSDItemView:test_bpm_format()
+  -- 2-decimal formatting
+  lu.assertEquals(string.format("%.2f", 120.0), "120.00")
+  lu.assertEquals(string.format("%.2f", 99.5), "99.50")
+  lu.assertEquals(string.format("%.2f", 145.123), "145.12")
+end
+
+function TestNVSDItemView:test_bpm_drag_control_exists()
+  local state_mod = dofile("Scripts/NVSD/lib/state.lua")
+  lu.assertNotNil(state_mod.drag_controls.bpm)
+  lu.assertFalse(state_mod.drag_controls.bpm.active)
+  lu.assertEquals(state_mod.drag_controls.bpm.start_y, 0)
+  lu.assertEquals(state_mod.drag_controls.bpm.start_value, 0)
+  lu.assertFalse(state_mod.drag_controls.bpm.fine_held)
+end
+
+function TestNVSDItemView:test_bpm_in_reset_all_drags()
+  local state_mod = dofile("Scripts/NVSD/lib/state.lua")
+  -- Manually activate bpm drag
+  state_mod.drag_controls.bpm.active = true
+  -- reset_all_drags should clear it
+  state_mod.reset_all_drags()
+  lu.assertFalse(state_mod.drag_controls.bpm.active)
+end
+
+function TestNVSDItemView:test_bpm_playrate_from_zero_desired_bpm()
+  -- Edge case: desired BPM is 0 (should not crash, return 1.0)
+  lu.assertEquals(utils.playrate_from_bpm(0, 120), 1.0)
+end

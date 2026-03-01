@@ -23,6 +23,42 @@ function utils.playrate_to_semitones(playrate)
   return 12 * math.log(playrate) / math.log(2)
 end
 
+-- BPM / playrate conversions
+function utils.get_project_bpm(item_position)
+  return reaper.TimeMap_GetDividedBpmAtTime(0, item_position or 0)
+end
+
+function utils.bpm_from_playrate(playrate, project_bpm)
+  if playrate <= 0 then return project_bpm end
+  return project_bpm / playrate
+end
+
+function utils.playrate_from_bpm(desired_bpm, project_bpm)
+  if desired_bpm <= 0 then return 1.0 end
+  return project_bpm / desired_bpm
+end
+
+function utils.clamp_bpm(bpm)
+  return math.max(10, math.min(999, bpm))
+end
+
+-- Set D_PLAYRATE and D_LENGTH together. D_LENGTH is computed from the actual
+-- source length to avoid floating-point drift. D_LENGTH is always set FIRST
+-- so that consumed source (D_LENGTH * D_PLAYRATE) never exceeds the source
+-- at any intermediate step — REAPER mutes the item if it does.
+function utils.set_item_rate(take, item, new_playrate)
+  local source = reaper.GetMediaItemTake_Source(take)
+  local source_length = source and reaper.GetMediaSourceLength(source) or 0
+  if source_length <= 0 then
+    reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", new_playrate)
+    return
+  end
+  local start_offs = reaper.GetMediaItemTakeInfo_Value(take, "D_STARTOFFS")
+  local new_len = (source_length - start_offs) / new_playrate
+  reaper.SetMediaItemInfo_Value(item, "D_LENGTH", new_len)
+  reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", new_playrate)
+end
+
 -- Gain/dB conversions
 function utils.gain_to_db(gain)
   if gain <= 0 then return -math.huge end
@@ -929,7 +965,7 @@ function utils.add_markers_at_transients(take, transients, range_start, range_en
       end
       if not has then
         local pos = utils.srcpos_to_neutral_pos(take, srcpos)
-        reaper.SetTakeStretchMarker(take, -1, pos)
+        reaper.SetTakeStretchMarker(take, -1, pos, srcpos)
         count = count + 1
       end
     end
@@ -1091,27 +1127,54 @@ function utils.quantize_warp_markers_ex(take, snap_fn, amount, range_start, rang
   local sm_count = reaper.GetTakeNumStretchMarkers(take)
   if sm_count == 0 then return 0 end
   local frac = (amount or 100) / 100
-  local moved = 0
+
+  -- Collect all markers first (avoids index corruption if REAPER re-sorts on set)
+  local markers = {}
   for i = 0, sm_count - 1 do
-    if selected_set and not selected_set[i] then goto continue end
     local _, pos, srcpos = reaper.GetTakeStretchMarker(take, i)
+    markers[#markers + 1] = {idx = i, pos = pos, srcpos = srcpos}
+  end
+
+  -- Compute snapped positions
+  local moved = 0
+  for _, m in ipairs(markers) do
+    if selected_set and not selected_set[m.idx] then goto continue end
     -- Skip boundary anchors (immovable markers at source start/end)
-    if src_length and (srcpos < 0.005 or srcpos > src_length - 0.005) then goto continue end
+    if src_length and (m.srcpos < 0.005 or m.srcpos > src_length - 0.005) then goto continue end
     -- Skip markers outside the optional range (srcpos is in source time)
-    if (not range_start or srcpos >= range_start - 0.001)
-        and (not range_end or srcpos <= range_end + 0.001) then
-      local project_time = item_pos + pos
+    if (not range_start or m.srcpos >= range_start - 0.001)
+        and (not range_end or m.srcpos <= range_end + 0.001) then
+      local project_time = item_pos + m.pos
       local snapped_time = snap_fn(project_time)
       local snapped_pos = snapped_time - item_pos
-      local new_pos = pos + (snapped_pos - pos) * frac
+      local new_pos = m.pos + (snapped_pos - m.pos) * frac
       new_pos = math.max(0, new_pos)  -- never go before item start
-      if math.abs(new_pos - pos) > 0.0001 then
-        reaper.SetTakeStretchMarker(take, i, new_pos, srcpos)
+      if math.abs(new_pos - m.pos) > 0.0001 then
+        m.new_pos = new_pos
         moved = moved + 1
       end
     end
     ::continue::
   end
+
+  -- Delete all markers and re-add in sorted order to avoid index issues
+  if moved > 0 then
+    -- Apply new positions
+    for _, m in ipairs(markers) do
+      if m.new_pos then m.pos = m.new_pos end
+    end
+    -- Sort by pos for clean re-insertion
+    table.sort(markers, function(a, b) return a.pos < b.pos end)
+    -- Delete all existing markers (reverse order to preserve indices)
+    for i = sm_count - 1, 0, -1 do
+      reaper.DeleteTakeStretchMarkers(take, i)
+    end
+    -- Re-add all markers
+    for _, m in ipairs(markers) do
+      reaper.SetTakeStretchMarker(take, -1, m.pos, m.srcpos)
+    end
+  end
+
   return moved
 end
 
@@ -1617,9 +1680,10 @@ function utils.replicate_markers_for_section(take, warp_map, section_src_start, 
     reaper.DeleteTakeStretchMarkers(take, 0, count)
   end
 
-  -- Add replicated markers for each cycle
+  -- Add replicated markers for each cycle.
+  -- Offset pos so cycle 0 starts at pos=0 (section changes the item's start).
   for i = 0, num_cycles - 1 do
-    local pos_off = i * cycle_pos_len
+    local pos_off = i * cycle_pos_len - cycle_pos_start
     local src_off = i * section_src_len
     for _, cm in ipairs(cycle0) do
       local np = cm.pos + pos_off
