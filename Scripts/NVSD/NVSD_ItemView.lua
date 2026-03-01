@@ -1696,12 +1696,30 @@ local function loop()
             state.transient_hovered_idx = -1
           end
 
-          -- Autozoom (soft): fit view to markers when item changes
+          -- Autozoom (soft): fit view to markers/section when item changes
           if state.item_just_changed and state.auto_fit_markers == "soft" and source_item_length > 0 then
-            local so = start_offset
-            if source_length > 0 and state.is_loop_src and so >= source_length then so = so % source_length end
-            state.zoom_level = math.min(config.MAX_ZOOM, ext_length / source_item_length)
-            state.pan_offset = (so + source_item_length / 2) - (ext_start + ext_end) / 2
+            if state.loop_bar_has_section and state.loop_bar_section_length > 0.001 then
+              -- Zoom to section region
+              if is_warped_view and state.warp_map then
+                state._az_s = utils.warp_src_to_pos(state.warp_map, state.loop_bar_section_start, playrate)
+                state._az_e = utils.warp_src_to_pos(state.warp_map,
+                    state.loop_bar_section_start + state.loop_bar_section_length, playrate)
+              else
+                state._az_s = state.loop_bar_section_start
+                state._az_e = state.loop_bar_section_start + state.loop_bar_section_length
+              end
+              state._az_len = state._az_e - state._az_s
+              if state._az_len > 0.001 then
+                state.zoom_level = math.min(config.MAX_ZOOM, ext_length / state._az_len)
+                state.pan_offset = (state._az_s + state._az_e) / 2 - (ext_start + ext_end) / 2
+              end
+            else
+              -- Default: zoom to full item
+              local so = start_offset
+              if source_length > 0 and state.is_loop_src and so >= source_length then so = so % source_length end
+              state.zoom_level = math.min(config.MAX_ZOOM, ext_length / source_item_length)
+              state.pan_offset = (so + source_item_length / 2) - (ext_start + ext_end) / 2
+            end
           end
 
           -- Autozoom (live): re-fit view when item edges change (user dragged in arrange view)
@@ -7122,6 +7140,14 @@ local function loop()
           else
             playhead_display = utils.project_to_source_time(cursor_pos, item_position, view_offset, playrate)
           end
+          -- Wrap playhead within section loop brackets when playing
+          if play_state & 5 ~= 0 and state.loop_bar_has_section and state.is_loop_src
+              and state._lb_start and state._lb_end then
+            state._ph_cycle = state._lb_end - state._lb_start
+            if state._ph_cycle > 0.0001 then
+              playhead_display = state._lb_start + ((playhead_display - state._lb_start) % state._ph_cycle)
+            end
+          end
           local playhead_px = time_to_px(playhead_display)
           if playhead_px >= wave_x and playhead_px <= wave_x + waveform_width then
             drawing.draw_playhead(draw_list, playhead_px, wave_y, waveform_height)
@@ -7218,15 +7244,25 @@ local function loop()
                 -- Play position is project time; convert to take/pos-time
                 state._pt_play_pos = reaper.GetPlayPosition()
                 state._pt_virtual_pos = state._pt_play_pos - item_position
+                -- Wrap preview playhead within section loop
+                if state.loop_bar_has_section and state.is_loop_src
+                    and state._lb_start and state._lb_end then
+                  state._ph_cycle = state._lb_end - state._lb_start
+                  if state._ph_cycle > 0.0001 then
+                    state._pt_virtual_pos = state._lb_start + ((state._pt_virtual_pos - state._lb_start) % state._ph_cycle)
+                  end
+                end
                 -- Draw playhead at constant speed (transport handles warp internally)
                 state._pt_px = time_to_px(state._pt_virtual_pos)
                 if state._pt_px >= wave_x and state._pt_px <= wave_x + waveform_width then
                   drawing.draw_preview_playhead(draw_list, state._pt_px, wave_y, waveform_height)
                 end
-                -- Auto-stop at item end
-                state._pt_stop = is_extended_view and ext_end or item_length
-                if state._pt_virtual_pos >= state._pt_stop then
-                  state.stop_preview()
+                -- Auto-stop at item end (skip when section is looping — loops forever)
+                if not (state.loop_bar_has_section and state.is_loop_src) then
+                  state._pt_stop = is_extended_view and ext_end or item_length
+                  if state._pt_virtual_pos >= state._pt_stop then
+                    state.stop_preview()
+                  end
                 end
               end
             end
