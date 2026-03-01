@@ -1245,6 +1245,30 @@ local function loop()
             playrate = state._cached_playrate
           end
 
+          -- Re-replicate stretch markers when item length changes externally
+          -- (user dragged right edge in arrange view, adding/removing loop cycles)
+          if state._lb_saved_markers and state._lb_saved_markers_take == take
+              and state.loop_bar_has_section and state.warp_map and #state.warp_map >= 2
+              and not state._freeze_warp then
+            if state._lb_prev_item_length == nil then
+              state._lb_prev_item_length = item_length
+            elseif math.abs(item_length - state._lb_prev_item_length) > 0.001 then
+              state._lb_prev_item_length = item_length
+              -- Restore originals first so replicate reads clean state
+              utils.restore_section_markers(take, state._lb_saved_markers)
+              state._lb_saved_markers = utils.replicate_markers_for_section(
+                  take, state.warp_map, state.loop_bar_section_start,
+                  state.loop_bar_section_length, playrate, item_length)
+              if state._lb_saved_markers then
+                state._lb_saved_markers_take = take
+                state.warp_markers = state._lb_saved_markers
+                state.warp_map = utils.build_warp_map(state.warp_markers)
+              end
+            end
+          else
+            state._lb_prev_item_length = item_length
+          end
+
           local item_vol = reaper.GetMediaItemInfo_Value(item, "D_VOL")
 
           -- Fade values: when auto-crossfade is active, use auto (reflects actual overlap);
