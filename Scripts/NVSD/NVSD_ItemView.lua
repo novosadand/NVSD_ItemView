@@ -1201,6 +1201,7 @@ local function loop()
                 and state.marker_drag_activated
                 and state.drag_start_warp_markers)
                 or (state.slope_dragging and state.slope_drag_activated)
+                or (state.loop_bar_dragging_marker ~= 0 and state.loop_bar_drag_activated)
             if not state._freeze_warp and focus_settled then
               -- Always refresh markers (cheap read) so external changes are picked up
               -- No auto-created start marker needed: warp functions handle
@@ -1258,7 +1259,7 @@ local function loop()
               utils.restore_section_markers(take, state._lb_saved_markers)
               state._lb_saved_markers = utils.replicate_markers_for_section(
                   take, state.warp_map, state.loop_bar_section_start,
-                  state.loop_bar_section_length, playrate, item_length)
+                  state.loop_bar_section_length, playrate, item_length, state._lb_saved_markers)
               if state._lb_saved_markers then
                 state._lb_saved_markers_take = take
                 state.warp_markers = state._lb_saved_markers
@@ -2720,9 +2721,12 @@ local function loop()
                 -- the undo block, so undo/redo round-trips cleanly.
                 if state._lb_warp and state.warp_map
                     and not (state._lb_start < 0.001 and math.abs(state._lb_end - item_length) < 0.001) then
+                  -- Restore clean originals before replicating (SetItemStateChunk
+                  -- during drag may have shifted REAPER's internal marker state)
+                  utils.restore_section_markers(take, state.warp_markers)
                   state._lb_saved_markers = utils.replicate_markers_for_section(
                       take, state.warp_map, state._lb_src_s, state._lb_rt_len,
-                      playrate, item_length)
+                      playrate, item_length, state.warp_markers)
                   if state._lb_saved_markers then
                     state._lb_saved_markers_take = take
                     reaper.UpdateItemInProject(item)

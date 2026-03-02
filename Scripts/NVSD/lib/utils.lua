@@ -1634,11 +1634,13 @@ end
 -- Subsequent loop cycles lack markers, causing irregular timing.
 -- This replicates cycle-0 markers across all cycles for consistent loops.
 -- Returns saved original markers for later restoration, or nil if no change.
-function utils.replicate_markers_for_section(take, warp_map, section_src_start, section_src_len, playrate, item_length)
+-- Optional known_originals: if provided, uses these instead of reading from REAPER
+-- (avoids reading potentially-corrupted state after SetItemStateChunk calls).
+function utils.replicate_markers_for_section(take, warp_map, section_src_start, section_src_len, playrate, item_length, known_originals)
   if not take or not warp_map or #warp_map < 2 then return nil end
   if section_src_len < 0.001 or item_length < 0.001 then return nil end
 
-  local originals = utils.get_stretch_markers(take)
+  local originals = known_originals or utils.get_stretch_markers(take)
   if #originals == 0 then return nil end
 
   -- Cycle boundaries in pos-time
