@@ -1490,7 +1490,19 @@ local function loop()
             state.post_drag_ext_end = nil
             state.post_drag_start_offset = nil
             state.env_selected_nodes = {}
+            state._prev_is_loop_src = nil
           end
+
+          -- Reset stale view state on loop mode change (prevents unwrapped/post-drag
+          -- values from the old mode corrupting the new mode's coordinates)
+          if state._prev_is_loop_src ~= nil and state.is_loop_src ~= state._prev_is_loop_src then
+            state.unwrapped_start_offset = nil
+            state.prev_raw_start_offset = nil
+            state.post_drag_ext_start = nil
+            state.post_drag_ext_end = nil
+            state.post_drag_start_offset = nil
+          end
+          state._prev_is_loop_src = state.is_loop_src
 
           if (state.dragging_start or state.dragging_end) and state.marker_drag_activated and not is_warped_view then
             -- During active drag: drag state is the authority for unwrapped offset
@@ -1636,6 +1648,7 @@ local function loop()
                 -- Wrap accumulated D_STARTOFFS for non-looped display
                 local so = state.view_start_offset
                 if source_length > 0 and state.is_loop_src and so >= source_length then so = so % source_length end
+                if state.is_loop_src and state.loop_bar_has_section then so = so + state.section_offset end
                 ext_start = math.min(so, 0)
                 ext_end = math.max(so + source_item_length, source_length)
                 ext_length = ext_end - ext_start
@@ -1650,6 +1663,9 @@ local function loop()
             -- Wrap accumulated D_STARTOFFS for non-looped display
             local so = state.view_start_offset
             if source_length > 0 and state.is_loop_src and so >= source_length then so = so % source_length end
+            -- When loop ON with section: view_start_offset is section-relative (take_offset),
+            -- add section_offset to get root-source coordinates (matches looped branch)
+            if state.is_loop_src and state.loop_bar_has_section then so = so + state.section_offset end
             ext_start = math.min(so, 0)
             ext_end = math.max(so + source_item_length, source_length)
             ext_length = ext_end - ext_start
@@ -2315,6 +2331,7 @@ local function loop()
           else
             local so = state.view_start_offset
             if source_length > 0 and state.is_loop_src and so >= source_length then so = so % source_length end
+            if state.is_loop_src and state.loop_bar_has_section then so = so + state.section_offset end
             view_offset = so
             view_item_length = source_item_length
           end
@@ -2464,6 +2481,7 @@ local function loop()
             -- Wrap accumulated D_STARTOFFS for non-looped display
             local so = state.view_start_offset
             if source_length > 0 and state.is_loop_src and so >= source_length then so = so % source_length end
+            if state.is_loop_src and state.loop_bar_has_section then so = so + state.section_offset end
             render_start = so
             render_end = so + source_item_length
           end
