@@ -333,7 +333,7 @@ local function compute_grid_params(x, width, view_start, view_length, item_posit
   local first_bar = math.floor(start_measures) - 1
 
   local min_spacing = 42  -- minimum px between grid lines at any level
-  local avg_bar_duration = 60 / bpm * beats_per_bar
+  local avg_bar_duration = 60 / bpm * beats_per_bar * playrate  -- convert project-time to source-time
   local px_per_bar = (avg_bar_duration / view_length) * width
   local bar_skip = math.max(1, math.ceil(min_spacing / px_per_bar))
   if bar_skip > 1 then

@@ -419,6 +419,10 @@ state.tb_icon_list = nil                 -- scanned toolbar icon list
 state.strip_color = nil                  -- ImGui color for item color strip (nil = no strip)
 state.strip_h = 0                        -- height of the color strip in pixels
 
+-- Canonical absolute source position (single source of truth for ext/view/render pipelines)
+state.abs_source_start = 0               -- always = section_offset + take_offset
+state.abs_source_end = 0                 -- always = abs_source_start + source_item_length
+
 -- Looped item unwrap tracking (extended)
 state.unwrap_tracked_item = nil          -- item currently tracked for start_offset unwrap
 state.post_drag_start_offset = nil       -- start_offset after drag (for undo detection)
