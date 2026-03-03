@@ -158,11 +158,10 @@ state._focus_suppress_frames = 0     -- frames remaining to suppress stale modif
 -- Warp mode state
 state.warp_mode = false
 state.warp_dropdown_open = false
+state.warp_algo_scroll_offset = 0
 state.warp_submode_dropdown_open = false
 state.warp_submode_scroll_offset = 0
 state.warp_submode_sb_dragging = false
-state.warp_submode_sb_drag_start_y = 0
-state.warp_submode_sb_drag_start_scroll = 0
 state.warp_submode_flag_cache_algo = -1   -- algo ID the cache was built for
 state.warp_submode_flag_cache = nil       -- parsed flag groups + lookup table
 state.warp_mode_dropdown_open = false     -- mode selection dropdown (mutually exclusive modes)

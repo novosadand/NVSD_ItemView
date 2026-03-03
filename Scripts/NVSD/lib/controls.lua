@@ -26,6 +26,126 @@ local function has_external_editor()
 end
 controls.has_external_editor = has_external_editor
 
+-- Shared scrollable dropdown menu container.
+-- begin_scroll_menu: caps height to window, draws background, pushes clip rect.
+-- Returns a table with layout info callers need for item rendering.
+-- end_scroll_menu: pops clip rect, draws scrollbar (with drag), handles wheel + close.
+-- Optional btn_rect = {x, y, w, h}: when below-button space is too tight,
+-- repositions the menu to the right of the button for more vertical room.
+local function begin_scroll_menu(ctx, menu_dl, x, y, width, natural_height, state, config, btn_rect, item_h)
+  local _, win_y = reaper.ImGui_GetWindowPos(ctx)
+  local _, win_h = reaper.ImGui_GetWindowSize(ctx)
+  local win_bottom = win_y + win_h
+  local available_h = win_bottom - y - 4
+
+  -- When space below is too tight, try placing to the right of the button.
+  -- Use the full window height (extend upward above button) to fit as much as possible.
+  local min_visible_rows = 5
+  local row_h = item_h or 16
+  local would_need_scroll = available_h < natural_height
+  if btn_rect and would_need_scroll and available_h < min_visible_rows * row_h then
+    local side_x = btn_rect.x + btn_rect.w + 2
+    local full_win_h = win_h - 8  -- full window height with margin
+    -- Only use side placement if it actually gives more room
+    if full_win_h > available_h then
+      x = side_x
+      -- Anchor bottom to window bottom, extend upward as needed
+      local needed_h = math.min(natural_height, full_win_h)
+      y = win_bottom - 4 - needed_h
+      available_h = needed_h
+    end
+  end
+
+  local visible_h = math.min(natural_height, math.max(20, available_h))
+  local needs_scroll = visible_h < natural_height
+  local sb_w = needs_scroll and 8 or 0
+  local total_w = width + sb_w
+  local max_scroll = math.max(0, natural_height - visible_h)
+
+  -- Background + border
+  reaper.ImGui_DrawList_AddRectFilled(menu_dl, x, y, x + total_w, y + visible_h, config.COLOR_INFO_BAR_BG, 2)
+  reaper.ImGui_DrawList_AddRect(menu_dl, x, y, x + total_w, y + visible_h, config.COLOR_RULER_TICK, 2)
+
+  -- Clip rect
+  reaper.ImGui_DrawList_PushClipRect(menu_dl, x, y, x + total_w, y + visible_h, true)
+
+  return {
+    x = x, y = y,
+    total_w = total_w, content_w = width, sb_w = sb_w,
+    visible_h = visible_h, natural_h = natural_height,
+    clip_top = y, clip_bottom = y + visible_h,
+    needs_scroll = needs_scroll, max_scroll = max_scroll,
+  }
+end
+
+local function end_scroll_menu(ctx, menu_dl, mouse_x, mouse_y, m, scroll_key, sb_drag_key, item_h, state, config)
+  reaper.ImGui_DrawList_PopClipRect(menu_dl)
+
+  -- Manage scroll offset
+  if not state[scroll_key] then state[scroll_key] = 0 end
+  state[scroll_key] = math.max(0, math.min(m.max_scroll, state[scroll_key]))
+
+  -- Scrollbar with drag support
+  if m.needs_scroll then
+    local sb_w = 6
+    local sb_x = m.x + m.total_w - sb_w - 1
+    local sb_top = m.y
+    local sb_h = m.visible_h
+    reaper.ImGui_DrawList_AddRectFilled(menu_dl, sb_x, sb_top, sb_x + sb_w, sb_top + sb_h, config.COLOR_INFO_BAR_BG)
+
+    local thumb_h = math.max(12, sb_h * (m.visible_h / m.natural_h))
+    local scroll_ratio = m.max_scroll > 0 and (state[scroll_key] / m.max_scroll) or 0
+    local thumb_y = sb_top + scroll_ratio * (sb_h - thumb_h)
+
+    local in_sb = mouse_x >= sb_x and mouse_x <= sb_x + sb_w
+                  and mouse_y >= sb_top and mouse_y <= sb_top + sb_h
+    local in_thumb = in_sb and mouse_y >= thumb_y and mouse_y <= thumb_y + thumb_h
+
+    if reaper.ImGui_IsMouseClicked(ctx, 0) and in_thumb then
+      state[sb_drag_key] = true
+      state._sb_drag_start_y = mouse_y
+      state._sb_drag_start_scroll = state[scroll_key]
+    elseif reaper.ImGui_IsMouseClicked(ctx, 0) and in_sb and not in_thumb then
+      state[scroll_key] = ((mouse_y - sb_top) / sb_h) * m.max_scroll
+      state[sb_drag_key] = true
+      state._sb_drag_start_y = mouse_y
+      state._sb_drag_start_scroll = state[scroll_key]
+    end
+
+    if state[sb_drag_key] then
+      if reaper.ImGui_IsMouseDown(ctx, 0) then
+        local scroll_range = sb_h - thumb_h
+        if scroll_range > 0 then
+          local delta = (mouse_y - state._sb_drag_start_y) / scroll_range * m.max_scroll
+          state[scroll_key] = math.max(0, math.min(m.max_scroll, state._sb_drag_start_scroll + delta))
+        end
+        -- Recompute thumb position after drag
+        scroll_ratio = m.max_scroll > 0 and (state[scroll_key] / m.max_scroll) or 0
+        thumb_y = sb_top + scroll_ratio * (sb_h - thumb_h)
+      else
+        state[sb_drag_key] = false
+      end
+    end
+
+    local thumb_color = (state[sb_drag_key] or in_sb) and config.COLOR_RULER_TEXT or config.COLOR_BTN_OFF
+    reaper.ImGui_DrawList_AddRectFilled(menu_dl, sb_x, thumb_y, sb_x + sb_w, thumb_y + thumb_h, thumb_color, 2)
+  else
+    state[sb_drag_key] = false
+  end
+
+  -- Scroll wheel
+  local in_menu = mouse_x >= m.x and mouse_x <= m.x + m.total_w
+                  and mouse_y >= m.y and mouse_y <= m.y + m.visible_h
+  if in_menu and m.needs_scroll then
+    local wheel = reaper.ImGui_GetMouseWheel(ctx)
+    if wheel ~= 0 then
+      state[scroll_key] = math.max(0, math.min(m.max_scroll, state[scroll_key] - wheel * item_h))
+    end
+  end
+
+  return in_menu
+end
+
 -- Editable label: normal mode draws text with hover highlight + tooltip;
 -- double-click enters inline InputText. Returns (confirmed, input_text).
 function controls.editable_label(ctx, draw_list, x, y, text, text_w, text_h,
@@ -783,48 +903,60 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
     local menu_dl = reaper.ImGui_GetForegroundDrawList(ctx)
     local menu_y = dropdown_y + dropdown_btn_height + 1
     local menu_item_height = 16
-    local menu_height = #config.PITCH_MODES * menu_item_height + 4
+    local natural_height = #config.PITCH_MODES * menu_item_height + 4
 
-    reaper.ImGui_DrawList_AddRectFilled(menu_dl, dropdown_x, menu_y, dropdown_x + dropdown_width, menu_y + menu_height, config.COLOR_INFO_BAR_BG, 2)
-    reaper.ImGui_DrawList_AddRect(menu_dl, dropdown_x, menu_y, dropdown_x + dropdown_width, menu_y + menu_height, config.COLOR_RULER_TICK, 2)
+    -- Compute menu width from widest item text
+    local algo_max_tw = 0
+    for _, mode in ipairs(config.PITCH_MODES) do
+      local tw = reaper.ImGui_CalcTextSize(ctx, mode.name)
+      if tw > algo_max_tw then algo_max_tw = tw end
+    end
+    local menu_width = math.max(dropdown_width, algo_max_tw + 12)
+
+    local algo_btn = {x = dropdown_x, y = dropdown_y, w = dropdown_width, h = dropdown_btn_height}
+    local m = begin_scroll_menu(ctx, menu_dl, dropdown_x, menu_y, menu_width, natural_height, state, config, algo_btn, menu_item_height)
+    if not state.warp_algo_scroll_offset then state.warp_algo_scroll_offset = 0 end
 
     for i, mode in ipairs(config.PITCH_MODES) do
-      local item_y = menu_y + 2 + (i - 1) * menu_item_height
-      local mouse_in_item = mouse_x >= dropdown_x and mouse_x <= dropdown_x + dropdown_width
-                            and mouse_y >= item_y and mouse_y <= item_y + menu_item_height
+      local item_y = m.y + 2 + (i - 1) * menu_item_height - state.warp_algo_scroll_offset
 
-      if mouse_in_item then
-        reaper.ImGui_DrawList_AddRectFilled(menu_dl, dropdown_x + 1, item_y, dropdown_x + dropdown_width - 1, item_y + menu_item_height, COLOR_BTN_OFF)
-      end
+      if item_y + menu_item_height > m.clip_top and item_y < m.clip_bottom then
+        local mouse_in_item = mouse_x >= m.x and mouse_x <= m.x + m.content_w
+                              and mouse_y >= math.max(item_y, m.clip_top)
+                              and mouse_y <= math.min(item_y + menu_item_height, m.clip_bottom)
 
-      local item_text_color = (mode.value == current_mode or
-        (current_mode >= 0 and mode.value >= 0 and (mode.value >> 16) == (current_mode >> 16)))
-        and config.COLOR_MARKER or config.COLOR_INFO_BAR_TEXT
-      reaper.ImGui_DrawList_AddText(menu_dl, dropdown_x + 4, item_y + math.floor((menu_item_height - text_height) / 2), item_text_color, mode.name)
-
-      if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_item then
-        if take then
-          reaper.Undo_BeginBlock()
-          reaper.SetMediaItemTakeInfo_Value(take, "I_PITCHMODE", mode.value)
-          reaper.UpdateArrange()
-          reaper.Undo_EndBlock("NVSD_ItemView: Set pitch mode", -1)
+        if mouse_in_item then
+          reaper.ImGui_DrawList_AddRectFilled(menu_dl, m.x + 1, item_y, m.x + m.content_w - 1, item_y + menu_item_height, COLOR_BTN_OFF)
         end
-        state.warp_dropdown_open = false
-        state.warp_submode_dropdown_open = false
-        state.warp_mode_dropdown_open = false
-        state.warp_submode_scroll_offset = 0  -- Reset scroll on algo change
-        state.warp_mode_scroll_offset = 0
-        state.warp_submode_flag_cache_algo = -1  -- Invalidate flag cache
+
+        local item_text_color = (mode.value == current_mode or
+          (current_mode >= 0 and mode.value >= 0 and (mode.value >> 16) == (current_mode >> 16)))
+          and config.COLOR_MARKER or config.COLOR_INFO_BAR_TEXT
+        reaper.ImGui_DrawList_AddText(menu_dl, m.x + 4, item_y + math.floor((menu_item_height - text_height) / 2), item_text_color, mode.name)
+
+        if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_item then
+          if take then
+            reaper.Undo_BeginBlock()
+            reaper.SetMediaItemTakeInfo_Value(take, "I_PITCHMODE", mode.value)
+            reaper.UpdateArrange()
+            reaper.Undo_EndBlock("NVSD_ItemView: Set pitch mode", -1)
+          end
+          state.warp_dropdown_open = false
+          state.warp_submode_dropdown_open = false
+          state.warp_mode_dropdown_open = false
+          state.warp_submode_scroll_offset = 0  -- Reset scroll on algo change
+          state.warp_mode_scroll_offset = 0
+          state.warp_submode_flag_cache_algo = -1  -- Invalidate flag cache
+        end
       end
     end
 
-    if reaper.ImGui_IsMouseClicked(ctx, 0) and not mouse_in_dropdown then
-      local menu_bottom = menu_y + menu_height
-      local mouse_in_menu = mouse_x >= dropdown_x and mouse_x <= dropdown_x + dropdown_width
-                            and mouse_y >= menu_y and mouse_y <= menu_bottom
-      if not mouse_in_menu then
-        state.warp_dropdown_open = false
-      end
+    local mouse_in_menu = end_scroll_menu(ctx, menu_dl, mouse_x, mouse_y, m,
+        "warp_algo_scroll_offset", "_algo_sb_dragging", menu_item_height, state, config)
+
+    -- Close on click outside
+    if reaper.ImGui_IsMouseClicked(ctx, 0) and not mouse_in_dropdown and not mouse_in_menu then
+      state.warp_dropdown_open = false
     end
 
   end
@@ -1100,17 +1232,14 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
         local mode_items = {}
 
         if use_presets then
-          -- Build items from presets
           for pi, preset in ipairs(cache.presets) do
             local label = preset.name
-            -- First preset with empty atoms uses default label
             if pi == 1 and #preset.atoms == 0 and cache.has_default then
               label = default_label
             end
             mode_items[#mode_items + 1] = {name = label, preset_idx = pi}
           end
         else
-          -- Original mode_group items
           if cache.has_default then
             mode_items[#mode_items + 1] = {name = default_label, is_default = true}
           end
@@ -1120,55 +1249,35 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
         end
 
         local natural_height = #mode_items * menu_item_height + 4
-
-        local mode_max_menu_tw = 0
+        local mode_max_tw = 0
         for _, item in ipairs(mode_items) do
           local tw = reaper.ImGui_CalcTextSize(ctx, item.name)
-          if tw > mode_max_menu_tw then mode_max_menu_tw = tw end
+          if tw > mode_max_tw then mode_max_tw = tw end
         end
+        local mode_menu_width = math.max(dropdown_width, mode_max_tw + 12)
 
-        -- Cap height to available window space
-        local win_x, win_y = reaper.ImGui_GetWindowPos(ctx)
-        local _, win_h = reaper.ImGui_GetWindowSize(ctx)
-        local available_height = (win_y + win_h) - mode_menu_y - 4
-        local visible_height = math.min(natural_height, available_height)
-        local needs_scroll = visible_height < natural_height
-
-        local scrollbar_width = needs_scroll and 8 or 0
-        local mode_menu_width = math.max(dropdown_width, mode_max_menu_tw + 12) + scrollbar_width
-
+        local mode_btn = {x = dropdown_x, y = mode_dd_y, w = dropdown_width, h = dropdown_btn_height}
+        local m = begin_scroll_menu(ctx, menu_dl, dropdown_x, mode_menu_y, mode_menu_width, natural_height, state, config, mode_btn, menu_item_height)
         if not state.warp_mode_scroll_offset then state.warp_mode_scroll_offset = 0 end
-        local max_scroll = math.max(0, natural_height - visible_height)
-        if state.warp_mode_scroll_offset > max_scroll then state.warp_mode_scroll_offset = max_scroll end
-        if state.warp_mode_scroll_offset < 0 then state.warp_mode_scroll_offset = 0 end
 
-        reaper.ImGui_DrawList_AddRectFilled(menu_dl, dropdown_x, mode_menu_y, dropdown_x + mode_menu_width, mode_menu_y + visible_height, config.COLOR_INFO_BAR_BG, 2)
-        reaper.ImGui_DrawList_AddRect(menu_dl, dropdown_x, mode_menu_y, dropdown_x + mode_menu_width, mode_menu_y + visible_height, config.COLOR_RULER_TICK, 2)
-
-        local clip_top = mode_menu_y
-        local clip_bottom = mode_menu_y + visible_height
-        reaper.ImGui_DrawList_PushClipRect(menu_dl, dropdown_x, clip_top, dropdown_x + mode_menu_width, clip_bottom, true)
-
-        local content_width = mode_menu_width - scrollbar_width
         for i, item in ipairs(mode_items) do
-          local iy = mode_menu_y + 2 + (i - 1) * menu_item_height - state.warp_mode_scroll_offset
+          local iy = m.y + 2 + (i - 1) * menu_item_height - state.warp_mode_scroll_offset
 
-          if iy + menu_item_height > clip_top and iy < clip_bottom then
-            local mouse_in_item = mouse_x >= dropdown_x and mouse_x <= dropdown_x + content_width
-                                  and mouse_y >= math.max(iy, clip_top)
-                                  and mouse_y <= math.min(iy + menu_item_height, clip_bottom)
+          if iy + menu_item_height > m.clip_top and iy < m.clip_bottom then
+            local mouse_in_item = mouse_x >= m.x and mouse_x <= m.x + m.content_w
+                                  and mouse_y >= math.max(iy, m.clip_top)
+                                  and mouse_y <= math.min(iy + menu_item_height, m.clip_bottom)
 
             if mouse_in_item then
-              reaper.ImGui_DrawList_AddRectFilled(menu_dl, dropdown_x + 1, iy, dropdown_x + content_width - 1, iy + menu_item_height, COLOR_BTN_OFF)
+              reaper.ImGui_DrawList_AddRectFilled(menu_dl, m.x + 1, iy, m.x + m.content_w - 1, iy + menu_item_height, COLOR_BTN_OFF)
             end
 
             local is_current = item.name == current_mode_atom
             local item_tc = is_current and config.COLOR_MARKER or config.COLOR_INFO_BAR_TEXT
-            reaper.ImGui_DrawList_AddText(menu_dl, dropdown_x + 4, iy + math.floor((menu_item_height - text_height) / 2), item_tc, item.name)
+            reaper.ImGui_DrawList_AddText(menu_dl, m.x + 4, iy + math.floor((menu_item_height - text_height) / 2), item_tc, item.name)
 
             if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_item and take then
               if use_presets then
-                -- Apply preset: keep toggle flags, clear mutex, set preset atoms
                 local new_atoms = {}
                 for a, v in pairs(active_atoms) do new_atoms[a] = v end
                 for a, _ in pairs(cache.mutex_atoms) do new_atoms[a] = nil end
@@ -1176,7 +1285,6 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
                 for _, pa in ipairs(preset.atoms) do new_atoms[pa] = true end
                 apply_submode(new_atoms)
               else
-                -- Original mode_group selection
                 local new_atoms = {}
                 for a, v in pairs(active_atoms) do new_atoms[a] = v end
                 for _, g_atom in ipairs(mode_group) do new_atoms[g_atom] = nil end
@@ -1188,66 +1296,8 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
           end
         end
 
-        reaper.ImGui_DrawList_PopClipRect(menu_dl)
-
-        -- Mouse wheel scrolling
-        local mouse_in_mode_menu = mouse_x >= dropdown_x and mouse_x <= dropdown_x + mode_menu_width
-                                   and mouse_y >= mode_menu_y and mouse_y <= mode_menu_y + visible_height
-        if mouse_in_mode_menu and needs_scroll then
-          local wheel = reaper.ImGui_GetMouseWheel(ctx)
-          if wheel ~= 0 then
-            state.warp_mode_scroll_offset = math.max(0, math.min(max_scroll, state.warp_mode_scroll_offset - wheel * menu_item_height))
-          end
-        end
-
-        -- Scrollbar
-        if needs_scroll then
-          local sb_w = 6
-          local sb_x = dropdown_x + mode_menu_width - sb_w - 1
-          local sb_top = mode_menu_y
-          local sb_height = visible_height
-
-          reaper.ImGui_DrawList_AddRectFilled(menu_dl, sb_x, sb_top, sb_x + sb_w, sb_top + sb_height, config.COLOR_INFO_BAR_BG)
-
-          local thumb_ratio = visible_height / natural_height
-          local thumb_height = math.max(12, sb_height * thumb_ratio)
-          local scroll_ratio = state.warp_mode_scroll_offset / max_scroll
-          local thumb_y = sb_top + scroll_ratio * (sb_height - thumb_height)
-
-          local mouse_in_sb = mouse_x >= sb_x and mouse_x <= sb_x + sb_w
-                              and mouse_y >= sb_top and mouse_y <= sb_top + sb_height
-          local mouse_in_thumb = mouse_x >= sb_x and mouse_x <= sb_x + sb_w
-                                 and mouse_y >= thumb_y and mouse_y <= thumb_y + thumb_height
-
-          if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_thumb then
-            state.warp_mode_sb_dragging = true
-            state.warp_mode_sb_drag_start_y = mouse_y
-            state.warp_mode_sb_drag_start_scroll = state.warp_mode_scroll_offset
-          elseif reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_sb and not mouse_in_thumb then
-            local click_ratio = (mouse_y - sb_top) / sb_height
-            state.warp_mode_scroll_offset = click_ratio * max_scroll
-            state.warp_mode_sb_dragging = true
-            state.warp_mode_sb_drag_start_y = mouse_y
-            state.warp_mode_sb_drag_start_scroll = state.warp_mode_scroll_offset
-          end
-
-          if state.warp_mode_sb_dragging then
-            if reaper.ImGui_IsMouseDown(ctx, 0) then
-              local delta_y = mouse_y - state.warp_mode_sb_drag_start_y
-              local scroll_range = sb_height - thumb_height
-              if scroll_range > 0 then
-                local delta_scroll = (delta_y / scroll_range) * max_scroll
-                state.warp_mode_scroll_offset = math.max(0, math.min(max_scroll,
-                  state.warp_mode_sb_drag_start_scroll + delta_scroll))
-              end
-            else
-              state.warp_mode_sb_dragging = false
-            end
-          end
-
-          local thumb_color = (state.warp_mode_sb_dragging or mouse_in_sb) and config.COLOR_RULER_TEXT or config.COLOR_BTN_OFF
-          reaper.ImGui_DrawList_AddRectFilled(menu_dl, sb_x, thumb_y, sb_x + sb_w, thumb_y + thumb_height, thumb_color, 2)
-        end
+        local mouse_in_mode_menu = end_scroll_menu(ctx, menu_dl, mouse_x, mouse_y, m,
+            "warp_mode_scroll_offset", "warp_mode_sb_dragging", menu_item_height, state, config)
 
         -- Close on click outside
         if reaper.ImGui_IsMouseClicked(ctx, 0) and not mouse_in_mode_dd and not mouse_in_mode_menu then
@@ -1385,30 +1435,10 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
         end
         local menu_width = math.max(dropdown_width, max_text_w + check_pad + 8)
 
-        -- Cap height
-        local win_x, win_y = reaper.ImGui_GetWindowPos(ctx)
-        local _, win_h = reaper.ImGui_GetWindowSize(ctx)
-        local window_bottom = win_y + win_h
-        local natural_height = total_items_h
-        local available_height = window_bottom - flags_menu_y - 4
-        local visible_height = math.min(natural_height, available_height)
-        local needs_scroll = visible_height < natural_height
+        local flags_btn = {x = dropdown_x, y = flags_dd_y, w = dropdown_width, h = dropdown_btn_height}
+        local m = begin_scroll_menu(ctx, menu_dl, dropdown_x, flags_menu_y, menu_width, total_items_h, state, config, flags_btn, item_h)
 
-        local scrollbar_width = needs_scroll and 8 or 0
-        local total_menu_width = menu_width + scrollbar_width
-
-        local max_scroll = math.max(0, natural_height - visible_height)
-        if state.warp_submode_scroll_offset > max_scroll then state.warp_submode_scroll_offset = max_scroll end
-        if state.warp_submode_scroll_offset < 0 then state.warp_submode_scroll_offset = 0 end
-
-        reaper.ImGui_DrawList_AddRectFilled(menu_dl, dropdown_x, flags_menu_y, dropdown_x + total_menu_width, flags_menu_y + visible_height, config.COLOR_INFO_BAR_BG, 2)
-        reaper.ImGui_DrawList_AddRect(menu_dl, dropdown_x, flags_menu_y, dropdown_x + total_menu_width, flags_menu_y + visible_height, config.COLOR_RULER_TICK, 2)
-
-        local clip_top = flags_menu_y
-        local clip_bottom = flags_menu_y + visible_height
-        reaper.ImGui_DrawList_PushClipRect(menu_dl, dropdown_x, clip_top, dropdown_x + total_menu_width, clip_bottom, true)
-
-        local draw_y = flags_menu_y + 2 - state.warp_submode_scroll_offset
+        local draw_y = m.y + 2 - (state.warp_submode_scroll_offset or 0)
         for gi, group in ipairs(flag_groups) do
           -- Separator between groups (skip between consecutive singletons)
           if gi > 1 then
@@ -1416,9 +1446,9 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
             local both_single = (#prev == 1 and #group == 1)
             if not both_single then
               local sep_y = draw_y + sep_h / 2
-              if sep_y > clip_top and sep_y < clip_bottom then
+              if sep_y > m.clip_top and sep_y < m.clip_bottom then
                 reaper.ImGui_DrawList_AddLine(menu_dl,
-                  dropdown_x + 4, sep_y, dropdown_x + menu_width - 4, sep_y,
+                  m.x + 4, sep_y, m.x + menu_width - 4, sep_y,
                   config.COLOR_RULER_TICK, 1)
               end
               draw_y = draw_y + sep_h
@@ -1431,14 +1461,14 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
             local iy = draw_y
             draw_y = draw_y + item_h
 
-            if iy + item_h > clip_top and iy < clip_bottom then
-              local mouse_in_item = mouse_x >= dropdown_x and mouse_x <= dropdown_x + menu_width
-                and mouse_y >= math.max(iy, clip_top)
-                and mouse_y <= math.min(iy + item_h, clip_bottom)
+            if iy + item_h > m.clip_top and iy < m.clip_bottom then
+              local mouse_in_item = mouse_x >= m.x and mouse_x <= m.x + menu_width
+                and mouse_y >= math.max(iy, m.clip_top)
+                and mouse_y <= math.min(iy + item_h, m.clip_bottom)
 
               if mouse_in_item then
                 reaper.ImGui_DrawList_AddRectFilled(menu_dl,
-                  dropdown_x + 1, iy, dropdown_x + menu_width - 1, iy + item_h,
+                  m.x + 1, iy, m.x + menu_width - 1, iy + item_h,
                   COLOR_BTN_OFF)
               end
 
@@ -1448,9 +1478,9 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
 
               local flag_text_oy = math.floor((item_h - text_height) / 2)
               reaper.ImGui_DrawList_AddText(menu_dl,
-                dropdown_x + 4, iy + flag_text_oy, flag_text_color, check_text)
+                m.x + 4, iy + flag_text_oy, flag_text_color, check_text)
               reaper.ImGui_DrawList_AddText(menu_dl,
-                dropdown_x + check_pad, iy + flag_text_oy, flag_text_color, atom)
+                m.x + check_pad, iy + flag_text_oy, flag_text_color, atom)
 
               if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_item and take then
                 local new_atoms = {}
@@ -1469,72 +1499,10 @@ function controls.draw_button_panel(ctx, draw_list, mouse_x, mouse_y, left_col_x
           end
         end
 
-        reaper.ImGui_DrawList_PopClipRect(menu_dl)
+        local mouse_in_menu = end_scroll_menu(ctx, menu_dl, mouse_x, mouse_y, m,
+          "warp_submode_scroll_offset", "warp_submode_sb_dragging", item_h, state, config)
 
-        -- Scroll + scrollbar + close-outside
-        local mouse_in_menu_area = mouse_x >= dropdown_x and mouse_x <= dropdown_x + total_menu_width
-                                   and mouse_y >= flags_menu_y and mouse_y <= flags_menu_y + visible_height
-        if mouse_in_menu_area and needs_scroll then
-          local wheel = reaper.ImGui_GetMouseWheel(ctx)
-          if wheel ~= 0 then
-            state.warp_submode_scroll_offset = math.max(0, math.min(max_scroll, state.warp_submode_scroll_offset - wheel * item_h))
-          end
-        end
-
-        if needs_scroll then
-          local sb_w = 6
-          local sb_x = dropdown_x + total_menu_width - sb_w - 1
-          local sb_top = flags_menu_y
-          local sb_height = visible_height
-
-          reaper.ImGui_DrawList_AddRectFilled(menu_dl, sb_x, sb_top, sb_x + sb_w, sb_top + sb_height, config.COLOR_INFO_BAR_BG)
-
-          local thumb_ratio = visible_height / natural_height
-          local thumb_height = math.max(12, sb_height * thumb_ratio)
-          local scroll_ratio = state.warp_submode_scroll_offset / max_scroll
-          local thumb_y = sb_top + scroll_ratio * (sb_height - thumb_height)
-
-          local mouse_in_sb = mouse_x >= sb_x and mouse_x <= sb_x + sb_w
-                              and mouse_y >= sb_top and mouse_y <= sb_top + sb_height
-          local mouse_in_thumb = mouse_x >= sb_x and mouse_x <= sb_x + sb_w
-                                 and mouse_y >= thumb_y and mouse_y <= thumb_y + thumb_height
-
-          if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_thumb then
-            state.warp_submode_sb_dragging = true
-            state.warp_submode_sb_drag_start_y = mouse_y
-            state.warp_submode_sb_drag_start_scroll = state.warp_submode_scroll_offset
-          end
-
-          if reaper.ImGui_IsMouseClicked(ctx, 0) and mouse_in_sb and not mouse_in_thumb then
-            local click_ratio = (mouse_y - sb_top - thumb_height / 2) / (sb_height - thumb_height)
-            click_ratio = math.max(0, math.min(1, click_ratio))
-            state.warp_submode_scroll_offset = click_ratio * max_scroll
-            state.warp_submode_sb_dragging = true
-            state.warp_submode_sb_drag_start_y = mouse_y
-            state.warp_submode_sb_drag_start_scroll = state.warp_submode_scroll_offset
-          end
-
-          if state.warp_submode_sb_dragging then
-            if reaper.ImGui_IsMouseDown(ctx, 0) then
-              local delta_y = mouse_y - state.warp_submode_sb_drag_start_y
-              local scroll_range = sb_height - thumb_height
-              if scroll_range > 0 then
-                local delta_scroll = (delta_y / scroll_range) * max_scroll
-                state.warp_submode_scroll_offset = math.max(0, math.min(max_scroll,
-                  state.warp_submode_sb_drag_start_scroll + delta_scroll))
-              end
-            else
-              state.warp_submode_sb_dragging = false
-            end
-          end
-
-          local thumb_color = (state.warp_submode_sb_dragging or mouse_in_sb) and config.COLOR_RULER_TEXT or config.COLOR_BTN_OFF
-          reaper.ImGui_DrawList_AddRectFilled(menu_dl, sb_x, thumb_y, sb_x + sb_w, thumb_y + thumb_height, thumb_color, 2)
-        else
-          state.warp_submode_sb_dragging = false
-        end
-
-        if reaper.ImGui_IsMouseClicked(ctx, 0) and not mouse_in_flags_dd and not mouse_in_menu_area
+        if reaper.ImGui_IsMouseClicked(ctx, 0) and not mouse_in_flags_dd and not mouse_in_menu
            and not state.warp_submode_sb_dragging then
           state.warp_submode_dropdown_open = false
         end
